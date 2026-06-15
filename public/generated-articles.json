@@ -1,0 +1,296 @@
+[
+  {
+    "id": "cmd-1778211342740",
+    "source": "openclaw-x",
+    "tag": "x-trend",
+    "trendUrl": "https://x.com/example/status/202",
+    "prompt": "openclaw bot detects pressure around renewable energy permits on x",
+    "headline": "Pressure Around Renewable Energy Permits Draws Fresh Scrutiny Across Public Sources",
+    "dek": "Command-generated draft from 26 simulated source packets.",
+    "createdAt": "2026-05-08T03:35:42.740Z",
+    "sourceCount": 26,
+    "deniedForBias": 4,
+    "fairnessScore": 93,
+    "accuracyScore": 88,
+    "terms": [
+      "pressure",
+      "around",
+      "renewable",
+      "energy",
+      "permits"
+    ],
+    "sources": [
+      "Reuters public wire",
+      "Associated Press bulletin",
+      "government records desk",
+      "market filings index",
+      "regional newsroom archive"
+    ],
+    "summary": "Signal compared public reporting around pressure around renewable energy permits, prioritizing overlapping claims from independent outlets and labeling single-source details as provisional.",
+    "body": [
+      "Public reporting around pressure around renewable energy permits is moving through several source clusters, with early signals from wire services, public records, and regional desks.",
+      "Signal compared 26 article and record fragments, rejecting 4 packets for excessive framing, duplication, or weak attribution.",
+      "The clearest pattern is source overlap: multiple outlets are tracking the same core development, while timing, impact, and second-order consequences still require direct citation.",
+      "This command draft should be reviewed before publication. Production mode should attach live links, preserve disputed claims, and show source provenance for each factual sentence."
+    ],
+    "facts": [
+      {
+        "text": "pressure around renewable",
+        "source": "wire services; regional archive; public records index"
+      },
+      {
+        "text": "26 article and record fragments",
+        "source": "command pipeline source counter; duplicate removal pass"
+      },
+      {
+        "text": "4 packets for excessive framing",
+        "source": "bias and duplication filter; local scoring heuristic"
+      }
+    ]
+  },
+  {
+    "id": "cmd-1778211287653",
+    "source": "openclaw-x",
+    "tag": "x-trend",
+    "trendUrl": "https://x.com/example/status/201",
+    "prompt": "openclaw bot detects pressure around regional banks and property loans on x",
+    "headline": "Pressure Around Regional Banks And Property Loans Draws Fresh Scrutiny Across Public Sources",
+    "dek": "Command-generated draft from 34 simulated source packets.",
+    "createdAt": "2026-05-08T03:34:47.653Z",
+    "sourceCount": 34,
+    "deniedForBias": 6,
+    "fairnessScore": 93,
+    "accuracyScore": 91,
+    "terms": [
+      "pressure",
+      "around",
+      "regional",
+      "banks",
+      "and"
+    ],
+    "sources": [
+      "Reuters public wire",
+      "Associated Press bulletin",
+      "government records desk",
+      "market filings index",
+      "regional newsroom archive"
+    ],
+    "summary": "Signal compared public reporting around pressure around regional banks and property loans, prioritizing overlapping claims from independent outlets and labeling single-source details as provisional.",
+    "body": [
+      "Public reporting around pressure around regional banks and property loans is moving through several source clusters, with early signals from wire services, public records, and regional desks.",
+      "Signal compared 34 article and record fragments, rejecting 6 packets for excessive framing, duplication, or weak attribution.",
+      "The clearest pattern is source overlap: multiple outlets are tracking the same core development, while timing, impact, and second-order consequences still require direct citation.",
+      "This command draft should be reviewed before publication. Production mode should attach live links, preserve disputed claims, and show source provenance for each factual sentence."
+    ],
+    "facts": [
+      {
+        "text": "pressure around regional",
+        "source": "wire services; regional archive; public records index"
+      },
+      {
+        "text": "34 article and record fragments",
+        "source": "command pipeline source counter; duplicate removal pass"
+      },
+      {
+        "text": "6 packets for excessive framing",
+        "source": "bias and duplication filter; local scoring heuristic"
+      }
+    ]
+  },
+  {
+    "id": "cmd-1778211217688",
+    "source": "openclaw-x",
+    "tag": "x-trend",
+    "trendUrl": "https://x.com/example/status/200",
+    "prompt": "openclaw bot detects pressure around coastal insurance markets on x",
+    "headline": "Pressure Around Coastal Insurance Markets Draws Fresh Scrutiny Across Public Sources",
+    "dek": "Command-generated draft from 26 simulated source packets.",
+    "createdAt": "2026-05-08T03:33:37.688Z",
+    "sourceCount": 26,
+    "deniedForBias": 4,
+    "fairnessScore": 93,
+    "accuracyScore": 88,
+    "terms": [
+      "pressure",
+      "around",
+      "coastal",
+      "insurance",
+      "markets"
+    ],
+    "sources": [
+      "Reuters public wire",
+      "Associated Press bulletin",
+      "government records desk",
+      "market filings index",
+      "regional newsroom archive"
+    ],
+    "summary": "Signal compared public reporting around pressure around coastal insurance markets, prioritizing overlapping claims from independent outlets and labeling single-source details as provisional.",
+    "body": [
+      "Public reporting around pressure around coastal insurance markets is moving through several source clusters, with early signals from wire services, public records, and regional desks.",
+      "Signal compared 26 article and record fragments, rejecting 4 packets for excessive framing, duplication, or weak attribution.",
+      "The clearest pattern is source overlap: multiple outlets are tracking the same core development, while timing, impact, and second-order consequences still require direct citation.",
+      "This command draft should be reviewed before publication. Production mode should attach live links, preserve disputed claims, and show source provenance for each factual sentence."
+    ],
+    "facts": [
+      {
+        "text": "pressure around coastal",
+        "source": "wire services; regional archive; public records index"
+      },
+      {
+        "text": "26 article and record fragments",
+        "source": "command pipeline source counter; duplicate removal pass"
+      },
+      {
+        "text": "4 packets for excessive framing",
+        "source": "bias and duplication filter; local scoring heuristic"
+      }
+    ]
+  },
+  {
+    "id": "cmd-1778199170556",
+    "source": "openclaw-x",
+    "tag": "x-trend",
+    "trendUrl": "https://x.com/example/status/125",
+    "prompt": "openclaw bot detects sudden pressure around semiconductor export controls on x",
+    "headline": "Sudden Pressure Around Semiconductor Export Controls Draws Fresh Scrutiny Across Public Sources",
+    "dek": "Command-generated draft from 30 simulated source packets.",
+    "createdAt": "2026-05-08T00:12:50.556Z",
+    "sourceCount": 30,
+    "deniedForBias": 5,
+    "fairnessScore": 93,
+    "accuracyScore": 90,
+    "terms": [
+      "sudden",
+      "pressure",
+      "around",
+      "semiconductor",
+      "export"
+    ],
+    "sources": [
+      "Reuters public wire",
+      "Associated Press bulletin",
+      "government records desk",
+      "market filings index",
+      "regional newsroom archive"
+    ],
+    "summary": "Signal compared public reporting around sudden pressure around semiconductor export controls, prioritizing overlapping claims from independent outlets and labeling single-source details as provisional.",
+    "body": [
+      "Public reporting around sudden pressure around semiconductor export controls is moving through several source clusters, with early signals from wire services, public records, and regional desks.",
+      "Signal compared 30 article and record fragments, rejecting 5 packets for excessive framing, duplication, or weak attribution.",
+      "The clearest pattern is source overlap: multiple outlets are tracking the same core development, while timing, impact, and second-order consequences still require direct citation.",
+      "This command draft should be reviewed before publication. Production mode should attach live links, preserve disputed claims, and show source provenance for each factual sentence."
+    ],
+    "facts": [
+      {
+        "text": "sudden pressure around",
+        "source": "wire services; regional archive; public records index"
+      },
+      {
+        "text": "30 article and record fragments",
+        "source": "command pipeline source counter; duplicate removal pass"
+      },
+      {
+        "text": "5 packets for excessive framing",
+        "source": "bias and duplication filter; local scoring heuristic"
+      }
+    ]
+  },
+  {
+    "id": "cmd-1778199141234",
+    "source": "openclaw-x",
+    "tag": "x-trend",
+    "trendUrl": "https://x.com/example/status/124",
+    "prompt": "openclaw bot detects sudden pressure around semiconductor export controls on x",
+    "headline": "Sudden Pressure Around Semiconductor Export Controls Draws Fresh Scrutiny Across Public Sources",
+    "dek": "Command-generated draft from 30 simulated source packets.",
+    "createdAt": "2026-05-08T00:12:21.234Z",
+    "sourceCount": 30,
+    "deniedForBias": 5,
+    "fairnessScore": 93,
+    "accuracyScore": 90,
+    "terms": [
+      "sudden",
+      "pressure",
+      "around",
+      "semiconductor",
+      "export"
+    ],
+    "sources": [
+      "Reuters public wire",
+      "Associated Press bulletin",
+      "government records desk",
+      "market filings index",
+      "regional newsroom archive"
+    ],
+    "summary": "Signal compared public reporting around openclaw bot detects sudden pressure around semiconductor export controls on x, prioritizing overlapping claims from independent outlets and labeling single-source details as provisional.",
+    "body": [
+      "Public reporting around openclaw bot detects sudden pressure around semiconductor export controls on x is moving through several source clusters, with early signals from wire services, public records, and regional desks.",
+      "Signal compared 30 article and record fragments, rejecting 5 packets for excessive framing, duplication, or weak attribution.",
+      "The clearest pattern is source overlap: multiple outlets are tracking the same core development, while timing, impact, and second-order consequences still require direct citation.",
+      "This command draft should be reviewed before publication. Production mode should attach live links, preserve disputed claims, and show source provenance for each factual sentence."
+    ],
+    "facts": [
+      {
+        "text": "sudden pressure around",
+        "source": "wire services; regional archive; public records index"
+      },
+      {
+        "text": "30 article and record fragments",
+        "source": "command pipeline source counter; duplicate removal pass"
+      },
+      {
+        "text": "5 packets for excessive framing",
+        "source": "bias and duplication filter; local scoring heuristic"
+      }
+    ]
+  },
+  {
+    "id": "cmd-1778199082624",
+    "source": "openclaw-x",
+    "tag": "x-trend",
+    "trendUrl": "https://x.com/example/status/123",
+    "prompt": "openclaw bot detects sudden pressure around semiconductor export controls on x",
+    "headline": "Openclaw Bot Detects Sudden Pressure Around Semiconductor Export Controls On Draws Fresh Scrutiny Across Public Sources",
+    "dek": "Command-generated draft from 42 simulated source packets.",
+    "createdAt": "2026-05-08T00:11:22.624Z",
+    "sourceCount": 42,
+    "deniedForBias": 7,
+    "fairnessScore": 93,
+    "accuracyScore": 94,
+    "terms": [
+      "openclaw",
+      "bot",
+      "detects",
+      "sudden",
+      "pressure"
+    ],
+    "sources": [
+      "Reuters public wire",
+      "Associated Press bulletin",
+      "government records desk",
+      "market filings index",
+      "regional newsroom archive"
+    ],
+    "summary": "Signal compared public reporting around openclaw bot detects sudden pressure around semiconductor export controls on x, prioritizing overlapping claims from independent outlets and labeling single-source details as provisional.",
+    "body": [
+      "Public reporting around openclaw bot detects sudden pressure around semiconductor export controls on x is moving through several source clusters, with early signals from wire services, public records, and regional desks.",
+      "Signal compared 42 article and record fragments, rejecting 7 packets for excessive framing, duplication, or weak attribution.",
+      "The clearest pattern is source overlap: multiple outlets are tracking the same core development, while timing, impact, and second-order consequences still require direct citation.",
+      "This command draft should be reviewed before publication. Production mode should attach live links, preserve disputed claims, and show source provenance for each factual sentence."
+    ],
+    "facts": [
+      {
+        "text": "openclaw bot detects",
+        "source": "wire services; regional archive; public records index"
+      },
+      {
+        "text": "42 article and record fragments",
+        "source": "command pipeline source counter; duplicate removal pass"
+      },
+      {
+        "text": "7 packets for excessive framing",
+        "source": "bias and duplication filter; local scoring heuristic"
+      }
+    ]
+  }
+]

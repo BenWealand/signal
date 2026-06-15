@@ -1,0 +1,24 @@
+# Optional ML/NLP dependencies.
+# Install this when you want spaCy NER and semantic claim similarity.
+# Without these, the backend falls back to simpler local heuristics where possible.
+
+spacy==3.8.14
+
+# Semantic claim similarity (sentence-transformers + CPU torch)
+sentence-transformers==5.4.1
+torch==2.11.0
+transformers==5.8.0
+scipy==1.17.1
+numpy==2.4.4
+scikit-learn==1.8.0
+huggingface-hub==1.13.0
+hf-xet==1.4.3
+safetensors==0.7.0
+tokenizers==0.22.2
+fsspec==2026.4.0
+filelock==3.29.0
+networkx==3.6.1
+sympy==1.14.0
+mpmath==1.3.0
+joblib==1.5.3
+threadpoolctl==3.6.0

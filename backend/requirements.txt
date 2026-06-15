@@ -1,0 +1,6 @@
+# All-in backend install for local development and demos.
+# For a lighter backend, install requirements-core.txt only.
+
+-r requirements-core.txt
+-r requirements-ml.txt
+-r requirements-dev.txt

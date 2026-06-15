@@ -1,0 +1,4 @@
+# Developer/test dependencies.
+# The current tests use unittest from the Python standard library, so this file
+# intentionally has no additional packages yet. Install requirements-core.txt
+# first when running tests against the current backend.
