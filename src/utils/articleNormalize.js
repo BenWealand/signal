@@ -138,8 +138,15 @@ export function buildDraft(prompt) {
 
 export function normalizeCommandArticle(article) {
   const base = buildDraft(article.prompt);
+  const {
+    articleState: _baseArticleState,
+    fallback_reason: _baseFallbackReason,
+    generation_mode: _baseGenerationMode,
+    used_live_sources: _baseUsedLiveSources,
+    ...baseDefaults
+  } = base;
   const merged = {
-    ...base,
+    ...baseDefaults,
     ...article,
     logs: base.logs,
     terms: article.terms?.length ? article.terms : base.terms,
