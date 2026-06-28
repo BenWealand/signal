@@ -1,4 +1,17 @@
-export function ArticleScreen({ draft, prompt, setPrompt, onSubmit, onSave, onShare, onCopyLink, onShareX }) {
+import { GenerationModeToggle } from "./GenerationModeToggle.jsx";
+
+export function ArticleScreen({
+  draft,
+  prompt,
+  setPrompt,
+  onSubmit,
+  generationMode,
+  onGenerationModeChange,
+  onSave,
+  onShare,
+  onCopyLink,
+  onShareX,
+}) {
   const state = draft.articleState || {
     kind: "demo",
     label: "Local/demo fallback article",
@@ -35,6 +48,7 @@ export function ArticleScreen({ draft, prompt, setPrompt, onSubmit, onSave, onSh
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}
         />
+        <GenerationModeToggle compact value={generationMode} onChange={onGenerationModeChange} />
         <button type="submit">Rewrite</button>
       </form>
 

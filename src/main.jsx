@@ -68,6 +68,7 @@ function App() {
   const [account, setAccount] = useStoredState("signal-account", null);
   const [savedArticles, setSavedArticles] = useStoredState("signal-saved-articles", []);
   const [settings, setSettings] = useStoredState("signal-settings", defaultSettings);
+  const [generationMode, setGenerationMode] = useStoredState("signal-generation-mode", "fast");
   const [newsletterEmail, setNewsletterEmail] = useStoredState("signal-newsletter", "");
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [typedSuggestion, setTypedSuggestion] = useState("");
@@ -216,7 +217,7 @@ function App() {
     setDraftPrompt(nextPrompt);
     setPhase("building");
     trackEvent(account?.id, "prompt", { prompt: nextPrompt });
-    apiPost("/articles/write", { prompt: nextPrompt, source: "reader-prompt", tag: "prompt", limit: 10, mode: "fast" })
+    apiPost("/articles/write", { prompt: nextPrompt, source: "reader-prompt", tag: "prompt", limit: 10, mode: generationMode })
       .then((article) => {
         setExternalDraft(normalizeCommandArticle(article));
         setPhase("complete");
@@ -292,7 +293,7 @@ function App() {
     setDraftPrompt(article.prompt);
     setPhase("building");
     setActiveScreen("Latest");
-    apiPost("/articles/write", { prompt: article.prompt, source: "reader-prompt", tag: "prompt", limit: 10, mode: "fast" })
+    apiPost("/articles/write", { prompt: article.prompt, source: "reader-prompt", tag: "prompt", limit: 10, mode: generationMode })
       .then((result) => {
         setExternalDraft(normalizeCommandArticle(result));
         setPhase("complete");
@@ -318,7 +319,7 @@ function App() {
     setPhase("building");
     setActiveScreen("Latest");
     trackEvent(account?.id, "prompt", { prompt: topic, section: "globe-trend" });
-    apiPost("/articles/write", { prompt: topic, source: "globe-trend", tag: "trend", limit: 10, mode: "fast" })
+    apiPost("/articles/write", { prompt: topic, source: "globe-trend", tag: "trend", limit: 10, mode: generationMode })
       .then((article) => {
         setExternalDraft(normalizeCommandArticle(article));
         setPhase("complete");
@@ -357,6 +358,8 @@ function App() {
             onSubmit={handleSubmit}
             prompt={prompt}
             onPromptChange={setPrompt}
+            generationMode={generationMode}
+            onGenerationModeChange={setGenerationMode}
             typedSuggestion={typedSuggestion}
             stories={liveHomeStories}
             newsletterEmail={newsletterEmail}
@@ -396,7 +399,7 @@ function App() {
               setPhase("building");
               setActiveScreen("Latest");
               trackEvent(account?.id, "prompt", { prompt: topic, section: activeScreen });
-              apiPost("/articles/write", { prompt: topic, source: "reader-prompt", tag: "prompt", limit: 10, mode: "fast" })
+                apiPost("/articles/write", { prompt: topic, source: "reader-prompt", tag: "prompt", limit: 10, mode: generationMode })
                 .then((article) => { setExternalDraft(normalizeCommandArticle(article)); setPhase("complete"); })
                 .catch((error) => {
                   window.setTimeout(() => {
@@ -415,6 +418,8 @@ function App() {
             prompt={prompt}
             setPrompt={setPrompt}
             onSubmit={handleSubmit}
+            generationMode={generationMode}
+            onGenerationModeChange={setGenerationMode}
             onSave={handleSaveArticle}
             onShare={handleShareArticle}
             onCopyLink={handleCopyLink}

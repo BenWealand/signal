@@ -1,4 +1,5 @@
 import { Globe } from "../../components/ui/globe.tsx";
+import { GenerationModeToggle } from "../components/GenerationModeToggle.jsx";
 
 function NewsDashboard({
   activeSection,
@@ -64,6 +65,8 @@ export function HomeScreen({
   onSubmit,
   prompt,
   onPromptChange,
+  generationMode,
+  onGenerationModeChange,
   typedSuggestion,
   stories,
   newsletterEmail,
@@ -88,6 +91,7 @@ export function HomeScreen({
           </div>
           <label htmlFor="article-prompt">Build a sourced draft</label>
           <p className="writer-hint">Use a specific topic, place, company, policy, or event. Add names or dates when they matter.</p>
+          <GenerationModeToggle value={generationMode} onChange={onGenerationModeChange} />
           <div className="prompt-row">
             <input
               id="article-prompt"
