@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import re
 
-import numpy as np
-
 from app.ingest.source_registry import domain_from_url
 
 
@@ -86,7 +84,8 @@ def _semantic_groups(texts: list[str]) -> list[list[int]]:
 
     embeddings = get_embeddings(texts)          # (N, D) — already L2-normalised
     sim = cosine_similarity_matrix(embeddings)  # (N, N) cosine similarities
-    np.fill_diagonal(sim, 0.0)                  # ignore self-similarity
+    for i in range(len(texts)):
+        sim[i][i] = 0.0                         # ignore self-similarity
 
     assigned = [False] * len(texts)
     groups: list[list[int]] = []
