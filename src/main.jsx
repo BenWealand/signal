@@ -4,7 +4,7 @@ import { supabase } from "./lib/supabase.js";
 import { apiGet, apiPost } from "./api/client.js";
 import { useStoredState } from "./hooks/useStoredState.js";
 import { SESSION_ID } from "./lib/session.js";
-import { defaultSettings, SECTION_NAMES, SECTION_QUERIES, starterStories } from "./lib/constants.js";
+import { defaultSettings, SECTION_NAMES, SECTION_QUERIES, starterStories, trendPromptPreviews } from "./lib/constants.js";
 import { buildDraft, dedupeStories, normalizeBackendStory, normalizeCommandArticle, storyTitle } from "./utils/articleNormalize.js";
 import { isUsefulTrendTopic, makeGlobeMarkers, normalizeTrendingTopic } from "./utils/globeMarkers.js";
 import { Header } from "./components/Header.jsx";
@@ -114,11 +114,26 @@ function App() {
     return live.length ? live : sectionStories;
   }, [backendStories, sectionStories, activeSection]);
   const trendSuggestions = useMemo(() => {
-    const candidates = dedupeStories([...commandArticles, ...backendStories, ...sectionStories], 10)
+    const liveTopicPrompts = trendingTopics
+      .filter(isUsefulTrendTopic)
+      .map((topic) => normalizeTrendingTopic(topic).headline)
+      .filter(Boolean);
+    const articlePrompts = dedupeStories([...commandArticles, ...backendStories, ...starterStories], 18)
       .map((story) => story.prompt || storyTitle(story))
       .filter(Boolean);
-    return candidates.length ? candidates : Object.values(SECTION_QUERIES);
-  }, [commandArticles, backendStories, sectionStories]);
+    const candidates = [
+      ...liveTopicPrompts,
+      ...articlePrompts,
+      ...trendPromptPreviews,
+      ...Object.values(SECTION_QUERIES),
+    ];
+    return [...new Map(
+      candidates
+        .map((item) => String(item || "").trim())
+        .filter((item) => item.length > 8)
+        .map((item) => [item.toLowerCase(), item]),
+    ).values()].slice(0, 32);
+  }, [commandArticles, backendStories, trendingTopics]);
   const globeMarkers = useMemo(
     () => {
       const topicMarkers = trendingTopics

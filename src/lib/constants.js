@@ -39,6 +39,28 @@ export const starterStories = [
   },
 ];
 
+export const trendPromptPreviews = [
+  ...starterStories.map((story) => story.title),
+  "NBA draft results and team-by-team trade fallout",
+  "AI chip export controls and supply chain rerouting",
+  "Federal Reserve rate path after the latest inflation print",
+  "Commercial real estate losses at regional banks",
+  "Congress budget talks and agency funding deadlines",
+  "Supreme Court rulings affecting federal regulatory power",
+  "Ukraine ceasefire negotiations and European security guarantees",
+  "Red Sea shipping disruption and insurance costs",
+  "Climate insurance withdrawals in coastal housing markets",
+  "Grid reliability risks during extreme heat alerts",
+  "Cybersecurity breach disclosure rules for public companies",
+  "Semiconductor earnings and data center demand",
+  "Oil prices after OPEC supply guidance",
+  "Election law changes before the next voting deadline",
+  "Public health agencies tracking new respiratory variants",
+  "Major airline delays after severe weather systems",
+  "Treasury yields and mortgage rate pressure on buyers",
+  "Antitrust scrutiny of cloud and AI platform deals",
+];
+
 export const defaultSettings = {
   region: "Global",
   edition: "Morning",
