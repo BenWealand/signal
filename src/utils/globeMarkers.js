@@ -74,8 +74,8 @@ export function makeGlobeMarkers(stories, activeSection) {
   });
 }
 
-export function normalizeTrendingTopic(topic, index) {
-  const text = topic.entity_text || topic.prompt || topic.headline || topic.title || "";
+export function normalizeTrendingTopic(topic, index = 0) {
+  const text = String(topic.entity_text || topic.prompt || topic.headline || topic.title || "").trim();
   const mapped = inferStoryLocation({ ...topic, headline: text, prompt: text }, index, "World");
   return {
     id: `topic-${index}-${String(text).replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`,

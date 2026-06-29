@@ -200,11 +200,11 @@ export function normalizeBackendStory(story) {
 }
 
 export function storyTitle(story) {
-  return story.topic_label || story.headline || story.title || story.prompt || "Untitled story";
+  return String(story.topic_label || story.headline || story.title || story.prompt || "Untitled story");
 }
 
 export function storyDek(story) {
-  return story.dek || story.summary_text || story.summary || "";
+  return String(story.dek || story.summary_text || story.summary || "");
 }
 
 export function storySourceCount(story) {
