@@ -147,7 +147,7 @@ export function Globe({
     return markers.slice(0, 8).map((marker) => {
       const lat = marker.location[0] * Math.PI / 180;
       const lng = marker.location[1] * Math.PI / 180;
-      const rotatedLng = lng + renderPhi;
+      const rotatedLng = lng - renderPhi;
       const x = Math.cos(lat) * Math.sin(rotatedLng);
       const y0 = Math.sin(lat);
       const z0 = Math.cos(lat) * Math.cos(rotatedLng);
@@ -157,7 +157,7 @@ export function Globe({
         ...marker,
         x: 50 + x * 43,
         y: 50 - y * 43,
-        visible: z > -0.08,
+        visible: z > -0.03,
         scale: Math.max(0.72, Math.min(1.06, 0.82 + z * 0.22)),
       };
     });

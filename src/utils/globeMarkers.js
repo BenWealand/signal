@@ -1,6 +1,9 @@
 import { SECTION_QUERIES } from "../lib/constants.js";
 import { dedupeStories, storyDek, storySourceCount, storyTitle } from "./articleNormalize.js";
 
+const RECENT_TREND_WINDOW_DAYS = 14;
+const RECENT_TREND_WINDOW_MS = RECENT_TREND_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+
 const LOCATION_KEYWORDS = [
   { match: ["washington", "congress", "senate", "white house", "supreme court", "capitol"], region: "Washington", location: [38.9072, -77.0369] },
   { match: ["new york", "wall street", "nasdaq", "united nations", "manhattan"], region: "New York", location: [40.7128, -74.006] },
@@ -35,14 +38,63 @@ const LOCATION_KEYWORDS = [
   { match: ["brooklyn"], region: "Brooklyn", location: [40.6782, -73.9442] },
 ];
 
+function textHasTerm(text, term) {
+  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, "i").test(text);
+}
+
+function locationEvidence(story) {
+  const sourceLinks = Array.isArray(story.sourceLinks) ? story.sourceLinks : [];
+  const body = Array.isArray(story.body) ? story.body.slice(0, 3).join(" ") : "";
+  return [
+    { text: storyTitle(story), weight: 8 },
+    { text: story.prompt || "", weight: 5 },
+    { text: storyDek(story), weight: 4 },
+    { text: `${story.topic_label || ""} ${story.category || ""}`, weight: 4 },
+    { text: sourceLinks.map((link) => `${link.title || ""} ${link.source || ""}`).join(" "), weight: 3 },
+    { text: body, weight: 2 },
+  ];
+}
+
+function storyTimestamp(story) {
+  const value = story.createdAt || story.created_at || story.updated_at || story.published_at;
+  const timestamp = value ? new Date(value).getTime() : NaN;
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function isRecentTrendStory(story) {
+  const timestamp = storyTimestamp(story);
+  if (!timestamp) return false;
+  return Date.now() - timestamp <= RECENT_TREND_WINDOW_MS;
+}
+
 function inferStoryLocation(story) {
-  const text = `${storyTitle(story)} ${storyDek(story)} ${story.topic_label || ""} ${story.category || ""}`.toLowerCase();
-  const directMatch = LOCATION_KEYWORDS.find((entry) => entry.match.some((term) => text.includes(term)));
-  return directMatch || null;
+  const evidence = locationEvidence(story);
+  let best = null;
+  let bestScore = 0;
+
+  for (const entry of LOCATION_KEYWORDS) {
+    let score = 0;
+    for (const part of evidence) {
+      const text = String(part.text || "").toLowerCase();
+      if (!text) continue;
+      for (const term of entry.match) {
+        if (textHasTerm(text, term.toLowerCase())) {
+          score += part.weight + Math.min(4, term.length / 4);
+        }
+      }
+    }
+    if (score > bestScore) {
+      best = entry;
+      bestScore = score;
+    }
+  }
+
+  return bestScore >= 6 ? best : null;
 }
 
 export function makeGlobeMarkers(stories) {
-  const selected = dedupeStories(stories, 16);
+  const selected = dedupeStories(stories.filter(isRecentTrendStory), 24);
   return selected.flatMap((story, index) => {
     const mapped = inferStoryLocation(story);
     if (!mapped) return [];

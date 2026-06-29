@@ -140,7 +140,7 @@ function App() {
         .filter(isUsefulTrendTopic)
         .map(normalizeTrendingTopic)
         .filter(Boolean);
-      const articleMarkers = makeGlobeMarkers([...commandArticles, ...backendStories, ...sectionStories], activeSection);
+      const articleMarkers = makeGlobeMarkers([...commandArticles, ...backendStories], activeSection);
       const seen = new Set(topicMarkers.map((marker) => marker.headline.toLowerCase()));
       return [
         ...topicMarkers,
