@@ -646,6 +646,18 @@ def _article_from_consensus(
         else f"Signal tracked {source_count} public sources for: {prompt}."
     )
     body = _article_body(prompt, source_articles, supported, unique, use_gemini=use_gemini)
+    if use_gemini and body:
+        try:
+            from app.llm.gemini_writer import write_article_header_with_gemini
+            gemini_header = write_article_header_with_gemini(prompt, body, source_articles)
+        except Exception:
+            logger.exception("Gemini article header generation failed", extra={"prompt": prompt})
+            gemini_header = None
+        if gemini_header:
+            headline = gemini_header["headline"]
+            dek = gemini_header["dek"]
+            if not supported:
+                summary = dek or headline
     facts = _facts_from_consensus(source_articles, supported, unique)
     terms = list(dict.fromkeys(re.findall(r"[a-z]{4,}", prompt.lower())))[:5]
     source_quality = source_quality or evaluate_source_quality(source_articles, prompt, gate=THOROUGH_SOURCE_GATE)

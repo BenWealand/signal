@@ -270,3 +270,102 @@ Write a factual news article based ONLY on the source material above. Follow the
         _set_last_error(kind="request", model=model, message=str(exc))
         print(f"[Gemini] Request failed: {exc}", file=sys.stderr)
         return None
+
+
+def write_article_header_with_gemini(
+    query: str,
+    body_paragraphs: list[str],
+    source_articles: list[dict],
+) -> dict[str, str] | None:
+    """
+    Generate display headline and dek from the finished article body.
+    Falls back cleanly when Gemini is unavailable or returns invalid JSON.
+    """
+    key = settings.gemini_api_key
+    if not key:
+        _set_last_error(kind="config", message="GEMINI_API_KEY is not set")
+        return None
+    if _rate_limited():
+        _set_last_error(kind="rate_limit", message="Local Gemini rate cap reached")
+        return None
+
+    body = "\n\n".join(p.strip() for p in body_paragraphs if p and p.strip())
+    if len(body) < 180:
+        _set_last_error(kind="input", message="Article body was too short for headline generation")
+        return None
+
+    source_names = sorted({str(a.get("source_name") or "").strip() for a in source_articles if a.get("source_name")})
+    model = settings.gemini_model
+    _clear_last_error()
+
+    prompt = f"""You are a senior news editor at Signal.
+
+Topic requested by reader: {query}
+Sources reviewed: {", ".join(source_names[:6]) or "public source material"}
+
+Finished article body:
+---
+{body[:6500]}
+---
+
+Write the article display header based ONLY on the finished article body.
+
+Return strict JSON only, with exactly these keys:
+{{
+  "headline": "A specific, factual news headline, 8-14 words, no clickbait",
+  "dek": "A one-sentence summary under 24 words"
+}}
+
+Rules:
+1. Do not add facts that are not in the body.
+2. Do not mention Signal in the headline.
+3. Do not use vague words like scrutiny, questions, situation, or developments unless the body is genuinely about process.
+4. Prefer the most concrete confirmed outcome in the lead paragraph.
+5. No markdown, no code fence, no explanation."""
+
+    payload = json.dumps({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": 0.2,
+            "maxOutputTokens": 220,
+            "topP": 0.85,
+        },
+    }).encode("utf-8")
+
+    url = f"{_API_BASE}/{urllib.parse.quote(model, safe='')}:generateContent"
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "x-goog-api-key": key,
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=18) as resp:
+            raw = resp.read().decode("utf-8", errors="ignore")
+        data = json.loads(raw)
+        parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        text = parts[0].get("text", "").strip() if parts else ""
+        if text.startswith("```"):
+            text = text.strip("`").removeprefix("json").strip()
+        parsed = json.loads(text)
+        headline = str(parsed.get("headline", "")).strip().strip('"')
+        dek = str(parsed.get("dek", "")).strip().strip('"')
+        if len(headline.split()) < 4 or len(headline) > 150:
+            raise ValueError("Gemini headline failed length validation")
+        if len(dek.split()) < 5 or len(dek) > 220:
+            raise ValueError("Gemini dek failed length validation")
+        return {"headline": headline, "dek": dek}
+    except urllib.error.HTTPError as exc:
+        if exc.code == 429:
+            _record_429()
+        _set_last_error(kind="header_http", model=model, http_status=exc.code, message=str(exc))
+        print(f"[Gemini] Header generation HTTP {exc.code}: {exc}", file=sys.stderr)
+        return None
+    except Exception as exc:
+        _set_last_error(kind="header_request", model=model, message=str(exc))
+        print(f"[Gemini] Header generation failed: {exc}", file=sys.stderr)
+        return None

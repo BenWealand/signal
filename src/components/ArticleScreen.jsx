@@ -48,7 +48,7 @@ export function ArticleScreen({
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}
         />
-        <GenerationModeToggle compact value={generationMode} onChange={onGenerationModeChange} />
+        <GenerationModeToggle value={generationMode} onChange={onGenerationModeChange} />
         <button type="submit">Rewrite</button>
       </form>
 
