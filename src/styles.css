@@ -275,8 +275,8 @@ a {
 .news-marker-label {
   pointer-events: auto;
   position: absolute;
-  top: var(--marker-top, 50%);
-  left: var(--marker-left, 50%);
+  top: var(--marker-y, 50%);
+  left: var(--marker-x, 50%);
   display: grid;
   gap: 0.08rem;
   min-width: 7.8rem;
@@ -291,12 +291,11 @@ a {
   cursor: pointer;
   font-size: 0.66rem;
   line-height: 1.15;
+  opacity: var(--marker-opacity, 1);
   text-align: left;
   white-space: normal;
-  transform: translate(-50%, -50%);
-  animation: marker-drift 5.8s ease-in-out infinite;
-  animation-delay: var(--marker-delay, 0s);
-  transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+  transform: translate(-50%, -50%) scale(var(--marker-scale, 1));
+  transition: border-color 140ms ease, box-shadow 140ms ease, opacity 120ms ease, transform 120ms linear;
 }
 
 .news-marker-label:hover,
@@ -304,17 +303,8 @@ a {
   border-color: rgba(11, 90, 64, 0.55);
   box-shadow: 0 0.55rem 1.5rem rgba(18, 38, 30, 0.18);
   outline: none;
-  transform: translate(-50%, -50%) scale(1.03);
+  transform: translate(-50%, -50%) scale(calc(var(--marker-scale, 1) + 0.04));
 }
-
-.news-marker-label.marker-pos-0 { --marker-top: 18%; --marker-left: 25%; }
-.news-marker-label.marker-pos-1 { --marker-top: 13%; --marker-left: 58%; }
-.news-marker-label.marker-pos-2 { --marker-top: 28%; --marker-left: 82%; }
-.news-marker-label.marker-pos-3 { --marker-top: 52%; --marker-left: 86%; }
-.news-marker-label.marker-pos-4 { --marker-top: 75%; --marker-left: 67%; }
-.news-marker-label.marker-pos-5 { --marker-top: 82%; --marker-left: 35%; }
-.news-marker-label.marker-pos-6 { --marker-top: 58%; --marker-left: 15%; }
-.news-marker-label.marker-pos-7 { --marker-top: 35%; --marker-left: 18%; }
 
 .news-marker-label::before {
   content: "";
@@ -330,12 +320,6 @@ a {
     0 0 0.34rem rgba(251, 100, 21, 1),
     0 0 0.9rem rgba(251, 100, 21, 0.58),
     0 0 1.6rem rgba(251, 100, 21, 0.28);
-}
-
-@keyframes marker-drift {
-  0% { transform: translate(-50%, -50%) translate3d(-0.2rem, 0.1rem, 0); }
-  50% { transform: translate(-50%, -50%) translate3d(0.35rem, -0.25rem, 0); }
-  100% { transform: translate(-50%, -50%) translate3d(-0.2rem, 0.1rem, 0); }
 }
 
 .news-marker-label span {

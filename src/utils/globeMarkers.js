@@ -1,67 +1,51 @@
-import { SECTION_QUERIES, starterStories } from "../lib/constants.js";
+import { SECTION_QUERIES } from "../lib/constants.js";
 import { dedupeStories, storyDek, storySourceCount, storyTitle } from "./articleNormalize.js";
 
-const SECTION_LOCATIONS = {
-  World: { region: "London", location: [51.5072, -0.1276] },
-  Politics: { region: "Washington", location: [38.9072, -77.0369] },
-  Markets: { region: "New York", location: [40.7128, -74.006] },
-  Technology: { region: "San Francisco", location: [37.7749, -122.4194] },
-  Climate: { region: "Sao Paulo", location: [-23.5505, -46.6333] },
-};
-
-const TREND_LOCATIONS = [
-  { region: "London", location: [51.5072, -0.1276] },
-  { region: "Washington", location: [38.9072, -77.0369] },
-  { region: "New York", location: [40.7128, -74.006] },
-  { region: "San Francisco", location: [37.7749, -122.4194] },
-  { region: "Tokyo", location: [35.6762, 139.6503] },
-  { region: "Sao Paulo", location: [-23.5505, -46.6333] },
-  { region: "Delhi", location: [28.6139, 77.209] },
-  { region: "Cairo", location: [30.0444, 31.2357] },
-  { region: "Berlin", location: [52.52, 13.405] },
-  { region: "Sydney", location: [-33.8688, 151.2093] },
-  { region: "Singapore", location: [1.3521, 103.8198] },
-  { region: "Nairobi", location: [-1.2921, 36.8219] },
-];
-
 const LOCATION_KEYWORDS = [
-  { match: ["washington", "congress", "senate", "white house", "supreme court"], region: "Washington", location: [38.9072, -77.0369] },
-  { match: ["new york", "wall street", "nasdaq", "united nations"], region: "New York", location: [40.7128, -74.006] },
-  { match: ["london", "uk", "britain", "parliament"], region: "London", location: [51.5072, -0.1276] },
-  { match: ["berlin", "germany", "european union", "brussels"], region: "Berlin", location: [52.52, 13.405] },
+  { match: ["washington", "congress", "senate", "white house", "supreme court", "capitol"], region: "Washington", location: [38.9072, -77.0369] },
+  { match: ["new york", "wall street", "nasdaq", "united nations", "manhattan"], region: "New York", location: [40.7128, -74.006] },
+  { match: ["london", "uk", "u.k.", "britain", "parliament", "england"], region: "London", location: [51.5072, -0.1276] },
+  { match: ["paris", "france"], region: "Paris", location: [48.8566, 2.3522] },
+  { match: ["berlin", "germany"], region: "Berlin", location: [52.52, 13.405] },
+  { match: ["brussels", "european union", "eu"], region: "Brussels", location: [50.8503, 4.3517] },
+  { match: ["kyiv", "kiev", "ukraine"], region: "Kyiv", location: [50.4501, 30.5234] },
+  { match: ["moscow", "russia"], region: "Moscow", location: [55.7558, 37.6173] },
   { match: ["tokyo", "japan"], region: "Tokyo", location: [35.6762, 139.6503] },
-  { match: ["china", "beijing", "hong kong"], region: "Beijing", location: [39.9042, 116.4074] },
-  { match: ["india", "delhi", "rourkela", "nit"], region: "Delhi", location: [28.6139, 77.209] },
-  { match: ["middle east", "egypt", "cairo", "gaza", "israel"], region: "Cairo", location: [30.0444, 31.2357] },
-  { match: ["brazil", "amazon", "sao paulo"], region: "Sao Paulo", location: [-23.5505, -46.6333] },
-  { match: ["africa", "kenya", "nairobi"], region: "Nairobi", location: [-1.2921, 36.8219] },
+  { match: ["beijing", "china"], region: "Beijing", location: [39.9042, 116.4074] },
+  { match: ["hong kong"], region: "Hong Kong", location: [22.3193, 114.1694] },
+  { match: ["taiwan", "taipei"], region: "Taipei", location: [25.033, 121.5654] },
+  { match: ["india", "delhi", "new delhi"], region: "Delhi", location: [28.6139, 77.209] },
+  { match: ["mexico", "mexico city"], region: "Mexico City", location: [19.4326, -99.1332] },
+  { match: ["canada", "ottawa"], region: "Ottawa", location: [45.4215, -75.6972] },
+  { match: ["brazil", "amazon", "brasilia"], region: "Brasilia", location: [-15.7939, -47.8828] },
+  { match: ["sao paulo", "são paulo"], region: "Sao Paulo", location: [-23.5505, -46.6333] },
+  { match: ["argentina", "buenos aires"], region: "Buenos Aires", location: [-34.6037, -58.3816] },
+  { match: ["egypt", "cairo"], region: "Cairo", location: [30.0444, 31.2357] },
+  { match: ["gaza", "israel", "jerusalem"], region: "Jerusalem", location: [31.7683, 35.2137] },
+  { match: ["iran", "tehran"], region: "Tehran", location: [35.6892, 51.389] },
+  { match: ["saudi", "riyadh"], region: "Riyadh", location: [24.7136, 46.6753] },
+  { match: ["kenya", "nairobi"], region: "Nairobi", location: [-1.2921, 36.8219] },
+  { match: ["south africa", "johannesburg"], region: "Johannesburg", location: [-26.2041, 28.0473] },
   { match: ["australia", "sydney"], region: "Sydney", location: [-33.8688, 151.2093] },
-  { match: ["singapore", "asean"], region: "Singapore", location: [1.3521, 103.8198] },
-  { match: ["ai", "openai", "google", "apple", "meta", "nvidia", "silicon valley"], region: "San Francisco", location: [37.7749, -122.4194] },
+  { match: ["singapore"], region: "Singapore", location: [1.3521, 103.8198] },
+  { match: ["san francisco", "silicon valley", "openai", "apple", "google", "meta", "nvidia"], region: "San Francisco", location: [37.7749, -122.4194] },
+  { match: ["los angeles", "hollywood"], region: "Los Angeles", location: [34.0522, -118.2437] },
+  { match: ["miami"], region: "Miami", location: [25.7617, -80.1918] },
+  { match: ["chicago"], region: "Chicago", location: [41.8781, -87.6298] },
+  { match: ["brooklyn"], region: "Brooklyn", location: [40.6782, -73.9442] },
 ];
 
-function inferStorySection(story, fallback = "World") {
-  const text = `${story.section || ""} ${story.source || ""} ${story.prompt || ""} ${storyTitle(story)}`.toLowerCase();
-  if (text.includes("politic") || text.includes("congress") || text.includes("senate") || text.includes("government")) return "Politics";
-  if (text.includes("market") || text.includes("stock") || text.includes("inflation") || text.includes("bank") || text.includes("econom")) return "Markets";
-  if (text.includes("technology") || text.includes("ai") || text.includes("chip") || text.includes("cyber") || text.includes("semiconductor")) return "Technology";
-  if (text.includes("climate") || text.includes("weather") || text.includes("insurance") || text.includes("environment")) return "Climate";
-  return SECTION_LOCATIONS[story.section] ? story.section : fallback;
-}
-
-function inferStoryLocation(story, index, fallbackSection) {
+function inferStoryLocation(story) {
   const text = `${storyTitle(story)} ${storyDek(story)} ${story.topic_label || ""} ${story.category || ""}`.toLowerCase();
   const directMatch = LOCATION_KEYWORDS.find((entry) => entry.match.some((term) => text.includes(term)));
-  if (directMatch) return directMatch;
-  const sectionMatch = SECTION_LOCATIONS[inferStorySection(story, fallbackSection)];
-  return index % 2 === 0 && sectionMatch ? sectionMatch : TREND_LOCATIONS[index % TREND_LOCATIONS.length];
+  return directMatch || null;
 }
 
-export function makeGlobeMarkers(stories, activeSection) {
-  const selected = dedupeStories(stories, 10);
-  const source = selected.length ? selected : starterStories;
-  return source.map((story, index) => {
-    const mapped = inferStoryLocation(story, index, activeSection);
+export function makeGlobeMarkers(stories) {
+  const selected = dedupeStories(stories, 16);
+  return selected.flatMap((story, index) => {
+    const mapped = inferStoryLocation(story);
+    if (!mapped) return [];
     return {
       id: `trend-${index}-${String(story.id || storyTitle(story)).replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`,
       location: mapped.location,
@@ -76,7 +60,8 @@ export function makeGlobeMarkers(stories, activeSection) {
 
 export function normalizeTrendingTopic(topic, index = 0) {
   const text = String(topic.entity_text || topic.prompt || topic.headline || topic.title || "").trim();
-  const mapped = inferStoryLocation({ ...topic, headline: text, prompt: text }, index, "World");
+  const mapped = inferStoryLocation({ ...topic, headline: text, prompt: text });
+  if (!mapped) return null;
   return {
     id: `topic-${index}-${String(text).replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`,
     location: mapped.location,

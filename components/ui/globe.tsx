@@ -1,6 +1,6 @@
 "use client";
 
-import { type CSSProperties, useEffect, useMemo, useRef } from "react";
+import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import createGlobe, { type COBEOptions } from "cobe";
 import { useMotionValue, useSpring } from "motion/react";
 
@@ -14,6 +14,13 @@ export type GlobeMarker = {
   headline: string;
   prompt?: string;
   article?: unknown;
+};
+
+type ProjectedMarker = GlobeMarker & {
+  x: number;
+  y: number;
+  visible: boolean;
+  scale: number;
 };
 
 const NEWS_MARKERS: GlobeMarker[] = [
@@ -102,6 +109,7 @@ export function Globe({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const phiRef = useRef(0);
   const widthRef = useRef(0);
+  const [renderPhi, setRenderPhi] = useState(0);
   const pointerInteracting = useRef<number | null>(null);
   const pointerInteractionMovement = useRef(0);
 
@@ -134,6 +142,27 @@ export function Globe({
     arcs: [],
   }), [config, markers]);
 
+  const projectedMarkers = useMemo<ProjectedMarker[]>(() => {
+    const theta = Number(globeConfig.theta || 0);
+    return markers.slice(0, 8).map((marker) => {
+      const lat = marker.location[0] * Math.PI / 180;
+      const lng = marker.location[1] * Math.PI / 180;
+      const rotatedLng = lng + renderPhi;
+      const x = Math.cos(lat) * Math.sin(rotatedLng);
+      const y0 = Math.sin(lat);
+      const z0 = Math.cos(lat) * Math.cos(rotatedLng);
+      const y = y0 * Math.cos(theta) - z0 * Math.sin(theta);
+      const z = y0 * Math.sin(theta) + z0 * Math.cos(theta);
+      return {
+        ...marker,
+        x: 50 + x * 43,
+        y: 50 - y * 43,
+        visible: z > -0.08,
+        scale: Math.max(0.72, Math.min(1.06, 0.82 + z * 0.22)),
+      };
+    });
+  }, [globeConfig.theta, markers, renderPhi]);
+
   useEffect(() => {
     const onResize = () => {
       if (canvasRef.current) {
@@ -157,6 +186,7 @@ export function Globe({
         width: widthRef.current * 2,
         height: widthRef.current * 2,
       });
+      setRenderPhi(phiRef.current + rs.get());
       animationFrame = requestAnimationFrame(animate);
     };
 
@@ -188,13 +218,20 @@ export function Globe({
         }
       />
       <div className="news-marker-layer" aria-label="Clickable global trends">
-        {markers.slice(0, 8).map((marker, index) => (
+        {projectedMarkers.map((marker) => (
         <button
           type="button"
-          className={`news-marker-label marker-pos-${index % 8}`}
+          className="news-marker-label"
           key={marker.id}
           onClick={() => onMarkerClick?.(marker)}
-          style={{ "--marker-delay": `${index * -0.42}s` } as CSSProperties}
+          style={{
+            "--marker-x": `${marker.x}%`,
+            "--marker-y": `${marker.y}%`,
+            "--marker-opacity": marker.visible ? 1 : 0,
+            "--marker-scale": marker.scale,
+          } as CSSProperties}
+          aria-hidden={!marker.visible}
+          tabIndex={marker.visible ? 0 : -1}
         >
           <span>{marker.region}</span>
           <strong>{marker.headline}</strong>

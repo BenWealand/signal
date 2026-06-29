@@ -116,7 +116,7 @@ function App() {
   const trendSuggestions = useMemo(() => {
     const liveTopicPrompts = trendingTopics
       .filter(isUsefulTrendTopic)
-      .map((topic, index) => normalizeTrendingTopic(topic, index).headline)
+      .map((topic, index) => normalizeTrendingTopic(topic, index)?.headline)
       .filter(Boolean);
     const articlePrompts = dedupeStories([...commandArticles, ...backendStories, ...starterStories], 18)
       .map((story) => story.prompt || storyTitle(story))
@@ -139,7 +139,7 @@ function App() {
       const topicMarkers = trendingTopics
         .filter(isUsefulTrendTopic)
         .map(normalizeTrendingTopic)
-        .filter((marker) => marker.headline);
+        .filter(Boolean);
       const articleMarkers = makeGlobeMarkers([...commandArticles, ...backendStories, ...sectionStories], activeSection);
       const seen = new Set(topicMarkers.map((marker) => marker.headline.toLowerCase()));
       return [
