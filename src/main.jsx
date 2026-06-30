@@ -59,6 +59,7 @@ function App() {
   const [activeSection, setActiveSection] = useState("World");
   const [accountOpen, setAccountOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [toast, setToast] = useState("");
   const [commandArticles, setCommandArticles] = useState([]);
   const [backendStories, setBackendStories] = useState([]);
@@ -72,6 +73,8 @@ function App() {
   const [newsletterEmail, setNewsletterEmail] = useStoredState("signal-newsletter", "");
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [typedSuggestion, setTypedSuggestion] = useState("");
+  const [articleSocial, setArticleSocial] = useState({ likeCount: 0, liked: false, comments: [] });
+  const [notifications, setNotifications] = useState([]);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -159,6 +162,9 @@ function App() {
 
   const currentSuggestion = trendSuggestions[suggestionIndex % trendSuggestions.length] || "climate pressure on coastal insurance markets";
 
+  const currentArticleId = externalDraft?.id || "";
+  const unreadNotificationCount = notifications.filter((item) => !item.is_read).length;
+
   useEffect(() => {
     setTypedSuggestion("");
     let index = 0;
@@ -170,6 +176,26 @@ function App() {
     }, 28);
     return () => window.clearInterval(timer);
   }, [currentSuggestion]);
+
+  useEffect(() => {
+    if (!currentArticleId) {
+      setArticleSocial({ likeCount: 0, liked: false, comments: [] });
+      return;
+    }
+    const params = new URLSearchParams({ session_id: SESSION_ID });
+    if (account?.id) params.set("user_id", String(account.id));
+    apiGet(`/articles/${encodeURIComponent(currentArticleId)}/social?${params.toString()}`)
+      .then(setArticleSocial)
+      .catch(() => setArticleSocial({ likeCount: 0, liked: false, comments: [] }));
+  }, [currentArticleId, account?.id]);
+
+  useEffect(() => {
+    if (!account?.id) {
+      setNotifications([]);
+      return;
+    }
+    apiGet(`/users/${account.id}/notifications`).then(setNotifications).catch(() => setNotifications([]));
+  }, [account?.id, notificationsOpen]);
 
   useEffect(() => {
     let cancelled = false;
@@ -232,7 +258,7 @@ function App() {
     setDraftPrompt(nextPrompt);
     setPhase("building");
     trackEvent(account?.id, "prompt", { prompt: nextPrompt });
-    apiPost("/articles/write", { prompt: nextPrompt, source: "reader-prompt", tag: "prompt", limit: 10, mode: generationMode })
+    apiPost("/articles/write", { prompt: nextPrompt, source: "reader-prompt", tag: "prompt", limit: 10, mode: generationMode, user_id: account?.id || null })
       .then((article) => {
         setExternalDraft(normalizeCommandArticle(article));
         setPhase("complete");
@@ -250,6 +276,68 @@ function App() {
     window.setTimeout(() => setToast(""), 2400);
   };
 
+  const buildRecommendedPrompt = (nextPrompt) => {
+    if (!nextPrompt) return;
+    setPrompt(nextPrompt);
+    setExternalDraft(null);
+    setDraftPrompt(nextPrompt);
+    setPhase("building");
+    setActiveScreen("Latest");
+    trackEvent(account?.id, "prompt", { prompt: nextPrompt, topic: "recommended-follow-up" });
+    apiPost("/articles/write", { prompt: nextPrompt, source: "recommended-follow-up", tag: "prompt", limit: 10, mode: "fast", user_id: account?.id || null })
+      .then((article) => {
+        setExternalDraft(normalizeCommandArticle(article));
+        setPhase("complete");
+      })
+      .catch((error) => {
+        window.setTimeout(() => {
+          setExternalDraft(localFailureDraft(nextPrompt, error));
+          setPhase("complete");
+        }, FALLBACK_DELAY_MS);
+      });
+  };
+
+  const handleLikeArticle = () => {
+    if (!draft?.id) return;
+    apiPost(`/articles/${encodeURIComponent(draft.id)}/likes`, {
+      user_id: account?.id || null,
+      session_id: SESSION_ID,
+      actor_name: account?.name || "Reader",
+    }).then(setArticleSocial).catch(() => showToast("Like could not be saved."));
+  };
+
+  const handleCommentArticle = (body, parentCommentId = null) => {
+    if (!draft?.id || !body.trim()) return;
+    apiPost(`/articles/${encodeURIComponent(draft.id)}/comments`, {
+      user_id: account?.id || null,
+      session_id: SESSION_ID,
+      author_name: account?.name || "Reader",
+      body,
+      parent_comment_id: parentCommentId,
+    })
+      .then(() => apiGet(`/articles/${encodeURIComponent(draft.id)}/social?session_id=${encodeURIComponent(SESSION_ID)}${account?.id ? `&user_id=${account.id}` : ""}`))
+      .then(setArticleSocial)
+      .catch(() => showToast("Comment could not be saved."));
+  };
+
+  const handleLikeComment = (commentId) => {
+    apiPost(`/comments/${commentId}/likes`, {
+      user_id: account?.id || null,
+      session_id: SESSION_ID,
+      actor_name: account?.name || "Reader",
+    })
+      .then(() => apiGet(`/articles/${encodeURIComponent(draft.id)}/social?session_id=${encodeURIComponent(SESSION_ID)}${account?.id ? `&user_id=${account.id}` : ""}`))
+      .then(setArticleSocial)
+      .catch(() => showToast("Comment like could not be saved."));
+  };
+
+  const openNotifications = () => {
+    setNotificationsOpen(true);
+    if (account?.id) {
+      apiPost(`/users/${account.id}/notifications/read`, {}).catch(() => {});
+    }
+  };
+
   const handleSaveArticle = () => {
     const item = {
       id: `${Date.now()}`,
@@ -265,6 +353,7 @@ function App() {
       title: draft.headline,
       source_count: draft.sourceCount,
     }).catch(() => {});
+    trackEvent(account?.id, "save", { article_id: draft.id || item.id, prompt: draftPrompt });
     showToast("Article saved to your account.");
   };
 
@@ -308,7 +397,7 @@ function App() {
     setDraftPrompt(article.prompt);
     setPhase("building");
     setActiveScreen("Latest");
-    apiPost("/articles/write", { prompt: article.prompt, source: "reader-prompt", tag: "prompt", limit: 10, mode: generationMode })
+    apiPost("/articles/write", { prompt: article.prompt, source: "reader-prompt", tag: "prompt", limit: 10, mode: generationMode, user_id: account?.id || null })
       .then((result) => {
         setExternalDraft(normalizeCommandArticle(result));
         setPhase("complete");
@@ -334,7 +423,7 @@ function App() {
     setPhase("building");
     setActiveScreen("Latest");
     trackEvent(account?.id, "prompt", { prompt: topic, section: "globe-trend" });
-    apiPost("/articles/write", { prompt: topic, source: "globe-trend", tag: "trend", limit: 10, mode: generationMode })
+    apiPost("/articles/write", { prompt: topic, source: "globe-trend", tag: "trend", limit: 10, mode: generationMode, user_id: account?.id || null })
       .then((article) => {
         setExternalDraft(normalizeCommandArticle(article));
         setPhase("complete");
@@ -361,6 +450,8 @@ function App() {
         onSectionChange={setActiveSection}
         onOpenAccount={() => setAccountOpen(true)}
         onOpenSettings={() => setSettingsOpen(true)}
+        onOpenNotifications={openNotifications}
+        notificationCount={unreadNotificationCount}
         signedInUser={account}
       />
 
@@ -394,7 +485,7 @@ function App() {
           />
         )}
 
-        {!hasDraft && activeScreen === "Trends" && (
+        {!hasDraft && activeScreen === "Trending" && (
           <TrendsScreen commandArticles={[...commandArticles, ...backendStories]} onOpenArticle={openCommandArticle} />
         )}
 
@@ -414,7 +505,7 @@ function App() {
               setPhase("building");
               setActiveScreen("Latest");
               trackEvent(account?.id, "prompt", { prompt: topic, section: activeScreen });
-                apiPost("/articles/write", { prompt: topic, source: "reader-prompt", tag: "prompt", limit: 10, mode: generationMode })
+                apiPost("/articles/write", { prompt: topic, source: "reader-prompt", tag: "prompt", limit: 10, mode: generationMode, user_id: account?.id || null })
                 .then((article) => { setExternalDraft(normalizeCommandArticle(article)); setPhase("complete"); })
                 .catch((error) => {
                   window.setTimeout(() => {
@@ -439,6 +530,11 @@ function App() {
             onShare={handleShareArticle}
             onCopyLink={handleCopyLink}
             onShareX={handleShareX}
+            onRecommendedPrompt={buildRecommendedPrompt}
+            social={articleSocial}
+            onLikeArticle={handleLikeArticle}
+            onCommentArticle={handleCommentArticle}
+            onLikeComment={handleLikeComment}
           />
         )}
       </main>
@@ -472,6 +568,25 @@ function App() {
           onToast={showToast}
           account={account}
         />
+      )}
+      {notificationsOpen && (
+        <div className="modal-backdrop" onClick={() => setNotificationsOpen(false)}>
+          <section className="modal-card notification-inbox" onClick={(event) => event.stopPropagation()}>
+            <button className="modal-close" type="button" onClick={() => setNotificationsOpen(false)}>Close</button>
+            <span>Inbox</span>
+            <h2>Notifications</h2>
+            {account ? (
+              notifications.length ? notifications.map((item) => (
+                <article className={`notification-row ${item.is_read ? "" : "is-unread"}`} key={item.id}>
+                  <strong>{item.message}</strong>
+                  <em>{item.created_at ? new Date(item.created_at).toLocaleString() : ""}</em>
+                </article>
+              )) : <p>No notifications yet.</p>
+            ) : (
+              <p>Sign in to receive comment, reply, like, read, and save alerts.</p>
+            )}
+          </section>
+        </div>
       )}
       {toast && <div className="toast" role="status">{toast}</div>}
     </section>

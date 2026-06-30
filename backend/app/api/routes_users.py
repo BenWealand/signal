@@ -36,6 +36,26 @@ class HistoryPayload(BaseModel):
     article_id: str | None = None
 
 
+class ArticleLikePayload(BaseModel):
+    user_id: int | None = None
+    session_id: str | None = None
+    actor_name: str = "Reader"
+
+
+class ArticleCommentPayload(BaseModel):
+    user_id: int | None = None
+    session_id: str | None = None
+    author_name: str = "Reader"
+    body: str
+    parent_comment_id: int | None = None
+
+
+class CommentLikePayload(BaseModel):
+    user_id: int | None = None
+    session_id: str | None = None
+    actor_name: str = "Reader"
+
+
 def _extract_bearer_token(authorization: str) -> str:
     prefix = "Bearer "
     if authorization.startswith(prefix):
@@ -94,3 +114,41 @@ def save_story(payload: SaveStoryPayload, x_signal_token: str = Header(default="
     _require_user_route_guard(payload.user_id, x_signal_token=x_signal_token, authorization=authorization)
     saved_id = queries.save_story(payload.user_id, payload.story_id, payload.title, payload.source_count)
     return {"id": saved_id, "ok": True}
+
+
+@router.get("/articles/{article_id}/social")
+def article_social(article_id: str, user_id: int | None = None, session_id: str | None = None):
+    return queries.get_article_social(article_id, user_id=user_id, session_id=session_id)
+
+
+@router.post("/articles/{article_id}/likes")
+def like_article(article_id: str, payload: ArticleLikePayload):
+    return queries.like_article(article_id, payload.user_id, payload.session_id, payload.actor_name)
+
+
+@router.post("/articles/{article_id}/comments")
+def add_comment(article_id: str, payload: ArticleCommentPayload):
+    return queries.add_article_comment(
+        article_id,
+        payload.body,
+        payload.user_id,
+        payload.session_id,
+        payload.author_name,
+        payload.parent_comment_id,
+    )
+
+
+@router.post("/comments/{comment_id}/likes")
+def like_comment(comment_id: int, payload: CommentLikePayload):
+    return queries.like_comment(comment_id, payload.user_id, payload.session_id, payload.actor_name)
+
+
+@router.get("/users/{user_id}/notifications")
+def user_notifications(user_id: int):
+    return queries.list_notifications(user_id)
+
+
+@router.post("/users/{user_id}/notifications/read")
+def mark_user_notifications_read(user_id: int):
+    queries.mark_notifications_read(user_id)
+    return {"ok": True}

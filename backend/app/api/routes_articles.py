@@ -32,6 +32,7 @@ class TrendArticleRequest(BaseModel):
     tag: str = "trend"
     limit: int = 12
     mode: str = "fast"
+    user_id: int | None = None
 
     @validator("prompt")
     def prompt_size(cls, value: str) -> str:
@@ -227,6 +228,7 @@ def generate_from_trend(
     article["source"] = payload.source
     article["trendUrl"] = payload.trend_url
     article["tag"] = payload.tag
+    article["ownerUserId"] = payload.user_id
     queries.save_generated_article(article)
     return article
 
@@ -247,6 +249,7 @@ def generate_x_article_reply(
     article["source"] = payload.source
     article["trendUrl"] = payload.trend_url
     article["tag"] = payload.tag
+    article["ownerUserId"] = None
     queries.save_generated_article(article)
     article_url = article_public_url(str(article["id"]))
     return {
@@ -264,4 +267,6 @@ def write_article(request: Request, payload: TrendArticleRequest):
     build_id = f"build-{uuid.uuid4().hex}"
     article = write_article_from_prompt(payload.prompt, limit=payload.limit, mode=payload.mode, build_id=build_id)
     article["buildId"] = build_id
+    article["ownerUserId"] = payload.user_id
+    queries.save_generated_article(article)
     return article

@@ -1,40 +1,73 @@
 import { useEffect, useState } from "react";
 import { apiGet } from "../api/client.js";
 import { starterStories } from "../lib/constants.js";
-import { articleStateFor, dedupeStories } from "../utils/articleNormalize.js";
+import { dedupeStories } from "../utils/articleNormalize.js";
 import { ScreenShell } from "./shared.jsx";
 
 export function TrendsScreen({ commandArticles, onOpenArticle }) {
   const [topics, setTopics] = useState([]);
+  const [rankedTrends, setRankedTrends] = useState([]);
   const [topicStatus, setTopicStatus] = useState("loading");
+
   useEffect(() => {
     setTopicStatus("loading");
-    apiGet("/news/trending-topics?limit=12")
-      .then((data) => { setTopics(Array.isArray(data) ? data : []); setTopicStatus("live"); })
-      .catch(() => { setTopics([]); setTopicStatus("fallback"); });
+    Promise.allSettled([
+      apiGet("/news/trending?limit=18"),
+      apiGet("/news/trending-topics?limit=12"),
+    ])
+      .then(([trendResult, topicResult]) => {
+        setRankedTrends(trendResult.status === "fulfilled" && Array.isArray(trendResult.value) ? trendResult.value : []);
+        setTopics(topicResult.status === "fulfilled" && Array.isArray(topicResult.value) ? topicResult.value : []);
+        setTopicStatus(trendResult.status === "fulfilled" || topicResult.status === "fulfilled" ? "live" : "fallback");
+      })
+      .catch(() => {
+        setRankedTrends([]);
+        setTopics([]);
+        setTopicStatus("fallback");
+      });
   }, []);
 
-  const trends = commandArticles.length
-    ? dedupeStories([...commandArticles].sort((a, b) => (b.sourceCount || 0) - (a.sourceCount || 0)), 18)
-    : starterStories.map((s) => ({ id: s.id, headline: s.title, summary: s.dek, source: s.section, sourceCount: s.sourceCount, fairnessScore: 86, accuracyScore: 88 }));
+  const trends = rankedTrends.length
+    ? rankedTrends
+    : commandArticles.length
+      ? dedupeStories([...commandArticles].sort((a, b) => (b.sourceCount || 0) - (a.sourceCount || 0)), 18)
+      : starterStories.map((s) => ({
+          id: s.id,
+          headline: s.title,
+          summary: s.dek,
+          source: s.section,
+          sourceCount: s.sourceCount,
+          fairnessScore: 86,
+          accuracyScore: 88,
+        }));
 
   return (
-    <ScreenShell eyebrow="Trends" title="Trends">
+    <ScreenShell eyebrow="Trending" title="Trending">
       <div className={`feed-status feed-status-${topicStatus}`}>
-        {topicStatus === "loading" && "Loading live trend topics..."}
-        {topicStatus === "live" && "Live backend trend topics"}
+        {topicStatus === "loading" && "Loading live trend rankings..."}
+        {topicStatus === "live" && "Ranked by reads, saves, likes, comments, and recency"}
         {topicStatus === "fallback" && "Showing article-derived fallback trends"}
       </div>
       <div className="section-layout">
         <div className="trend-board">
           {trends.map((trend, index) => {
             const preview = trend.dek || trend.summary || "";
+            const metrics = trend.trendMetrics || {};
+            const currentRank = metrics.currentRank || index + 1;
+            const previousRank = metrics.previousRank || currentRank;
+            const rankDelta = previousRank - currentRank;
             const sourceLabel = trend.sources?.length
               ? trend.sources.slice(0, 3).join(", ") + (trend.sources.length > 3 ? ` +${trend.sources.length - 3}` : "")
               : trend.source || "news signal";
             return (
               <article className="trend-card" key={trend.id}>
-                <span>#{index + 1} · {sourceLabel}</span>
+                <span className="trend-rank-line">
+                  <b>#{currentRank}</b>
+                  <em className={rankDelta > 0 ? "rank-up" : rankDelta < 0 ? "rank-down" : "rank-flat"}>
+                    {rankDelta > 0 ? `▲ ${rankDelta}` : rankDelta < 0 ? `▼ ${Math.abs(rankDelta)}` : "━"}
+                  </em>
+                  {sourceLabel}
+                </span>
                 <h3>{trend.headline}</h3>
                 {preview && <p>{preview}</p>}
                 {trend.body?.length > 0 && !preview && (
@@ -43,10 +76,10 @@ export function TrendsScreen({ commandArticles, onOpenArticle }) {
                 <div>
                   <strong>{trend.sourceCount}</strong>
                   <em>{trend.sourceCount === 1 ? "source" : "sources"}</em>
-                  {trend.fairnessScore > 0 && (
-                    <strong style={{ fontSize: "0.78rem", marginLeft: "auto", color: "#555a50" }}>
-                      {trend.fairnessScore}% balance estimate
-                    </strong>
+                  {metrics.views !== undefined && (
+                    <span className="trend-metric-strip">
+                      {metrics.views} reads · {metrics.saves} saves · {metrics.likes} likes · {metrics.comments} comments
+                    </span>
                   )}
                   {"prompt" in trend && (
                     <button type="button" onClick={() => onOpenArticle(trend)}>Open</button>

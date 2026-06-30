@@ -187,6 +187,11 @@ def trending_topics(limit: int = 12):
             return [queries.row_to_dict(r) for r in cur.fetchall()]
 
 
+@router.get("/news/trending")
+def trending_articles(limit: int = 18):
+    return queries.list_trending_generated_articles(limit=limit)
+
+
 @router.post("/ingest/rss")
 def ingest_all_rss(background_tasks: BackgroundTasks):
     """Trigger a full RSS refresh across all sections (runs in background)."""

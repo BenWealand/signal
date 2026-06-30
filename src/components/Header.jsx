@@ -7,9 +7,11 @@ export function Header({
   onSectionChange,
   onOpenAccount,
   onOpenSettings,
+  onOpenNotifications,
+  notificationCount = 0,
   signedInUser,
 }) {
-  const screens = ["Home", "Latest", "Trends", "Saved"];
+  const screens = ["Home", "Latest", "Trending", "Saved"];
   const sections = SECTION_NAMES;
   const displayDate = new Intl.DateTimeFormat("en-US", {
     weekday: "long",
@@ -32,6 +34,9 @@ export function Header({
         </a>
         <div className="header-actions">
           <button className="text-button" type="button" onClick={onOpenSettings}>Settings</button>
+          <button className="text-button notification-button" type="button" onClick={onOpenNotifications}>
+            Inbox{notificationCount > 0 ? <span>{notificationCount}</span> : null}
+          </button>
           <button className="text-button" type="button" onClick={onOpenAccount}>
             {signedInUser ? signedInUser.name : "Sign in"}
           </button>

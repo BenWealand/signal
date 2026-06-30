@@ -116,6 +116,50 @@ CREATE TABLE IF NOT EXISTS generated_articles (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS article_likes (
+  id SERIAL PRIMARY KEY,
+  article_id TEXT NOT NULL REFERENCES generated_articles(id) ON DELETE CASCADE,
+  user_id INTEGER,
+  session_id TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(article_id, user_id),
+  UNIQUE(article_id, session_id)
+);
+
+CREATE TABLE IF NOT EXISTS article_comments (
+  id SERIAL PRIMARY KEY,
+  article_id TEXT NOT NULL REFERENCES generated_articles(id) ON DELETE CASCADE,
+  user_id INTEGER,
+  session_id TEXT DEFAULT '',
+  author_name TEXT DEFAULT 'Reader',
+  body TEXT NOT NULL,
+  parent_comment_id INTEGER REFERENCES article_comments(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS comment_likes (
+  id SERIAL PRIMARY KEY,
+  comment_id INTEGER NOT NULL REFERENCES article_comments(id) ON DELETE CASCADE,
+  user_id INTEGER,
+  session_id TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(comment_id, user_id),
+  UNIQUE(comment_id, session_id)
+);
+
+CREATE TABLE IF NOT EXISTS notifications (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  article_id TEXT REFERENCES generated_articles(id) ON DELETE CASCADE,
+  comment_id INTEGER REFERENCES article_comments(id) ON DELETE CASCADE,
+  actor_user_id INTEGER,
+  actor_name TEXT DEFAULT 'Reader',
+  message TEXT NOT NULL,
+  is_read SMALLINT DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS users (
   id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,
@@ -136,6 +180,9 @@ CREATE TABLE IF NOT EXISTS user_preferences (
   show_disputed_claims SMALLINT DEFAULT 1,
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE generated_articles
+  ADD COLUMN IF NOT EXISTS owner_user_id INTEGER REFERENCES users(id);
 
 CREATE TABLE IF NOT EXISTS saved_stories (
   id SERIAL PRIMARY KEY,
@@ -167,8 +214,14 @@ CREATE INDEX IF NOT EXISTS idx_entities_text ON entities(entity_text);
 CREATE INDEX IF NOT EXISTS idx_claims_article ON claims(article_id);
 CREATE INDEX IF NOT EXISTS idx_consensus_cluster ON consensus_claims(story_cluster_id);
 CREATE INDEX IF NOT EXISTS idx_generated_articles_created ON generated_articles(created_at);
+CREATE INDEX IF NOT EXISTS idx_generated_articles_owner ON generated_articles(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_generated_articles_source ON generated_articles(source);
 CREATE INDEX IF NOT EXISTS idx_saved_stories_user ON saved_stories(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_saved_stories_unique_user_story ON saved_stories(user_id, story_id);
 CREATE INDEX IF NOT EXISTS idx_user_history_user ON user_history(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_history_session ON user_history(session_id);
-CREATE INDEX IF NOT EXISTS idx_user_history_action ON user_history(action_type, created_at DESC)
+CREATE INDEX IF NOT EXISTS idx_user_history_action ON user_history(action_type, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_article_likes_article ON article_likes(article_id);
+CREATE INDEX IF NOT EXISTS idx_article_comments_article ON article_comments(article_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_comment_likes_comment ON comment_likes(comment_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, is_read, created_at DESC);

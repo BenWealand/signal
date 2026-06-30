@@ -1,4 +1,5 @@
 import { GenerationModeToggle } from "./GenerationModeToggle.jsx";
+import { useMemo, useState } from "react";
 
 export function ArticleScreen({
   draft,
@@ -11,7 +12,13 @@ export function ArticleScreen({
   onShare,
   onCopyLink,
   onShareX,
+  onRecommendedPrompt,
+  social,
+  onLikeArticle,
+  onCommentArticle,
+  onLikeComment,
 }) {
+  const [commentBody, setCommentBody] = useState("");
   const state = draft.articleState || {
     kind: "demo",
     label: "Local/demo fallback article",
@@ -38,6 +45,25 @@ export function ArticleScreen({
       return url;
     }
   };
+  const followUps = useMemo(() => {
+    const terms = (draft.terms || []).slice(0, 4);
+    const sources = (draft.sources || []).slice(0, 2);
+    const base = draft.prompt || draft.headline;
+    return [
+      `${base} latest source updates`,
+      terms.length ? `${terms.join(" ")} local impact` : `${base} local impact`,
+      sources.length ? `${base} according to ${sources.join(" and ")}` : `${base} timeline`,
+      `${base} what changed in the last 24 hours`,
+    ].filter(Boolean).slice(0, 4);
+  }, [draft]);
+
+  const submitComment = (event) => {
+    event.preventDefault();
+    const body = commentBody.trim();
+    if (!body) return;
+    onCommentArticle?.(body);
+    setCommentBody("");
+  };
 
   return (
     <section className="article-result-screen">
@@ -51,8 +77,21 @@ export function ArticleScreen({
         <GenerationModeToggle value={generationMode} onChange={onGenerationModeChange} />
         <button type="submit">Rewrite</button>
       </form>
+      <div className="follow-up-searches">
+        <span>Recommended follow-up searches</span>
+        <div>
+          {followUps.map((item) => (
+            <button type="button" key={item} onClick={() => onRecommendedPrompt?.(item)}>
+              {item}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <div className="article-toolbar" aria-label="Article actions">
+        <button type="button" onClick={onLikeArticle}>
+          {social?.liked ? "Liked" : "Like"} {social?.likeCount ? social.likeCount : ""}
+        </button>
         <button type="button" onClick={onSave}>Save</button>
         <button type="button" onClick={onShare}>Share</button>
         <button type="button" onClick={onCopyLink}>Copy link</button>
@@ -132,6 +171,36 @@ export function ArticleScreen({
           </ul>
         </div>
       )}
+
+      <section className="article-discussion">
+        <div className="discussion-header">
+          <span>Discussion</span>
+          <strong>{social?.comments?.length || 0} comments</strong>
+        </div>
+        <form className="comment-form" onSubmit={submitComment}>
+          <textarea
+            value={commentBody}
+            onChange={(event) => setCommentBody(event.target.value)}
+            placeholder="Add a source note, question, or correction"
+            rows={3}
+          />
+          <button type="submit">Comment</button>
+        </form>
+        <div className="comment-list">
+          {(social?.comments || []).map((comment) => (
+            <article className="comment-row" key={comment.id}>
+              <div>
+                <strong>{comment.author_name || "Reader"}</strong>
+                <em>{comment.created_at ? new Date(comment.created_at).toLocaleString() : ""}</em>
+              </div>
+              <p>{comment.body}</p>
+              <button type="button" onClick={() => onLikeComment?.(comment.id)}>
+                Like {comment.like_count ? comment.like_count : ""}
+              </button>
+            </article>
+          ))}
+        </div>
+      </section>
     </section>
   );
 }

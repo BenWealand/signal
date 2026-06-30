@@ -438,12 +438,13 @@ def save_generated_article(article: dict[str, Any]) -> str:
             cur.execute(
                 """
                 INSERT INTO generated_articles
-                (id, source, tag, trend_url, prompt, headline, dek, summary, body, facts,
+                (id, owner_user_id, source, tag, trend_url, prompt, headline, dek, summary, body, facts,
                  terms, sources, source_links, consensus, source_count, denied_for_bias,
                  fairness_score, accuracy_score, score_metadata, generation_mode, source_quality,
                  consensus_level, used_live_sources, fallback_reason, status, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(id) DO UPDATE SET
+                  owner_user_id = COALESCE(generated_articles.owner_user_id, EXCLUDED.owner_user_id),
                   source = EXCLUDED.source,
                   tag = EXCLUDED.tag,
                   trend_url = EXCLUDED.trend_url,
@@ -471,6 +472,7 @@ def save_generated_article(article: dict[str, Any]) -> str:
                 """,
                 (
                     article["id"],
+                    article.get("ownerUserId"),
                     article.get("source", "news-desk"),
                     article.get("tag", "trend"),
                     article.get("trendUrl", ""),
@@ -502,6 +504,7 @@ def save_generated_article(article: dict[str, Any]) -> str:
 
 
 _GENERATED_ARTICLE_METADATA_COLUMNS = {
+    "owner_user_id": "INTEGER REFERENCES users(id)",
     "source_links": "TEXT DEFAULT '[]'",
     "consensus": "TEXT DEFAULT '[]'",
     "score_metadata": "TEXT DEFAULT '{}'",
@@ -533,6 +536,7 @@ def _decode_generated_article(row: Any) -> dict[str, Any]:
         return {}
     return {
         "id": item["id"],
+        "ownerUserId": item.get("owner_user_id"),
         "source": item["source"],
         "tag": item["tag"],
         "trendUrl": item["trend_url"],
@@ -658,7 +662,19 @@ def save_story(user_id: int | None, story_id: str, title: str, source_count: int
                     """,
                     (story_id, title, source_count),
                 )
-            return int(cur.fetchone()["id"])
+            saved_id = int(cur.fetchone()["id"])
+            cur.execute("SELECT owner_user_id FROM generated_articles WHERE id = %s", (story_id,))
+            article = cur.fetchone()
+            _create_notification(
+                cur,
+                article.get("owner_user_id") if article else None,
+                "article_save",
+                f"Your article was saved: {title}",
+                article_id=story_id,
+                actor_user_id=user_id,
+                actor_name="Reader",
+            )
+            return saved_id
 
 
 _SECTION_KEYWORDS: dict[str, list[str]] = {
@@ -739,6 +755,18 @@ def record_history(
                 """,
                 (user_id, session_id, action_type, topic, section, prompt, article_id),
             )
+            if article_id and action_type in {"view", "read"}:
+                cur.execute("SELECT owner_user_id, headline FROM generated_articles WHERE id = %s", (article_id,))
+                article = cur.fetchone()
+                _create_notification(
+                    cur,
+                    article.get("owner_user_id") if article else None,
+                    "article_read",
+                    f"Your article got a new read: {article.get('headline', 'Signal article') if article else 'Signal article'}",
+                    article_id=article_id,
+                    actor_user_id=user_id,
+                    actor_name="Reader",
+                )
 
 
 def get_auto_preferences(user_id: int | None, session_id: str | None = None) -> dict[str, Any]:
@@ -812,3 +840,242 @@ def list_saved_stories(user_id: int | None = None) -> list[dict[str, Any]]:
                     (user_id,),
                 )
             return [row_to_dict(row) for row in cur.fetchall()]
+
+
+def _create_notification(
+    cur: Any,
+    user_id: int | None,
+    notification_type: str,
+    message: str,
+    article_id: str | None = None,
+    comment_id: int | None = None,
+    actor_user_id: int | None = None,
+    actor_name: str = "Reader",
+) -> None:
+    if not user_id or user_id == actor_user_id:
+        return
+    cur.execute(
+        """
+        INSERT INTO notifications
+        (user_id, type, article_id, comment_id, actor_user_id, actor_name, message)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """,
+        (user_id, notification_type, article_id, comment_id, actor_user_id, actor_name, message),
+    )
+
+
+def like_article(article_id: str, user_id: int | None, session_id: str | None = "", actor_name: str = "Reader") -> dict[str, Any]:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT owner_user_id, headline FROM generated_articles WHERE id = %s", (article_id,))
+            article = cur.fetchone()
+            if not article:
+                return {"ok": False, "liked": False, "likeCount": 0}
+            if user_id:
+                cur.execute(
+                    "INSERT INTO article_likes (article_id, user_id, session_id) VALUES (%s, %s, NULL) ON CONFLICT(article_id, user_id) DO NOTHING",
+                    (article_id, user_id),
+                )
+            else:
+                cur.execute(
+                    "INSERT INTO article_likes (article_id, session_id) VALUES (%s, %s) ON CONFLICT(article_id, session_id) DO NOTHING",
+                    (article_id, session_id or ""),
+                )
+            _create_notification(
+                cur,
+                article.get("owner_user_id"),
+                "article_like",
+                f"{actor_name} liked your article: {article.get('headline', 'Signal article')}",
+                article_id=article_id,
+                actor_user_id=user_id,
+                actor_name=actor_name,
+            )
+            cur.execute("SELECT COUNT(*) AS count FROM article_likes WHERE article_id = %s", (article_id,))
+            return {"ok": True, "liked": True, "likeCount": int(cur.fetchone()["count"])}
+
+
+def add_article_comment(
+    article_id: str,
+    body: str,
+    user_id: int | None,
+    session_id: str | None = "",
+    author_name: str = "Reader",
+    parent_comment_id: int | None = None,
+) -> dict[str, Any]:
+    clean_body = body.strip()[:1200]
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT owner_user_id, headline FROM generated_articles WHERE id = %s", (article_id,))
+            article = cur.fetchone()
+            if not article or not clean_body:
+                return {"ok": False}
+            cur.execute(
+                """
+                INSERT INTO article_comments
+                (article_id, user_id, session_id, author_name, body, parent_comment_id)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING *
+                """,
+                (article_id, user_id, session_id or "", author_name or "Reader", clean_body, parent_comment_id),
+            )
+            comment = row_to_dict(cur.fetchone())
+            _create_notification(
+                cur,
+                article.get("owner_user_id"),
+                "article_comment",
+                f"{author_name or 'Reader'} commented on your article: {article.get('headline', 'Signal article')}",
+                article_id=article_id,
+                comment_id=int(comment["id"]),
+                actor_user_id=user_id,
+                actor_name=author_name or "Reader",
+            )
+            if parent_comment_id:
+                cur.execute("SELECT user_id FROM article_comments WHERE id = %s", (parent_comment_id,))
+                parent = cur.fetchone()
+                _create_notification(
+                    cur,
+                    parent.get("user_id") if parent else None,
+                    "comment_reply",
+                    f"{author_name or 'Reader'} replied to your comment.",
+                    article_id=article_id,
+                    comment_id=int(comment["id"]),
+                    actor_user_id=user_id,
+                    actor_name=author_name or "Reader",
+                )
+            return {"ok": True, "comment": comment}
+
+
+def like_comment(comment_id: int, user_id: int | None, session_id: str | None = "", actor_name: str = "Reader") -> dict[str, Any]:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT user_id, article_id FROM article_comments WHERE id = %s", (comment_id,))
+            comment = cur.fetchone()
+            if not comment:
+                return {"ok": False, "liked": False, "likeCount": 0}
+            if user_id:
+                cur.execute(
+                    "INSERT INTO comment_likes (comment_id, user_id, session_id) VALUES (%s, %s, NULL) ON CONFLICT(comment_id, user_id) DO NOTHING",
+                    (comment_id, user_id),
+                )
+            else:
+                cur.execute(
+                    "INSERT INTO comment_likes (comment_id, session_id) VALUES (%s, %s) ON CONFLICT(comment_id, session_id) DO NOTHING",
+                    (comment_id, session_id or ""),
+                )
+            _create_notification(
+                cur,
+                comment.get("user_id"),
+                "comment_like",
+                f"{actor_name or 'Reader'} liked your comment.",
+                article_id=comment.get("article_id"),
+                comment_id=comment_id,
+                actor_user_id=user_id,
+                actor_name=actor_name or "Reader",
+            )
+            cur.execute("SELECT COUNT(*) AS count FROM comment_likes WHERE comment_id = %s", (comment_id,))
+            return {"ok": True, "liked": True, "likeCount": int(cur.fetchone()["count"])}
+
+
+def get_article_social(article_id: str, user_id: int | None = None, session_id: str | None = "") -> dict[str, Any]:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS count FROM article_likes WHERE article_id = %s", (article_id,))
+            like_count = int(cur.fetchone()["count"])
+            if user_id:
+                cur.execute("SELECT 1 FROM article_likes WHERE article_id = %s AND user_id = %s", (article_id, user_id))
+            else:
+                cur.execute("SELECT 1 FROM article_likes WHERE article_id = %s AND session_id = %s", (article_id, session_id or ""))
+            liked = bool(cur.fetchone())
+            cur.execute(
+                """
+                SELECT c.*,
+                  COALESCE((SELECT COUNT(*) FROM comment_likes cl WHERE cl.comment_id = c.id), 0) AS like_count
+                FROM article_comments c
+                WHERE c.article_id = %s
+                ORDER BY c.created_at ASC
+                LIMIT 80
+                """,
+                (article_id,),
+            )
+            comments = [row_to_dict(row) for row in cur.fetchall()]
+    return {"articleId": article_id, "likeCount": like_count, "liked": liked, "comments": comments}
+
+
+def list_notifications(user_id: int, limit: int = 30) -> list[dict[str, Any]]:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT * FROM notifications
+                WHERE user_id = %s
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                (user_id, limit),
+            )
+            return [row_to_dict(row) for row in cur.fetchall()]
+
+
+def mark_notifications_read(user_id: int) -> None:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE notifications SET is_read = 1 WHERE user_id = %s", (user_id,))
+
+
+def list_trending_generated_articles(limit: int = 18) -> list[dict[str, Any]]:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                WITH metrics AS (
+                  SELECT
+                    ga.*,
+                    COUNT(DISTINCT uh.id) FILTER (WHERE uh.action_type IN ('view', 'read')) AS views,
+                    COUNT(DISTINCT ss.id) AS saves,
+                    COUNT(DISTINCT al.id) AS likes,
+                    COUNT(DISTINCT ac.id) AS comments,
+                    EXTRACT(EPOCH FROM (NOW() - ga.created_at)) / 3600.0 AS age_hours
+                  FROM generated_articles ga
+                  LEFT JOIN user_history uh ON uh.article_id = ga.id
+                  LEFT JOIN saved_stories ss ON ss.story_id = ga.id
+                  LEFT JOIN article_likes al ON al.article_id = ga.id
+                  LEFT JOIN article_comments ac ON ac.article_id = ga.id
+                  WHERE ga.created_at > NOW() - INTERVAL '14 days'
+                  GROUP BY ga.id
+                ),
+                ranked AS (
+                  SELECT *,
+                    (views * 3.0 + saves * 8.0 + likes * 5.0 + comments * 6.0 + source_count * 0.35)
+                    / POWER(age_hours + 2.0, 0.72) AS trend_score,
+                    ROW_NUMBER() OVER (
+                      ORDER BY
+                      (views * 3.0 + saves * 8.0 + likes * 5.0 + comments * 6.0 + source_count * 0.35)
+                      / POWER(age_hours + 2.0, 0.72) DESC
+                    ) AS current_rank,
+                    ROW_NUMBER() OVER (
+                      ORDER BY
+                      (views * 3.0 + saves * 8.0 + likes * 5.0 + comments * 6.0 + source_count * 0.35)
+                      / POWER(GREATEST(age_hours - 24.0, 2.0) + 2.0, 0.72) DESC
+                    ) AS previous_rank
+                  FROM metrics
+                )
+                SELECT * FROM ranked
+                ORDER BY current_rank
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            items: list[dict[str, Any]] = []
+            for row in cur.fetchall():
+                decoded = _decode_generated_article(row)
+                decoded["trendMetrics"] = {
+                    "views": int(row.get("views") or 0),
+                    "saves": int(row.get("saves") or 0),
+                    "likes": int(row.get("likes") or 0),
+                    "comments": int(row.get("comments") or 0),
+                    "score": round(float(row.get("trend_score") or 0), 3),
+                    "currentRank": int(row.get("current_rank") or 0),
+                    "previousRank": int(row.get("previous_rank") or 0),
+                }
+                items.append(decoded)
+            return items
