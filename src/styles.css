@@ -951,7 +951,7 @@ a {
   padding: 0 0.7rem;
 }
 
-.rewrite-bar button {
+.rewrite-bar > button {
   height: 2.4rem;
   border: 0;
   background: #0b5a40;
@@ -960,6 +960,11 @@ a {
   font: inherit;
   font-weight: 950;
   padding: 0 0.9rem;
+}
+
+.rewrite-bar .generation-mode-toggle {
+  width: min(100%, 22rem);
+  margin-top: 0;
 }
 
 .article-reader {
@@ -1284,7 +1289,7 @@ a.source-link-title:hover {
 .story-card button,
 .service-panel button,
 .modal-form button,
-.rewrite-bar button {
+.rewrite-bar > button {
   border: 0;
   background: #0b5a40;
   color: #ffffff;
