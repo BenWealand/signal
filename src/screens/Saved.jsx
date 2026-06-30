@@ -4,14 +4,19 @@ export function SavedScreen({ savedArticles, onOpenAccount }) {
   return (
     <ScreenShell eyebrow="Saved" title="Saved">
       {savedArticles.length ? (
-        <div className="library-list">
+        <div className="section-grid">
           {savedArticles.map((article) => (
-            <article className="feed-row" key={article.id}>
-              <span>{article.savedAt}</span>
-              <h4>{article.title}</h4>
-              <div>
+            <article className="section-card" key={article.id}>
+              <div className="section-card-eyebrow">
+                <span>Saved</span>
+                <em>{article.sourceCount} sources</em>
+              </div>
+              <h3>{article.title}</h3>
+              <p>Kept in your reading library for follow-up review.</p>
+              <div className="section-card-footer">
                 <strong>{article.sourceCount}</strong>
                 <em>sources</em>
+                <span className="section-card-date">{article.savedAt}</span>
               </div>
             </article>
           ))}

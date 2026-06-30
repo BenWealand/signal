@@ -12,6 +12,7 @@ import { BuildScreen } from "./components/BuildScreen.jsx";
 import { ArticleScreen } from "./components/ArticleScreen.jsx";
 import { AccountModal } from "./components/modals/AccountModal.jsx";
 import { SettingsModal } from "./components/modals/SettingsModal.jsx";
+import { NotificationInboxModal } from "./components/modals/NotificationInboxModal.jsx";
 import { HomeScreen } from "./screens/Home.jsx";
 import { LatestScreen } from "./screens/Latest.jsx";
 import { TrendsScreen } from "./screens/Trends.jsx";
@@ -468,9 +469,6 @@ function App() {
             onGenerationModeChange={setGenerationMode}
             typedSuggestion={typedSuggestion}
             stories={liveHomeStories}
-            newsletterEmail={newsletterEmail}
-            onNewsletterChange={setNewsletterEmail}
-            onToast={showToast}
             onPromptStory={(story) => setPrompt(story.title || story.headline)}
           />
         )}
@@ -570,23 +568,11 @@ function App() {
         />
       )}
       {notificationsOpen && (
-        <div className="modal-backdrop" onClick={() => setNotificationsOpen(false)}>
-          <section className="modal-card notification-inbox" onClick={(event) => event.stopPropagation()}>
-            <button className="modal-close" type="button" onClick={() => setNotificationsOpen(false)}>Close</button>
-            <span>Inbox</span>
-            <h2>Notifications</h2>
-            {account ? (
-              notifications.length ? notifications.map((item) => (
-                <article className={`notification-row ${item.is_read ? "" : "is-unread"}`} key={item.id}>
-                  <strong>{item.message}</strong>
-                  <em>{item.created_at ? new Date(item.created_at).toLocaleString() : ""}</em>
-                </article>
-              )) : <p>No notifications yet.</p>
-            ) : (
-              <p>Sign in to receive comment, reply, like, read, and save alerts.</p>
-            )}
-          </section>
-        </div>
+        <NotificationInboxModal
+          account={account}
+          notifications={notifications}
+          onClose={() => setNotificationsOpen(false)}
+        />
       )}
       {toast && <div className="toast" role="status">{toast}</div>}
     </section>

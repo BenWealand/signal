@@ -98,16 +98,37 @@ a {
 }
 
 .header-actions button {
-  min-height: 2.05rem;
+  display: inline-grid;
+  position: relative;
+  width: 2.25rem;
+  height: 2.25rem;
+  min-height: 2.25rem;
+  place-items: center;
   border: 1px solid #bec4b7;
   border-radius: 999px;
   background: transparent;
-  color: #0f1713;
+  color: #111111;
   cursor: pointer;
-  font: inherit;
-  font-size: 0.74rem;
-  font-weight: 850;
-  padding: 0 0.9rem;
+  padding: 0;
+  transition: border-color 140ms ease, color 140ms ease, background 140ms ease, transform 140ms ease;
+}
+
+.header-actions button:hover,
+.header-actions button:focus-visible {
+  border-color: #0b5a40;
+  background: #eef5ec;
+  color: #0b5a40;
+  transform: translateY(-1px);
+}
+
+.header-actions svg {
+  width: 1.05rem;
+  height: 1.05rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .notification-button {
@@ -115,15 +136,18 @@ a {
 }
 
 .notification-button span {
-  display: inline-grid;
-  min-width: 1.1rem;
-  height: 1.1rem;
-  margin-left: 0.35rem;
+  position: absolute;
+  top: -0.3rem;
+  right: -0.3rem;
+  display: grid;
+  min-width: 1rem;
+  height: 1rem;
   place-items: center;
   border-radius: 999px;
   background: #0b5a40;
   color: #ffffff;
-  font-size: 0.65rem;
+  font-size: 0.58rem;
+  font-weight: 950;
 }
 
 .header-actions .solid-button {
@@ -1337,6 +1361,26 @@ a.source-link-title:hover {
   color: #596056;
 }
 
+.rank-up,
+.rank-down,
+.rank-flat {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.18rem;
+}
+
+.rank-up svg,
+.rank-down svg,
+.rank-flat svg {
+  width: 0.78rem;
+  height: 0.78rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .trend-metric-strip {
   flex-basis: 100%;
   color: #596056;
@@ -1350,15 +1394,30 @@ a.source-link-title:hover {
 
 .notification-row {
   display: grid;
-  gap: 0.25rem;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.65rem;
   border: 1px solid #d8ddd2;
+  border-radius: 12px;
   background: #ffffff;
-  padding: 0.75rem;
+  padding: 0.85rem;
 }
 
 .notification-row.is-unread {
   border-color: rgba(11, 90, 64, 0.3);
   background: #f2f8f0;
+}
+
+.notification-dot {
+  width: 0.48rem;
+  height: 0.48rem;
+  margin-top: 0.35rem;
+  border-radius: 999px;
+  background: #c6cdc2;
+}
+
+.notification-row.is-unread .notification-dot {
+  background: #0b5a40;
 }
 
 .notification-row strong {
@@ -1370,6 +1429,24 @@ a.source-link-title:hover {
   color: #6b7067;
   font-size: 0.7rem;
   font-style: normal;
+}
+
+.notification-row button {
+  display: inline-grid;
+  width: 1.85rem;
+  height: 1.85rem;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #111111;
+  cursor: pointer;
+}
+
+.notification-row button:hover,
+.notification-row button:focus-visible {
+  background: #eef5ec;
+  color: #0b5a40;
 }
 
 .trending-topic-info {
@@ -1610,6 +1687,35 @@ a.source-link-title:hover {
   gap: 1rem;
 }
 
+.feed-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.feed-filter-bar button {
+  min-height: 2rem;
+  border: 1px solid #cfd8ca;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #111111;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 900;
+  padding: 0 0.8rem;
+  transition: border-color 140ms ease, color 140ms ease, background 140ms ease;
+}
+
+.feed-filter-bar button:hover,
+.feed-filter-bar button:focus-visible,
+.feed-filter-bar button.is-active {
+  border-color: #0b5a40;
+  background: #edf3eb;
+  color: #0b5a40;
+}
+
 .feed-list,
 .library-list {
   display: grid;
@@ -1793,10 +1899,11 @@ a.source-link-title:hover {
   width: min(44rem, 100%);
   max-height: min(84vh, 52rem);
   overflow-y: auto;
-  border-top: 4px solid #0b5a40;
+  border: 1px solid #d8ddd2;
+  border-radius: 18px;
   background: #fbfcf8;
   box-shadow: 0 2rem 6rem rgba(17, 24, 39, 0.22);
-  padding: 1rem;
+  padding: 1.05rem;
 }
 
 .modal-card > header {
@@ -1806,7 +1913,7 @@ a.source-link-title:hover {
   gap: 1rem;
   border-bottom: 1px solid #d7d9cf;
   margin-bottom: 1rem;
-  padding-bottom: 0.75rem;
+  padding: 0 0 0.9rem;
 }
 
 .modal-card h2,
@@ -1815,7 +1922,49 @@ a.source-link-title:hover {
   font-family: Georgia, "Times New Roman", serif;
 }
 
-.modal-card header button {
+.modal-card h2 {
+  font-size: 1.55rem;
+}
+
+.modal-body {
+  display: grid;
+  gap: 1rem;
+}
+
+.modal-card header .icon-close-button {
+  display: inline-grid;
+  width: 2.25rem;
+  height: 2.25rem;
+  place-items: center;
+  border: 1px solid #d8ddd2;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #111111;
+  cursor: pointer;
+  padding: 0;
+  transition: border-color 140ms ease, color 140ms ease, background 140ms ease, transform 140ms ease;
+}
+
+.modal-card header .icon-close-button:hover,
+.modal-card header .icon-close-button:focus-visible {
+  border-color: #0b5a40;
+  background: #eef5ec;
+  color: #0b5a40;
+  transform: translateY(-1px);
+}
+
+.modal-card header .icon-close-button svg,
+.notification-row button svg {
+  width: 1rem;
+  height: 1rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.modal-card header button:not(.icon-close-button) {
   border: 0;
   background: transparent;
   color: #0b5a40;
@@ -1851,6 +2000,63 @@ a.source-link-title:hover {
   border-top: 1px solid #d7d9cf;
   margin-top: 1rem;
   padding-top: 1rem;
+}
+
+.modal-section-flat {
+  border-top: 0;
+  margin-top: 0;
+  padding-top: 0;
+}
+
+.modal-empty-copy {
+  margin: 0;
+  color: #60675d;
+  font-weight: 750;
+  line-height: 1.45;
+}
+
+.modal-hero-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+
+.modal-hero-row > div {
+  display: grid;
+  gap: 0.18rem;
+  border: 1px solid #e1e5dc;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 0.85rem;
+}
+
+.modal-hero-row span {
+  color: #0b5a40;
+  font-size: 0.68rem;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.modal-hero-row strong {
+  color: #111111;
+  font-size: 1.65rem;
+  font-weight: 950;
+  line-height: 1;
+}
+
+.modal-hero-row em {
+  color: #777e74;
+  font-size: 0.72rem;
+  font-style: normal;
+  font-weight: 850;
+}
+
+.modal-action-footer {
+  display: flex;
+  justify-content: flex-end;
+  border-top: 1px solid #e1e5dc;
+  padding-top: 0.9rem;
 }
 
 .saved-list {
@@ -2362,6 +2568,30 @@ a.source-link-title:hover {
   text-transform: uppercase;
 }
 
+.card-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.card-action-row button {
+  min-height: 2.1rem;
+  border: 1px solid #0b5a40;
+  border-radius: 6px;
+  background: #0b5a40;
+  color: #ffffff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 950;
+  padding: 0 0.8rem;
+}
+
+.card-action-row button + button {
+  background: #ffffff;
+  color: #0b5a40;
+}
+
 .section-empty {
   grid-column: 1 / -1;
   display: grid;
@@ -2431,62 +2661,102 @@ a.source-link-title:hover {
   margin: 0.5rem 0 0.25rem;
 }
 
-/* ── Sidebar trending ── */
-.trending-sidebar {
+.pref-section-header-accent {
+  color: #0b5a40;
+}
+
+.account-profile-card {
   display: grid;
-  align-content: start;
-  gap: 0.5rem;
-  border-top: 3px solid #0b5a40;
-  background: rgba(255, 255, 255, 0.9);
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.85rem;
+  border: 1px solid #e1e5dc;
+  border-radius: 12px;
+  background:
+    linear-gradient(135deg, rgba(11, 90, 64, 0.12), transparent 52%),
+    #ffffff;
   padding: 1rem;
 }
 
-.trending-sidebar h3 {
-  margin: 0;
-  color: #0b5a40;
-  font-size: 0.72rem;
+.account-avatar {
+  display: grid;
+  width: 3.25rem;
+  height: 3.25rem;
+  place-items: center;
+  border-radius: 999px;
+  background: #0b5a40;
+  color: #ffffff;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.45rem;
   font-weight: 950;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 
-.trending-topic-row {
-  display: flex;
-  flex-direction: row;
-  gap: 0.5rem;
-  align-items: flex-start;
-  border-top: 1px solid #e8eae0;
-  padding-top: 0.5rem;
-  cursor: pointer;
+.account-profile-card h3 {
+  margin: 0;
+  font-size: 1.25rem;
 }
 
-.trending-topic-row:hover strong {
-  color: #0b5a40;
-}
-
-.trending-topic-row span {
-  color: #aab0a5;
-  font-size: 0.68rem;
-  font-weight: 850;
-  font-variant-numeric: tabular-nums;
-}
-
-.trending-topic-row strong {
+.account-profile-card p {
+  margin: 0.18rem 0 0;
+  color: #60675d;
   font-size: 0.84rem;
-  font-weight: 800;
-  line-height: 1.2;
-  transition: color 120ms;
-}
-
-.trending-topic-row em {
-  color: #8a9087;
-  font-size: 0.64rem;
-  font-style: normal;
   font-weight: 750;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
+.account-profile-card > span {
+  border: 1px solid #cfd8ca;
+  border-radius: 999px;
+  background: #f3f8f0;
+  color: #0b5a40;
+  font-size: 0.68rem;
+  font-weight: 950;
+  letter-spacing: 0.06em;
+  padding: 0.35rem 0.6rem;
+  text-transform: uppercase;
+}
+
+.settings-list,
+.notification-list {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.settings-toggle-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 1rem;
+  border: 1px solid #e1e5dc;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 0.85rem;
+}
+
+.settings-toggle-row strong {
+  display: block;
+  color: #1f2a22;
+  font-size: 0.88rem;
+  font-weight: 900;
+}
+
+.settings-toggle-row em {
+  display: block;
+  margin-top: 0.1rem;
+  color: #697167;
+  font-size: 0.74rem;
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.settings-toggle-row input[type="checkbox"] {
+  width: 2.25rem;
+  height: 1.25rem;
+  accent-color: #0b5a40;
+}
+
+/* ── Sidebar trending ── */
 .wire-summary {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2610,7 +2880,6 @@ a.source-link-title:hover {
 .section-card,
 .service-panel > div,
 .service-panel form,
-.trending-sidebar,
 .wire-summary div,
 .source-wire-row,
 .article-stats div {

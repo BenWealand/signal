@@ -69,13 +69,26 @@ export function AccountModal({
 
   if (account) {
     return (
-      <Modal title="Account" onClose={onClose}>
-        <div className="modal-form">
-          <p><strong>{account.name}</strong> - {account.email}</p>
-          <p>{account.plan} plan</p>
-          <button className="secondary-action" type="button" onClick={onSignOut}>
-            Sign out
-          </button>
+      <Modal title="Account" onClose={onClose} className="account-modal">
+        <div className="account-profile-card">
+          <div className="account-avatar" aria-hidden="true">{account.name?.slice(0, 1) || "S"}</div>
+          <div>
+            <h3>{account.name}</h3>
+            <p>{account.email}</p>
+          </div>
+          <span>{account.plan} plan</span>
+        </div>
+        <div className="modal-hero-row">
+          <div>
+            <span>Saved</span>
+            <strong>{savedArticles.length}</strong>
+            <em>articles</em>
+          </div>
+          <div>
+            <span>Status</span>
+            <strong>Live</strong>
+            <em>synced account</em>
+          </div>
         </div>
         <div className="modal-section">
           <h3>Saved articles</h3>
@@ -92,15 +105,20 @@ export function AccountModal({
               <button className="secondary-action" type="button" onClick={onClearSaved}>Clear saved</button>
             </>
           ) : (
-            <p>No saved articles yet.</p>
+            <p className="modal-empty-copy">No saved articles yet.</p>
           )}
+        </div>
+        <div className="modal-action-footer">
+          <button className="secondary-action" type="button" onClick={onSignOut}>
+            Sign out
+          </button>
         </div>
       </Modal>
     );
   }
 
   return (
-    <Modal title={isSignUp ? "Create account" : "Sign in"} onClose={onClose}>
+    <Modal title={isSignUp ? "Create account" : "Sign in"} onClose={onClose} className="account-modal">
       <form className="modal-form" onSubmit={submit}>
         {isSignUp && (
           <label>

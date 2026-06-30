@@ -4,16 +4,8 @@ import { GenerationModeToggle } from "../components/GenerationModeToggle.jsx";
 function NewsDashboard({
   activeSection,
   stories,
-  newsletterEmail,
-  onNewsletterChange,
-  onToast,
   onPromptStory,
 }) {
-  const submitNewsletter = (event) => {
-    event.preventDefault();
-    onToast(newsletterEmail ? "Newsletter preference saved." : "Add an email before subscribing.");
-  };
-
   return (
     <section className="news-dashboard" aria-label="News dashboard">
       <div className="dashboard-header">
@@ -42,17 +34,6 @@ function NewsDashboard({
           <div className="service-stat-row"><strong>{stories.length}</strong><em>stories</em></div>
           <div className="service-stat-row"><strong>{stories.reduce((sum, story) => sum + (story.sourceCount || 0), 0)}</strong><em>sources</em></div>
         </div>
-        <form onSubmit={submitNewsletter}>
-          <label htmlFor="newsletter-email">Briefing email</label>
-          <input
-            id="newsletter-email"
-            value={newsletterEmail}
-            onChange={(event) => onNewsletterChange(event.target.value)}
-            placeholder="you@example.com"
-            type="email"
-          />
-          <button type="submit">Save</button>
-        </form>
       </aside>
     </section>
   );
@@ -69,9 +50,6 @@ export function HomeScreen({
   onGenerationModeChange,
   typedSuggestion,
   stories,
-  newsletterEmail,
-  onNewsletterChange,
-  onToast,
   onPromptStory,
 }) {
   return (
@@ -107,9 +85,6 @@ export function HomeScreen({
       <NewsDashboard
         activeSection={activeSection}
         stories={stories}
-        newsletterEmail={newsletterEmail}
-        onNewsletterChange={onNewsletterChange}
-        onToast={onToast}
         onPromptStory={onPromptStory}
       />
     </>

@@ -5,12 +5,12 @@ import { Modal } from "./Modal.jsx";
 
 export function SettingsModal({ settings, onSettingsChange, onClose, onToast, account }) {
   const [autoPrefs, setAutoPrefs] = useState(null);
+
   useEffect(() => {
     if (account?.id) {
       apiGet(`/users/${account.id}/preferences/auto`).then(setAutoPrefs).catch(() => {});
     } else {
-      apiPost("/history", { session_id: SESSION_ID, action_type: "prefs_check" })
-        .catch(() => {});
+      apiPost("/history", { session_id: SESSION_ID, action_type: "prefs_check" }).catch(() => {});
     }
   }, [account?.id]);
 
@@ -19,28 +19,29 @@ export function SettingsModal({ settings, onSettingsChange, onClose, onToast, ac
   };
 
   return (
-    <Modal title="Settings" onClose={onClose}>
+    <Modal title="Settings" onClose={onClose} className="settings-modal">
       {autoPrefs && (autoPrefs.preferred_sections?.length > 0 || autoPrefs.preferred_topics?.length > 0) && (
-        <div className="modal-section" style={{ marginTop: 0, paddingTop: 0, borderTop: "none", marginBottom: "1rem" }}>
+        <div className="modal-section modal-section-flat">
           <p className="pref-section-header">Inferred from your activity</p>
           {autoPrefs.preferred_sections?.length > 0 && (
             <>
-              <p className="pref-section-header" style={{ color: "#0b5a40" }}>Top sections</p>
+              <p className="pref-section-header pref-section-header-accent">Top sections</p>
               <div className="pref-tags">
-                {autoPrefs.preferred_sections.map((s) => <span className="pref-tag" key={s}>▶ {s}</span>)}
+                {autoPrefs.preferred_sections.map((section) => <span className="pref-tag" key={section}>{section}</span>)}
               </div>
             </>
           )}
           {autoPrefs.preferred_topics?.length > 0 && (
             <>
-              <p className="pref-section-header" style={{ color: "#0b5a40" }}>Top topics</p>
+              <p className="pref-section-header pref-section-header-accent">Top topics</p>
               <div className="pref-tags">
-                {autoPrefs.preferred_topics.map((t) => <span className="pref-tag" key={t}>{t}</span>)}
+                {autoPrefs.preferred_topics.map((topic) => <span className="pref-tag" key={topic}>{topic}</span>)}
               </div>
             </>
           )}
         </div>
       )}
+
       <div className="settings-grid">
         <label>
           Region
@@ -78,27 +79,36 @@ export function SettingsModal({ settings, onSettingsChange, onClose, onToast, ac
         </label>
       </div>
 
-      <div className="check-list">
-        <label>
+      <div className="settings-list">
+        <label className="settings-toggle-row">
+          <span>
+            <strong>Email alerts</strong>
+            <em>Notify you when tracked stories move.</em>
+          </span>
           <input
             checked={settings.emailAlerts}
             onChange={(event) => update("emailAlerts", event.target.checked)}
             type="checkbox"
           />
-          Email alerts
         </label>
-        <label>
+        <label className="settings-toggle-row">
+          <span>
+            <strong>Label disputed claims</strong>
+            <em>Surface disagreement across sources.</em>
+          </span>
           <input
             checked={settings.showDisputedClaims}
             onChange={(event) => update("showDisputedClaims", event.target.checked)}
             type="checkbox"
           />
-          Label disputed claims
         </label>
       </div>
-      <button className="secondary-action" type="button" onClick={() => onToast("Settings saved locally.")}>
-        Confirm settings
-      </button>
+
+      <div className="modal-action-footer">
+        <button className="secondary-action" type="button" onClick={() => onToast("Settings saved locally.")}>
+          Confirm settings
+        </button>
+      </div>
     </Modal>
   );
 }
