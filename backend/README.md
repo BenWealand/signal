@@ -30,7 +30,8 @@ source .venv/bin/activate
 - `requirements-core.txt`: minimal backend runtime for API, PostgreSQL, article extraction, and provider clients.
 - `requirements-ml.txt`: optional spaCy and sentence-transformer stack for stronger NER and semantic claim grouping.
 - `requirements-dev.txt`: developer/test layer. Current tests use standard-library `unittest`.
-- `requirements.txt`: all-in local/demo install.
+- `requirements.txt`: default hosted/free-tier install. It includes only `requirements-core.txt`.
+- `requirements-full.txt`: all-in local/demo install with optional ML/dev dependencies.
 
 Recommended local path:
 
@@ -41,7 +42,18 @@ pip install -r requirements-core.txt
 Optional ML install:
 
 ```bash
-pip install -r requirements-ml.txt
+pip install -r requirements-full.txt
+```
+
+## Render Free Tier
+
+Render free web services have tight memory limits. Use the default `requirements.txt`
+and keep startup background work disabled unless you move to a larger instance:
+
+```env
+SIGNAL_AUTO_INGEST_ON_STARTUP=false
+SIGNAL_PERIODIC_RSS=false
+SIGNAL_EMBEDDING_WARMUP_ON_STARTUP=false
 ```
 
 All-in:

@@ -1,0 +1,6 @@
+# Full local/development install.
+# Use this only when the host has enough memory for the optional ML stack.
+
+-r requirements-core.txt
+-r requirements-ml.txt
+-r requirements-dev.txt

@@ -1,6 +1,5 @@
-# All-in backend install for local development and demos.
-# For a lighter backend, install requirements-core.txt only.
+# Default backend install for hosted/free-tier deployment.
+# This intentionally excludes the optional ML stack in requirements-ml.txt
+# because torch/sentence-transformers can exceed 512 MB memory limits.
 
 -r requirements-core.txt
--r requirements-ml.txt
--r requirements-dev.txt

@@ -41,8 +41,9 @@ class Settings:
     summary_model: str = os.getenv("SUMMARY_MODEL", "gpt-4o-mini")
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
     use_llm_claims: bool = os.getenv("USE_LLM_CLAIMS", "false").lower() == "true"
-    auto_ingest_on_startup: bool = os.getenv("SIGNAL_AUTO_INGEST_ON_STARTUP", "true").lower() == "true"
-    periodic_rss: bool = os.getenv("SIGNAL_PERIODIC_RSS", "true").lower() == "true"
+    auto_ingest_on_startup: bool = os.getenv("SIGNAL_AUTO_INGEST_ON_STARTUP", "false").lower() == "true"
+    periodic_rss: bool = os.getenv("SIGNAL_PERIODIC_RSS", "false").lower() == "true"
+    embedding_warmup_on_startup: bool = os.getenv("SIGNAL_EMBEDDING_WARMUP_ON_STARTUP", "false").lower() == "true"
     app_name: str = "Signal News Intelligence API"
 
 

@@ -139,12 +139,12 @@ def startup() -> None:
         _database_status = {"ok": True, "type": "postgres", "error": ""}
     except Exception as exc:
         _database_status = {"ok": False, "type": "postgres", "error": str(exc)}
-    # Warm up sentence-transformer model in background (downloads ~90 MB on first run)
-    try:
-        from app.llm.embeddings import warmup as _embed_warmup
-        _embed_warmup()
-    except Exception:
-        logger.exception("Embedding warmup failed")
+    if settings.embedding_warmup_on_startup:
+        try:
+            from app.llm.embeddings import warmup as _embed_warmup
+            _embed_warmup()
+        except Exception:
+            logger.exception("Embedding warmup failed")
     if settings.auto_ingest_on_startup:
         threading.Thread(target=_startup_pipeline, daemon=True).start()
     if settings.periodic_rss:
