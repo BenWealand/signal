@@ -133,6 +133,9 @@ def startup() -> None:
     global _database_status
     try:
         create_tables()
+        purge_result = queries.purge_blacklisted_generated_articles()
+        if purge_result.get("deleted"):
+            logger.info("Purged blacklisted generated articles on startup", extra=purge_result)
         _database_status = {"ok": True, "type": "postgres", "error": ""}
     except Exception as exc:
         _database_status = {"ok": False, "type": "postgres", "error": str(exc)}

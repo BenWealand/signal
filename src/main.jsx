@@ -265,16 +265,26 @@ function App() {
         setPhase("complete");
       })
       .catch((error) => {
-        window.setTimeout(() => {
-          setExternalDraft(localFailureDraft(nextPrompt, error));
-          setPhase("complete");
-        }, FALLBACK_DELAY_MS);
+        handleArticleWriteFailure(nextPrompt, error);
       });
   };
 
   const showToast = (message) => {
     setToast(message);
     window.setTimeout(() => setToast(""), 2400);
+  };
+
+  const handleArticleWriteFailure = (failedPrompt, error) => {
+    if (error?.status === 422 && String(error.detail || error.message || "").toLowerCase().includes("blocked")) {
+      setExternalDraft(null);
+      setPhase("idle");
+      showToast("That prompt is blocked by the Signal prompt filter.");
+      return;
+    }
+    window.setTimeout(() => {
+      setExternalDraft(localFailureDraft(failedPrompt, error));
+      setPhase("complete");
+    }, FALLBACK_DELAY_MS);
   };
 
   const buildRecommendedPrompt = (nextPrompt) => {
@@ -291,10 +301,7 @@ function App() {
         setPhase("complete");
       })
       .catch((error) => {
-        window.setTimeout(() => {
-          setExternalDraft(localFailureDraft(nextPrompt, error));
-          setPhase("complete");
-        }, FALLBACK_DELAY_MS);
+        handleArticleWriteFailure(nextPrompt, error);
       });
   };
 
@@ -404,10 +411,7 @@ function App() {
         setPhase("complete");
       })
       .catch((error) => {
-        window.setTimeout(() => {
-          setExternalDraft(localFailureDraft(article.prompt, error));
-          setPhase("complete");
-        }, FALLBACK_DELAY_MS);
+        handleArticleWriteFailure(article.prompt, error);
       });
   };
 
@@ -430,10 +434,7 @@ function App() {
         setPhase("complete");
       })
       .catch((error) => {
-        window.setTimeout(() => {
-          setExternalDraft(localFailureDraft(topic, error));
-          setPhase("complete");
-        }, FALLBACK_DELAY_MS);
+        handleArticleWriteFailure(topic, error);
       });
   };
 
@@ -506,10 +507,7 @@ function App() {
                 apiPost("/articles/write", { prompt: topic, source: "reader-prompt", tag: "prompt", limit: 10, mode: generationMode, user_id: account?.id || null })
                 .then((article) => { setExternalDraft(normalizeCommandArticle(article)); setPhase("complete"); })
                 .catch((error) => {
-                  window.setTimeout(() => {
-                    setExternalDraft(localFailureDraft(topic, error));
-                    setPhase("complete");
-                  }, FALLBACK_DELAY_MS);
+                  handleArticleWriteFailure(topic, error);
                 });
             }}
           />

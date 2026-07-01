@@ -7,7 +7,7 @@ export function hasApiBase() {
 export async function apiGet(path) {
   if (!API_BASE) throw new Error("API is not configured for this build.");
   const response = await fetch(`${API_BASE}${path}`);
-  if (!response.ok) throw new Error(`API request failed: ${path}`);
+  if (!response.ok) throw await apiError(response, path);
   return response.json();
 }
 
@@ -18,10 +18,26 @@ export async function apiPost(path, payload) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-  if (!response.ok) throw new Error(`API request failed: ${path}`);
+  if (!response.ok) throw await apiError(response, path);
   return response.json();
 }
 
 export async function getArticleProgress() {
   return apiGet("/articles/progress");
+}
+
+async function apiError(response, path) {
+  let detail = "";
+  try {
+    const payload = await response.json();
+    detail = typeof payload.detail === "string"
+      ? payload.detail
+      : payload.detail?.message || JSON.stringify(payload.detail || payload);
+  } catch {
+    detail = await response.text().catch(() => "");
+  }
+  const error = new Error(detail || `API request failed: ${path}`);
+  error.status = response.status;
+  error.detail = detail;
+  return error;
 }

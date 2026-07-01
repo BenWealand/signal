@@ -12,6 +12,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request
 
 from app.db import queries
 from app.config import settings
+from app.policy.prompt_filter import prompt_is_blocked
 from app.processing.article_writer import write_article_from_prompt, get_build_progress
 
 
@@ -116,6 +117,19 @@ def _clean_social_text(text: str, max_chars: int = 420) -> str:
     return compact[:max_chars].rstrip()
 
 
+def _reject_blocked_prompt(prompt: str) -> None:
+    match = prompt_is_blocked(prompt)
+    if match.blocked:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "prompt_blocked",
+                "message": "This prompt is blocked by the Signal prompt filter.",
+                "source": match.source,
+            },
+        )
+
+
 def _prompt_from_x_payload(payload: XTrendArticleRequest) -> str:
     prompt = _clean_social_text(payload.prompt, 240)
     topic = _clean_social_text(payload.trending_topic, 120)
@@ -213,6 +227,16 @@ def generated_article(article_id: str):
     return article
 
 
+@router.post("/generated-articles/purge-blocked")
+def purge_blocked_generated_articles(
+    limit: int = 1000,
+    x_signal_token: str = Header(default=""),
+    authorization: str = Header(default=""),
+):
+    _require_signal_agent_token(x_signal_token=x_signal_token, authorization=authorization)
+    return queries.purge_blacklisted_generated_articles(limit=min(max(limit, 1), 5000))
+
+
 @router.post("/articles/generate-from-trend")
 def generate_from_trend(
     request: Request,
@@ -222,6 +246,7 @@ def generate_from_trend(
 ):
     _require_signal_agent_token(x_signal_token=x_signal_token, authorization=authorization)
     _check_article_rate_limit(_client_rate_key(request, "generate-from-trend"))
+    _reject_blocked_prompt(payload.prompt)
     build_id = f"build-{uuid.uuid4().hex}"
     article = write_article_from_prompt(payload.prompt, limit=payload.limit, mode=payload.mode, build_id=build_id)
     article["buildId"] = build_id
@@ -243,6 +268,7 @@ def generate_x_article_reply(
     _require_signal_agent_token(x_signal_token=x_signal_token, authorization=authorization)
     _check_article_rate_limit(_client_rate_key(request, "x-article-reply"))
     prompt = _prompt_from_x_payload(payload)
+    _reject_blocked_prompt(prompt)
     build_id = f"build-{uuid.uuid4().hex}"
     article = write_article_from_prompt(prompt, limit=payload.limit, mode=payload.mode, build_id=build_id)
     article["buildId"] = build_id
@@ -264,6 +290,7 @@ def generate_x_article_reply(
 @router.post("/articles/write")
 def write_article(request: Request, payload: TrendArticleRequest):
     _check_article_rate_limit(_client_rate_key(request, "write"))
+    _reject_blocked_prompt(payload.prompt)
     build_id = f"build-{uuid.uuid4().hex}"
     article = write_article_from_prompt(payload.prompt, limit=payload.limit, mode=payload.mode, build_id=build_id)
     article["buildId"] = build_id

@@ -35,6 +35,8 @@ class Settings:
     gdelt_queries: str = os.getenv("GDELT_QUERIES", "")
     cors_origins: str = os.getenv("CORS_ORIGINS", "")
     cors_origin_regex: str = os.getenv("CORS_ORIGIN_REGEX", "")
+    prompt_blacklist: str = os.getenv("PROMPT_BLACKLIST", "")
+    prompt_blacklist_regex: str = os.getenv("PROMPT_BLACKLIST_REGEX", "")
     claim_model: str = os.getenv("CLAIM_MODEL", "gpt-4o-mini")
     summary_model: str = os.getenv("SUMMARY_MODEL", "gpt-4o-mini")
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")

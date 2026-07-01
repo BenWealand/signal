@@ -18,6 +18,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from app.api import routes_articles, routes_users
 from app.db import queries
 from app.llm import gemini_writer
+from app.policy import prompt_filter
 from app.processing import article_writer
 
 
@@ -111,6 +112,26 @@ class BackendHardeningTest(unittest.TestCase):
         with self.assertRaises(HTTPException) as ctx:
             routes_articles._check_article_rate_limit(key)
         self.assertEqual(ctx.exception.status_code, 429)
+
+    def test_prompt_blacklist_blocks_generation_requests(self):
+        original_settings = prompt_filter.settings
+        prompt_filter.settings = SimpleNamespace(prompt_blacklist="forbidden topic", prompt_blacklist_regex="")
+        try:
+            with self.assertRaises(HTTPException) as ctx:
+                routes_articles._reject_blocked_prompt("latest coverage of forbidden topic")
+            self.assertEqual(ctx.exception.status_code, 422)
+            self.assertEqual(ctx.exception.detail["code"], "prompt_blocked")
+        finally:
+            prompt_filter.settings = original_settings
+
+    def test_prompt_blacklist_does_not_match_partial_words(self):
+        original_settings = prompt_filter.settings
+        prompt_filter.settings = SimpleNamespace(prompt_blacklist="war", prompt_blacklist_regex="")
+        try:
+            self.assertFalse(prompt_filter.prompt_is_blocked("award season coverage").blocked)
+            self.assertTrue(prompt_filter.prompt_is_blocked("war coverage").blocked)
+        finally:
+            prompt_filter.settings = original_settings
 
     def test_article_progress_isolated_by_build_id(self):
         article_writer._set_progress("build-a", active=True, prompt="alpha", stage="fetching")

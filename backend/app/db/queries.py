@@ -5,6 +5,7 @@ import json
 from typing import Any
 
 from app.db.connection import get_connection
+from app.policy.prompt_filter import article_is_blocked
 from app.processing.dedupe import normalize_title, probable_duplicate
 
 
@@ -432,6 +433,9 @@ def entity_articles(entity_name: str) -> list[dict[str, Any]]:
 
 
 def save_generated_article(article: dict[str, Any]) -> str:
+    if article_is_blocked(article).blocked:
+        delete_generated_article(str(article["id"]))
+        return str(article["id"])
     with get_connection() as conn:
         with conn.cursor() as cur:
             _ensure_generated_article_metadata_columns(cur)
@@ -570,16 +574,52 @@ def list_generated_articles(limit: int = 25) -> list[dict[str, Any]]:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT * FROM generated_articles ORDER BY created_at DESC LIMIT %s",
-                (limit,),
+                (max(limit * 3, limit),),
             )
-            return [_decode_generated_article(row) for row in cur.fetchall()]
+            items = [_decode_generated_article(row) for row in cur.fetchall()]
+            return [item for item in items if not article_is_blocked(item).blocked][:limit]
 
 
 def get_generated_article(article_id: str) -> dict[str, Any]:
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM generated_articles WHERE id = %s", (article_id,))
-            return _decode_generated_article(cur.fetchone())
+            article = _decode_generated_article(cur.fetchone())
+            return {} if article and article_is_blocked(article).blocked else article
+
+
+def delete_generated_article(article_id: str) -> int:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM saved_stories WHERE story_id = %s", (article_id,))
+            cur.execute("DELETE FROM user_history WHERE article_id = %s", (article_id,))
+            cur.execute("DELETE FROM generated_articles WHERE id = %s", (article_id,))
+            return int(cur.rowcount or 0)
+
+
+def purge_blacklisted_generated_articles(limit: int = 1000) -> dict[str, Any]:
+    deleted: list[str] = []
+    scanned = 0
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT * FROM generated_articles
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            articles = [_decode_generated_article(row) for row in cur.fetchall()]
+            scanned = len(articles)
+            for article in articles:
+                if article and article_is_blocked(article).blocked:
+                    article_id = str(article["id"])
+                    cur.execute("DELETE FROM saved_stories WHERE story_id = %s", (article_id,))
+                    cur.execute("DELETE FROM user_history WHERE article_id = %s", (article_id,))
+                    cur.execute("DELETE FROM generated_articles WHERE id = %s", (article_id,))
+                    deleted.append(article_id)
+    return {"scanned": scanned, "deleted": len(deleted), "articleIds": deleted}
 
 
 def upsert_user(name: str, email: str, plan: str = "Reader", supabase_user_id: str | None = None) -> dict[str, Any]:
@@ -702,9 +742,10 @@ def list_generated_articles_by_section(section: str, limit: int = 20) -> list[di
                 ORDER BY created_at DESC
                 LIMIT %s
                 """,
-                params,
+                params[:-1] + [max(limit * 3, limit)],
             )
-            return [_decode_generated_article(row) for row in cur.fetchall()]
+            items = [_decode_generated_article(row) for row in cur.fetchall()]
+            return [item for item in items if not article_is_blocked(item).blocked][:limit]
 
 
 def list_stories_by_section(section: str, limit: int = 20) -> list[dict[str, Any]]:
@@ -1063,11 +1104,13 @@ def list_trending_generated_articles(limit: int = 18) -> list[dict[str, Any]]:
                 ORDER BY current_rank
                 LIMIT %s
                 """,
-                (limit,),
+                (max(limit * 3, limit),),
             )
             items: list[dict[str, Any]] = []
             for row in cur.fetchall():
                 decoded = _decode_generated_article(row)
+                if article_is_blocked(decoded).blocked:
+                    continue
                 decoded["trendMetrics"] = {
                     "views": int(row.get("views") or 0),
                     "saves": int(row.get("saves") or 0),
@@ -1078,4 +1121,4 @@ def list_trending_generated_articles(limit: int = 18) -> list[dict[str, Any]]:
                     "previousRank": int(row.get("previous_rank") or 0),
                 }
                 items.append(decoded)
-            return items
+            return items[:limit]

@@ -74,7 +74,17 @@ GEMINI_MODEL=gemini-2.0-flash
 CLAIM_MODEL=gpt-4o-mini
 SUMMARY_MODEL=gpt-4o-mini
 USE_LLM_CLAIMS=false
+PROMPT_BLACKLIST=
+PROMPT_BLACKLIST_REGEX=
 ```
+
+Prompt filtering:
+
+- `PROMPT_BLACKLIST` is a comma- or newline-separated list of blocked words/phrases.
+- `PROMPT_BLACKLIST_REGEX` is a comma- or newline-separated list of case-insensitive regex patterns.
+- Matching prompts return `422 prompt_blocked`.
+- Matching generated articles are purged on backend startup and hidden from generated/trending/section lists.
+- To purge immediately after changing Render env vars, call `POST /generated-articles/purge-blocked` with `X-Signal-Token` or `Authorization: Bearer ...`.
 
 ## Optional Provider Keys
 

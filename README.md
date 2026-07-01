@@ -50,6 +50,8 @@ CURRENTS_API_KEY=
 GNEWS_API_KEY=
 GUARDIAN_CONTENT_API_KEY=
 SIGNAL_API_TOKEN=
+PROMPT_BLACKLIST=
+PROMPT_BLACKLIST_REGEX=
 ```
 
 See `.env.example` and [backend/README.md](backend/README.md) for the full variable list.
