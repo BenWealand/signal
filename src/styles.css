@@ -953,11 +953,11 @@ a {
 
 .follow-up-searches {
   display: grid;
-  gap: 0.55rem;
+  gap: 0.45rem;
   border: 1px solid #d8ddd2;
   border-top: 0;
-  background: #fbfcf8;
-  padding: 0.85rem;
+  background: #f3f8ff;
+  padding: 0.5rem 0.65rem;
 }
 
 .follow-up-searches > span,
@@ -973,20 +973,43 @@ a {
 .follow-up-searches > div {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.45rem;
+  gap: 0.35rem;
 }
 
 .follow-up-searches button {
-  min-height: 2.1rem;
-  border: 1px solid #c7cec2;
-  border-radius: 999px;
+  display: inline-flex;
+  min-height: 1.55rem;
+  align-items: center;
+  gap: 0.28rem;
+  border: 1px solid #8ba7ec;
+  border-radius: 3px;
   background: #ffffff;
-  color: #0b5a40;
+  color: #2456cf;
   cursor: pointer;
   font: inherit;
-  font-size: 0.74rem;
-  font-weight: 900;
-  padding: 0 0.8rem;
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1;
+  padding: 0 0.45rem;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease, transform 120ms ease;
+}
+
+.follow-up-searches button:hover,
+.follow-up-searches button:focus-visible {
+  border-color: #0b5a40;
+  background: #eef5ec;
+  color: #0b5a40;
+  transform: translateY(-1px);
+}
+
+.follow-up-searches button svg {
+  width: 0.76rem;
+  height: 0.76rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .article-toolbar button,
@@ -1001,6 +1024,67 @@ a {
   font-size: 0.78rem;
   font-weight: 900;
   padding: 0 0.9rem;
+}
+
+.article-bottom-actions {
+  display: flex;
+  justify-content: center;
+  gap: 0.85rem;
+  border-top: 1px solid #d8ddd2;
+  border-bottom: 1px solid #d8ddd2;
+  padding: 0.75rem 0;
+}
+
+.article-bottom-actions button {
+  position: relative;
+  display: inline-grid;
+  width: 2.45rem;
+  height: 2.45rem;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #111111;
+  cursor: pointer;
+  padding: 0;
+  transition: background 140ms ease, color 140ms ease, transform 140ms ease;
+}
+
+.article-bottom-actions button:hover,
+.article-bottom-actions button:focus-visible,
+.article-bottom-actions button.is-active {
+  background: #eef5ec;
+  color: #0b5a40;
+  transform: translateY(-1px);
+}
+
+.article-bottom-actions svg {
+  width: 1.35rem;
+  height: 1.35rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.article-bottom-actions svg .is-filled {
+  fill: currentColor;
+}
+
+.article-bottom-actions span {
+  position: absolute;
+  top: -0.1rem;
+  right: -0.1rem;
+  display: grid;
+  min-width: 1rem;
+  height: 1rem;
+  place-items: center;
+  border-radius: 999px;
+  background: #0b5a40;
+  color: #ffffff;
+  font-size: 0.58rem;
+  font-weight: 950;
 }
 
 .rewrite-bar {

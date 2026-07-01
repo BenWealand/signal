@@ -82,6 +82,7 @@ export function ArticleScreen({
         <div>
           {followUps.map((item) => (
             <button type="button" key={item} onClick={() => onRecommendedPrompt?.(item)}>
+              <SearchChipIcon />
               {item}
             </button>
           ))}
@@ -89,10 +90,6 @@ export function ArticleScreen({
       </div>
 
       <div className="article-toolbar" aria-label="Article actions">
-        <button type="button" onClick={onLikeArticle}>
-          {social?.liked ? "Liked" : "Like"} {social?.likeCount ? social.likeCount : ""}
-        </button>
-        <button type="button" onClick={onSave}>Save</button>
         <button type="button" onClick={onShare}>Share</button>
         <button type="button" onClick={onCopyLink}>Copy link</button>
         <button type="button" onClick={onShareX}>Share on X</button>
@@ -151,6 +148,22 @@ export function ArticleScreen({
         Scores are pipeline heuristics from source diversity and claim overlap. They are not audited bias or factuality ratings.
       </p>
 
+      <div className="article-bottom-actions" aria-label="Article reactions">
+        <button
+          className={social?.liked ? "is-active" : ""}
+          type="button"
+          onClick={onLikeArticle}
+          aria-label={social?.liked ? "Liked article" : "Like article"}
+          title={social?.liked ? "Liked" : "Like"}
+        >
+          <HeartIcon filled={Boolean(social?.liked)} />
+          {social?.likeCount ? <span>{social.likeCount}</span> : null}
+        </button>
+        <button type="button" onClick={onSave} aria-label="Save article" title="Save">
+          <BookmarkIcon />
+        </button>
+      </div>
+
       {draft.sourceLinks?.length > 0 && (
         <div className="article-sources">
           <h3>Sources reviewed <span>{draft.sourceLinks.length}</span></h3>
@@ -204,6 +217,35 @@ export function ArticleScreen({
     </section>
   );
 }
+
+function SearchChipIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="10.8" cy="10.8" r="5.8" />
+      <path d="m15.2 15.2 4 4" />
+    </svg>
+  );
+}
+
+function HeartIcon({ filled = false }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        className={filled ? "is-filled" : ""}
+        d="M12 20.3S4.5 15.9 3.2 9.8C2.5 6.3 4.5 4 7.2 4c1.8 0 3.3 1 4.1 2.4C12.1 5 13.6 4 15.4 4c2.7 0 4.7 2.3 4 5.8C18.1 15.9 12 20.3 12 20.3Z"
+      />
+    </svg>
+  );
+}
+
+function BookmarkIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M6.5 4.2h11v16L12 16.8l-5.5 3.4v-16Z" />
+    </svg>
+  );
+}
+
 function FactText({ text, facts }) {
   const fact = facts.find((item) => item.text && text.includes(item.text));
   if (!fact) return text;
