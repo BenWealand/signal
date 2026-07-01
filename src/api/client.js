@@ -22,8 +22,43 @@ export async function apiPost(path, payload) {
   return response.json();
 }
 
+export async function apiPostAfterWake(path, payload) {
+  await wakeApi();
+  return apiPost(path, payload);
+}
+
 export async function getArticleProgress() {
   return apiGet("/articles/progress");
+}
+
+async function wakeApi() {
+  if (!API_BASE) return;
+  const attempts = Number(import.meta.env.VITE_SIGNAL_WAKE_ATTEMPTS || 8);
+  const timeoutMs = Number(import.meta.env.VITE_SIGNAL_WAKE_TIMEOUT_MS || 12000);
+  const delayMs = Number(import.meta.env.VITE_SIGNAL_WAKE_DELAY_MS || 3500);
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(`${API_BASE}/health`, { signal: controller.signal });
+      if (response.ok) return;
+      lastError = await apiError(response, "/health");
+    } catch (error) {
+      lastError = error;
+    } finally {
+      window.clearTimeout(timeout);
+    }
+    if (attempt < attempts) {
+      await new Promise((resolve) => window.setTimeout(resolve, delayMs));
+    }
+  }
+
+  const error = new Error("Backend is still waking up. Try again in a moment.");
+  error.status = lastError?.status || 503;
+  error.detail = error.message;
+  throw error;
 }
 
 async function apiError(response, path) {

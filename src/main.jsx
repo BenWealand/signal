@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { supabase } from "./lib/supabase.js";
-import { apiGet, apiPost } from "./api/client.js";
+import { apiGet, apiPost, apiPostAfterWake, hasApiBase } from "./api/client.js";
 import { useStoredState } from "./hooks/useStoredState.js";
 import { SESSION_ID } from "./lib/session.js";
 import { defaultSettings, SECTION_NAMES, SECTION_QUERIES, starterStories, trendPromptPreviews } from "./lib/constants.js";
@@ -258,8 +258,9 @@ function App() {
     setExternalDraft(null);
     setDraftPrompt(nextPrompt);
     setPhase("building");
+    if (hasApiBase()) showToast("Waking the backend if needed...");
     trackEvent(account?.id, "prompt", { prompt: nextPrompt });
-    apiPost("/articles/write", { prompt: nextPrompt, source: "reader-prompt", tag: "prompt", limit: 10, mode: generationMode, user_id: account?.id || null })
+    apiPostAfterWake("/articles/write", { prompt: nextPrompt, source: "reader-prompt", tag: "prompt", limit: 10, mode: generationMode, user_id: account?.id || null })
       .then((article) => {
         setExternalDraft(normalizeCommandArticle(article));
         setPhase("complete");
@@ -281,6 +282,12 @@ function App() {
       showToast("That prompt is blocked by the Signal prompt filter.");
       return;
     }
+    if (hasApiBase()) {
+      setExternalDraft(null);
+      setPhase("idle");
+      showToast(error?.detail || error?.message || "Backend is waking up. Try again in a moment.");
+      return;
+    }
     window.setTimeout(() => {
       setExternalDraft(localFailureDraft(failedPrompt, error));
       setPhase("complete");
@@ -294,8 +301,9 @@ function App() {
     setDraftPrompt(nextPrompt);
     setPhase("building");
     setActiveScreen("Latest");
+    if (hasApiBase()) showToast("Waking the backend if needed...");
     trackEvent(account?.id, "prompt", { prompt: nextPrompt, topic: "recommended-follow-up" });
-    apiPost("/articles/write", { prompt: nextPrompt, source: "recommended-follow-up", tag: "prompt", limit: 10, mode: "fast", user_id: account?.id || null })
+    apiPostAfterWake("/articles/write", { prompt: nextPrompt, source: "recommended-follow-up", tag: "prompt", limit: 10, mode: "fast", user_id: account?.id || null })
       .then((article) => {
         setExternalDraft(normalizeCommandArticle(article));
         setPhase("complete");
@@ -405,7 +413,8 @@ function App() {
     setDraftPrompt(article.prompt);
     setPhase("building");
     setActiveScreen("Latest");
-    apiPost("/articles/write", { prompt: article.prompt, source: "reader-prompt", tag: "prompt", limit: 10, mode: generationMode, user_id: account?.id || null })
+    if (hasApiBase()) showToast("Waking the backend if needed...");
+    apiPostAfterWake("/articles/write", { prompt: article.prompt, source: "reader-prompt", tag: "prompt", limit: 10, mode: generationMode, user_id: account?.id || null })
       .then((result) => {
         setExternalDraft(normalizeCommandArticle(result));
         setPhase("complete");
@@ -427,8 +436,9 @@ function App() {
     setDraftPrompt(topic);
     setPhase("building");
     setActiveScreen("Latest");
+    if (hasApiBase()) showToast("Waking the backend if needed...");
     trackEvent(account?.id, "prompt", { prompt: topic, section: "globe-trend" });
-    apiPost("/articles/write", { prompt: topic, source: "globe-trend", tag: "trend", limit: 10, mode: generationMode, user_id: account?.id || null })
+    apiPostAfterWake("/articles/write", { prompt: topic, source: "globe-trend", tag: "trend", limit: 10, mode: generationMode, user_id: account?.id || null })
       .then((article) => {
         setExternalDraft(normalizeCommandArticle(article));
         setPhase("complete");
@@ -503,8 +513,9 @@ function App() {
               setExternalDraft(null);
               setPhase("building");
               setActiveScreen("Latest");
+              if (hasApiBase()) showToast("Waking the backend if needed...");
               trackEvent(account?.id, "prompt", { prompt: topic, section: activeScreen });
-                apiPost("/articles/write", { prompt: topic, source: "reader-prompt", tag: "prompt", limit: 10, mode: generationMode, user_id: account?.id || null })
+                apiPostAfterWake("/articles/write", { prompt: topic, source: "reader-prompt", tag: "prompt", limit: 10, mode: generationMode, user_id: account?.id || null })
                 .then((article) => { setExternalDraft(normalizeCommandArticle(article)); setPhase("complete"); })
                 .catch((error) => {
                   handleArticleWriteFailure(topic, error);
