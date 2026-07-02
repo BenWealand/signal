@@ -13,6 +13,7 @@ export function Header({
 }) {
   const screens = ["Home", "Latest", "Trending", "Saved"];
   const sections = SECTION_NAMES;
+  const mobileScreens = ["Home", "Latest", "Trending", "Saved"];
   const displayDate = new Intl.DateTimeFormat("en-US", {
     weekday: "long",
     month: "long",
@@ -21,6 +22,7 @@ export function Header({
   }).format(new Date());
 
   return (
+    <>
     <header className="site-header">
       <div className="header-kicker">
         <span>{displayDate}</span>
@@ -74,7 +76,70 @@ export function Header({
           </button>
         ))}
       </nav>
+
+      <nav className="mobile-topic-nav" aria-label="Mobile topic navigation">
+        {sections.map((section) => (
+          <button
+            className={activeScreen === section || (activeScreen === "Home" && activeSection === section) ? "is-active" : ""}
+            key={section}
+            type="button"
+            onClick={() => {
+              onSectionChange(section);
+              onScreenChange(section);
+            }}
+          >
+            {section}
+          </button>
+        ))}
+      </nav>
+
     </header>
+    <nav className="mobile-bottom-nav" aria-label="Mobile primary navigation">
+      {mobileScreens.map((screen) => (
+        <button
+          className={activeScreen === screen ? "is-active" : ""}
+          key={screen}
+          type="button"
+          onClick={() => onScreenChange(screen)}
+          aria-label={screen}
+        >
+          <MobileNavIcon screen={screen} />
+          <span>{screen}</span>
+        </button>
+      ))}
+    </nav>
+    </>
+  );
+}
+
+function MobileNavIcon({ screen }) {
+  if (screen === "Latest") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M5 5.5h14M5 12h14M5 18.5h9" />
+      </svg>
+    );
+  }
+  if (screen === "Trending") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 16.5 9 11l4 3.5 7-8" />
+        <path d="M15 6.5h5v5" />
+      </svg>
+    );
+  }
+  if (screen === "Saved") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M6.5 4.5h11v15L12 16.2l-5.5 3.3v-15Z" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4.5 10.8 12 4l7.5 6.8" />
+      <path d="M6.8 10v9.2h10.4V10" />
+    </svg>
   );
 }
 
