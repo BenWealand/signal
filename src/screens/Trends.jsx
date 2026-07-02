@@ -46,38 +46,34 @@ export function TrendsScreen({ commandArticles, onOpenArticle }) {
   return (
     <ScreenShell eyebrow="Trending" title="Trending">
       <p className="screen-caption">Ranked by views, likes, comments, relevance, and recency</p>
-      <div className="trend-board">
+      <div className="section-grid">
         {trends.map((trend, index) => {
-          const preview = trend.dek || trend.summary || "";
+          const previewRaw = trend.dek || trend.summary || trend.body?.[0] || "";
+          const preview = previewRaw.length > 150 ? `${previewRaw.slice(0, 150)}...` : previewRaw;
           const metrics = trend.trendMetrics || {};
           const currentRank = metrics.currentRank || index + 1;
           const previousRank = metrics.previousRank || currentRank;
           const rankDelta = previousRank - currentRank;
-          const sourceLabel = trend.sources?.length
-            ? trend.sources.slice(0, 3).join(", ") + (trend.sources.length > 3 ? ` +${trend.sources.length - 3}` : "")
-            : trend.source || "news signal";
+          const sectionLabel = trend.section || trend.tag || trend.source || "Trending";
+          const openable = "prompt" in trend;
+          const dateLabel = trendDate(trend) || (metrics.views !== undefined ? `${metrics.views} reads` : "");
 
           return (
-            <article className="trend-card" key={trend.id}>
-              <span className="trend-rank-line">
-                <b>#{currentRank}</b>
+            <article
+              className={`section-card${openable ? "" : " is-static"}`}
+              key={trend.id}
+              onClick={openable ? () => onOpenArticle(trend) : undefined}
+            >
+              <div className="section-card-eyebrow">
+                <span>#{currentRank} · {sectionLabel}</span>
                 <RankArrow delta={rankDelta} />
-                {sourceLabel}
-              </span>
+              </div>
               <h3>{trend.headline}</h3>
               {preview && <p>{preview}</p>}
-              {trend.body?.length > 0 && !preview && <p className="trend-card-body-preview">{trend.body[0]}</p>}
-              <div>
+              <div className="section-card-footer">
                 <strong>{trend.sourceCount}</strong>
                 <em>{trend.sourceCount === 1 ? "source" : "sources"}</em>
-                {metrics.views !== undefined && (
-                  <span className="trend-metric-strip">
-                    {metrics.views} reads / {metrics.saves} saves / {metrics.likes} likes / {metrics.comments} comments
-                  </span>
-                )}
-                {"prompt" in trend && (
-                  <button className="push-btn" type="button" onClick={() => onOpenArticle(trend)}>Open</button>
-                )}
+                <span className="section-card-date">{dateLabel}</span>
               </div>
             </article>
           );
@@ -87,10 +83,19 @@ export function TrendsScreen({ commandArticles, onOpenArticle }) {
   );
 }
 
+function trendDate(trend) {
+  const raw = trend.createdAt || trend.updated_at || trend.created_at || "";
+  if (!raw) return "";
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return parsed.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
 function RankArrow({ delta }) {
   const className = delta > 0 ? "rank-up" : delta < 0 ? "rank-down" : "rank-flat";
+  const label = delta === 0 ? "Holding steady" : delta > 0 ? `Up ${delta}` : `Down ${Math.abs(delta)}`;
   return (
-    <em className={className}>
+    <em className={`trend-rank-indicator ${className}`} title={label} aria-label={label}>
       {delta === 0 ? (
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" /></svg>
       ) : (
@@ -98,7 +103,7 @@ function RankArrow({ delta }) {
           <path d={delta > 0 ? "M12 5v14M6 11l6-6 6 6" : "M12 19V5M6 13l6 6 6-6"} />
         </svg>
       )}
-      {delta === 0 ? "even" : Math.abs(delta)}
+      {delta !== 0 && Math.abs(delta)}
     </em>
   );
 }

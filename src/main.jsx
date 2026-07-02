@@ -431,7 +431,6 @@ function App() {
           <LatestScreen
             commandArticles={[...commandArticles, ...backendStories]}
             onOpenArticle={openCommandArticle}
-            onBuildArticle={startCommandPrompt}
             loading={feedsLoading}
             account={account}
           />

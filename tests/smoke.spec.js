@@ -25,7 +25,7 @@ test("API failure shows a clean preview article reader", async ({ page }) => {
 
 test("generated article reader renders and can be saved", async ({ page }) => {
   await page.getByRole("button", { name: "Latest" }).click();
-  await page.locator(".section-card").first().getByRole("button", { name: "Read" }).click();
+  await page.locator(".section-card").first().click();
   const headline = await page.locator(".article-reader h1").innerText();
   await expect(page.getByText(/Preview edition|Preview draft|Quick edition|Live sourced article|Consensus edition|Early coverage/).first()).toBeVisible();
   await page.getByRole("button", { name: "Save article" }).click();
@@ -35,7 +35,7 @@ test("generated article reader renders and can be saved", async ({ page }) => {
 
 test("article reader offers follow-up exploration prompts", async ({ page }) => {
   await page.getByRole("button", { name: "Latest" }).click();
-  await page.locator(".section-card").first().getByRole("button", { name: "Read" }).click();
+  await page.locator(".section-card").first().click();
   await expect(page.getByText("Keep exploring")).toBeVisible();
   await expect(page.locator(".follow-up-searches button").first()).toBeVisible();
 });
