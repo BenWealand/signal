@@ -4331,6 +4331,58 @@ a.source-link-title:hover {
     justify-items: center;
     text-align: center;
   }
+
+  .feed-filter-bar {
+    flex-wrap: nowrap;
+    margin-inline: -1rem;
+    padding-inline: 1rem;
+  }
+
+  .feed-filter-bar button {
+    white-space: nowrap;
+  }
+
+  /* Reader-first ordering: on small screens the article leads, with
+     exploration, rewrite, sources, and discussion following it. */
+  .article-result-screen > * {
+    order: 10;
+  }
+
+  .article-result-screen .article-reader {
+    order: 1;
+  }
+
+  .article-result-screen .article-toolbar {
+    order: 2;
+  }
+
+  .article-result-screen .article-stats {
+    order: 3;
+  }
+
+  .article-result-screen .score-note {
+    order: 4;
+  }
+
+  .article-result-screen .article-bottom-actions {
+    order: 5;
+  }
+
+  .article-result-screen .follow-up-searches {
+    order: 6;
+  }
+
+  .article-result-screen .rewrite-bar {
+    order: 7;
+  }
+
+  .article-result-screen .article-sources {
+    order: 8;
+  }
+
+  .article-result-screen .article-discussion {
+    order: 9;
+  }
 }
 
 @media (max-width: 480px) {

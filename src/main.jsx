@@ -419,6 +419,7 @@ function App() {
           setDraftPrompt("");
           setExternalDraft(null);
           setPhase("idle");
+          window.scrollTo({ top: 0, behavior: "smooth" });
         }}
         onSectionChange={setActiveSection}
         onOpenAccount={() => setAccountOpen(true)}
