@@ -436,6 +436,7 @@ def save_generated_article(article: dict[str, Any]) -> str:
     if article_is_blocked(article).blocked:
         delete_generated_article(str(article["id"]))
         return str(article["id"])
+    section = str(article.get("section") or "").strip().lower() or classify_article_section(article)
     with get_connection() as conn:
         with conn.cursor() as cur:
             _ensure_generated_article_metadata_columns(cur)
@@ -445,8 +446,8 @@ def save_generated_article(article: dict[str, Any]) -> str:
                 (id, owner_user_id, source, tag, trend_url, prompt, headline, dek, summary, body, facts,
                  terms, sources, source_links, consensus, source_count, denied_for_bias,
                  fairness_score, accuracy_score, score_metadata, generation_mode, source_quality,
-                 consensus_level, used_live_sources, fallback_reason, status, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 consensus_level, used_live_sources, fallback_reason, section, status, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(id) DO UPDATE SET
                   owner_user_id = COALESCE(generated_articles.owner_user_id, EXCLUDED.owner_user_id),
                   source = EXCLUDED.source,
@@ -472,6 +473,7 @@ def save_generated_article(article: dict[str, Any]) -> str:
                   consensus_level = EXCLUDED.consensus_level,
                   used_live_sources = EXCLUDED.used_live_sources,
                   fallback_reason = EXCLUDED.fallback_reason,
+                  section = EXCLUDED.section,
                   status = EXCLUDED.status
                 """,
                 (
@@ -500,10 +502,12 @@ def save_generated_article(article: dict[str, Any]) -> str:
                     article.get("consensus_level", ""),
                     1 if article.get("used_live_sources") else 0,
                     article.get("fallback_reason", ""),
+                    section,
                     article.get("status", "published"),
                     article.get("createdAt"),
                 ),
             )
+            article["section"] = section
             return str(article["id"])
 
 
@@ -517,6 +521,7 @@ _GENERATED_ARTICLE_METADATA_COLUMNS = {
     "consensus_level": "TEXT DEFAULT ''",
     "used_live_sources": "SMALLINT DEFAULT 0",
     "fallback_reason": "TEXT DEFAULT ''",
+    "section": "TEXT DEFAULT ''",
 }
 
 
@@ -538,7 +543,7 @@ def _decode_generated_article(row: Any) -> dict[str, Any]:
     item = row_to_dict(row)
     if not item:
         return {}
-    return {
+    decoded = {
         "id": item["id"],
         "ownerUserId": item.get("owner_user_id"),
         "source": item["source"],
@@ -564,9 +569,13 @@ def _decode_generated_article(row: Any) -> dict[str, Any]:
         "consensus_level": item.get("consensus_level", ""),
         "used_live_sources": bool(item.get("used_live_sources", 0)),
         "fallback_reason": item.get("fallback_reason", ""),
+        "section": str(item.get("section") or "").lower(),
         "status": item["status"],
         "createdAt": item["created_at"],
     }
+    if not decoded["section"]:
+        decoded["section"] = classify_article_section(decoded)
+    return decoded
 
 
 def list_generated_articles(limit: int = 25) -> list[dict[str, Any]]:
@@ -739,24 +748,61 @@ _SECTION_KEYWORDS: dict[str, list[str]] = {
     "climate": ["climate", "weather", "flood", "hurricane", "renewable", "carbon", "environment", "energy", "wildfire"],
 }
 
+DEFAULT_ARTICLE_SECTION = "world"
+
+
+def classify_article_section(article: dict[str, Any]) -> str:
+    """
+    Assign every article to exactly one topic. Scores each section by keyword
+    hits across the article's prompt, headline, dek, summary, and terms;
+    ties/misses fall back to the default section so no article is topicless.
+    """
+    terms = article.get("terms") or []
+    text = " ".join(
+        str(part)
+        for part in (
+            article.get("prompt", ""),
+            article.get("headline", ""),
+            article.get("dek", ""),
+            article.get("summary", ""),
+            " ".join(str(t) for t in terms) if isinstance(terms, list) else str(terms),
+        )
+        if part
+    ).lower()
+    text = f" {text} "
+    best_section = DEFAULT_ARTICLE_SECTION
+    best_score = 0
+    for section, keywords in _SECTION_KEYWORDS.items():
+        score = sum(text.count(keyword.lower()) for keyword in keywords)
+        if score > best_score:
+            best_section = section
+            best_score = score
+    return best_section
+
 
 def list_generated_articles_by_section(section: str, limit: int = 20) -> list[dict[str, Any]]:
-    """Return generated articles whose prompt matches the given section's keywords."""
-    keywords = _SECTION_KEYWORDS.get(section.lower(), [])
+    """
+    Return the latest generated articles for a topic, newest first.
+    Prefers the stored section assignment; legacy rows without one are
+    matched by section keywords so nothing disappears from topic pages.
+    """
+    slug = section.lower()
+    keywords = _SECTION_KEYWORDS.get(slug, [])
     if not keywords:
         return list_generated_articles(limit=limit)
-    conditions = " OR ".join(["prompt ILIKE %s OR headline ILIKE %s"] * len(keywords))
-    params = [val for kw in keywords for val in (f"%{kw}%", f"%{kw}%")] + [limit]
+    keyword_conditions = " OR ".join(["prompt ILIKE %s OR headline ILIKE %s"] * len(keywords))
+    keyword_params = [val for kw in keywords for val in (f"%{kw}%", f"%{kw}%")]
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 f"""
                 SELECT * FROM generated_articles
-                WHERE {conditions}
+                WHERE section = %s
+                   OR (COALESCE(section, '') = '' AND ({keyword_conditions}))
                 ORDER BY created_at DESC
                 LIMIT %s
                 """,
-                params[:-1] + [max(limit * 3, limit)],
+                [slug, *keyword_params, max(limit * 3, limit)],
             )
             items = [_decode_generated_article(row) for row in cur.fetchall()]
             return [item for item in items if not article_is_blocked(item).blocked][:limit]
@@ -1078,6 +1124,11 @@ def mark_notifications_read(user_id: int) -> None:
 
 
 def list_trending_generated_articles(limit: int = 18) -> list[dict[str, Any]]:
+    """
+    Trending ranking based on: views, time (recency decay), likes, comments,
+    and relevance. Relevance combines source depth (independent source count)
+    with the pipeline's verification and balance estimates.
+    """
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -1089,6 +1140,7 @@ def list_trending_generated_articles(limit: int = 18) -> list[dict[str, Any]]:
                     COUNT(DISTINCT ss.id) AS saves,
                     COUNT(DISTINCT al.id) AS likes,
                     COUNT(DISTINCT ac.id) AS comments,
+                    (ga.source_count * 0.5 + ga.accuracy_score * 0.05 + ga.fairness_score * 0.03) AS relevance,
                     EXTRACT(EPOCH FROM (NOW() - ga.created_at)) / 3600.0 AS age_hours
                   FROM generated_articles ga
                   LEFT JOIN user_history uh ON uh.article_id = ga.id
@@ -1100,16 +1152,16 @@ def list_trending_generated_articles(limit: int = 18) -> list[dict[str, Any]]:
                 ),
                 ranked AS (
                   SELECT *,
-                    (views * 3.0 + saves * 8.0 + likes * 5.0 + comments * 6.0 + source_count * 0.35)
+                    (views * 3.0 + likes * 5.0 + comments * 6.0 + relevance)
                     / POWER(age_hours + 2.0, 0.72) AS trend_score,
                     ROW_NUMBER() OVER (
                       ORDER BY
-                      (views * 3.0 + saves * 8.0 + likes * 5.0 + comments * 6.0 + source_count * 0.35)
+                      (views * 3.0 + likes * 5.0 + comments * 6.0 + relevance)
                       / POWER(age_hours + 2.0, 0.72) DESC
                     ) AS current_rank,
                     ROW_NUMBER() OVER (
                       ORDER BY
-                      (views * 3.0 + saves * 8.0 + likes * 5.0 + comments * 6.0 + source_count * 0.35)
+                      (views * 3.0 + likes * 5.0 + comments * 6.0 + relevance)
                       / POWER(GREATEST(age_hours - 24.0, 2.0) + 2.0, 0.72) DESC
                     ) AS previous_rank
                   FROM metrics

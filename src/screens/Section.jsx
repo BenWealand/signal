@@ -22,23 +22,36 @@ export function SectionScreen({ section, account, onPrompt, onOpenArticle }) {
   const sectionPrompt = SECTION_QUERIES[section] || section.toLowerCase();
 
   const loadStories = useCallback(() => {
+    // Clear the previous topic's stories immediately so switching topics never
+    // shows stale articles under the new topic's heading. The local cache makes
+    // already-visited topics reappear almost instantly.
+    setStories([]);
     setLoading(true);
     setLoadState("loading");
+    let cancelled = false;
     apiGetCached(`/news/${slug}?limit=18`, { ttlMs: 10 * 60 * 1000 })
       .then((data) => {
+        if (cancelled) return;
         setStories(dedupeStories(Array.isArray(data) ? data : [], 18));
         setLoadState("live");
       })
       .catch(() => {
+        if (cancelled) return;
         setStories([]);
         setLoadState("offline");
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [slug]);
 
   useEffect(() => {
-    loadStories();
+    const cancel = loadStories();
     apiPost("/history", { user_id: account?.id || null, session_id: SESSION_ID, action_type: "section", section }).catch(() => {});
+    return cancel;
   }, [loadStories, section, account?.id]);
 
   const handleRefresh = () => {

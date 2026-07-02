@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
-import { apiGetCached, preloadSignalFeeds } from "../api/client.js";
+import { apiGetCached, apiGetFresh, hasApiBase, preloadSignalFeeds } from "../api/client.js";
 import { dedupeStories, normalizeBackendStory, normalizeCommandArticle } from "../utils/articleNormalize.js";
+
+const LATEST_REFRESH_MS = 60 * 1000;
 
 export function useInitialSignalData({
   account,
@@ -78,6 +80,29 @@ export function useInitialSignalData({
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  // Keep Latest current: pull the newest written articles every minute and
+  // fold them into the cached feed.
+  useEffect(() => {
+    if (!hasApiBase()) return undefined;
+    const timer = window.setInterval(() => {
+      apiGetFresh("/generated-articles")
+        .then((generated) => {
+          if (Array.isArray(generated) && generated.length) {
+            setCommandArticles(dedupeStories(generated));
+          }
+        })
+        .catch(() => {});
+      apiGetFresh("/stories")
+        .then((stories) => {
+          if (Array.isArray(stories)) {
+            setBackendStories(dedupeStories(stories.map(normalizeBackendStory)));
+          }
+        })
+        .catch(() => {});
+    }, LATEST_REFRESH_MS);
+    return () => window.clearInterval(timer);
   }, []);
 
   return { feedsLoading };
