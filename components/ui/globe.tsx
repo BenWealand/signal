@@ -83,7 +83,7 @@ const GLOBE_CONFIG: COBEOptions = {
   markerColor: [251 / 255, 100 / 255, 21 / 255],
   glowColor: [1, 1, 1],
   markerElevation: 0.025,
-  markers: NEWS_MARKERS.map(({ id, location, size = 0.022 }) => ({ id, location, size })),
+  markers: [],
   arcs: [
     { id: "ny-london", from: [40.7128, -74.006], to: [51.5072, -0.1276] },
     { id: "london-delhi", from: [51.5072, -0.1276], to: [28.6139, 77.209] },
@@ -138,13 +138,16 @@ export function Globe({
   const globeConfig = useMemo<COBEOptions>(() => ({
     ...GLOBE_CONFIG,
     ...(config || {}),
-    markers: markers.map(({ id, location, size = 0.022 }) => ({ id, location, size })),
+    markers: [],
     arcs: [],
   }), [config, markers]);
 
   const projectedMarkers = useMemo<ProjectedMarker[]>(() => {
     const theta = Number(globeConfig.theta || 0);
-    return markers.slice(0, 8).map((marker) => {
+    return markers
+      .filter((marker) => marker.region && marker.headline && Number.isFinite(marker.location?.[0]) && Number.isFinite(marker.location?.[1]))
+      .slice(0, 18)
+      .map((marker) => {
       const lat = marker.location[0] * Math.PI / 180;
       const lng = marker.location[1] * Math.PI / 180;
       const rotatedLng = lng - renderPhi;

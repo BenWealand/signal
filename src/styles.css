@@ -307,7 +307,7 @@ a {
 
 .news-marker-layer {
   position: absolute;
-  inset: 5% 7%;
+  inset: 0;
   z-index: 6;
   pointer-events: none;
 }
@@ -321,7 +321,6 @@ a {
   gap: 0.08rem;
   min-width: 7.8rem;
   max-width: 10.2rem;
-  margin-bottom: 0.65rem;
   padding: 0.38rem 0.5rem;
   border: 1px solid rgba(11, 90, 64, 0.2);
   border-radius: 0.3rem;
@@ -334,7 +333,7 @@ a {
   opacity: var(--marker-opacity, 1);
   text-align: left;
   white-space: normal;
-  transform: translate(-50%, -50%) scale(var(--marker-scale, 1));
+  transform: translate(-50%, calc(-100% - 0.72rem)) scale(var(--marker-scale, 1));
   transition: border-color 140ms ease, box-shadow 140ms ease, opacity 120ms ease, transform 120ms linear;
 }
 
@@ -343,14 +342,14 @@ a {
   border-color: rgba(11, 90, 64, 0.55);
   box-shadow: 0 0.55rem 1.5rem rgba(18, 38, 30, 0.18);
   outline: none;
-  transform: translate(-50%, -50%) scale(calc(var(--marker-scale, 1) + 0.04));
+  transform: translate(-50%, calc(-100% - 0.72rem)) scale(calc(var(--marker-scale, 1) + 0.04));
 }
 
 .news-marker-label::before {
   content: "";
   position: absolute;
   left: 50%;
-  bottom: -0.5rem;
+  bottom: -0.54rem;
   width: 0.28rem;
   height: 0.28rem;
   translate: -50% 0;

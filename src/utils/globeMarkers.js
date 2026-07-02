@@ -5,6 +5,14 @@ const RECENT_TREND_WINDOW_DAYS = 14;
 const RECENT_TREND_WINDOW_MS = RECENT_TREND_WINDOW_DAYS * 24 * 60 * 60 * 1000;
 
 const LOCATION_KEYWORDS = [
+  { match: ["alabama", "birmingham", "montgomery"], region: "Alabama", location: [32.3777, -86.3000] },
+  { match: ["texas", "houston", "dallas", "austin"], region: "Texas", location: [30.2672, -97.7431] },
+  { match: ["florida", "tallahassee", "orlando", "tampa"], region: "Florida", location: [30.4383, -84.2807] },
+  { match: ["georgia", "atlanta"], region: "Atlanta", location: [33.7490, -84.3880] },
+  { match: ["arizona", "phoenix"], region: "Phoenix", location: [33.4484, -112.0740] },
+  { match: ["michigan", "detroit"], region: "Detroit", location: [42.3314, -83.0458] },
+  { match: ["pennsylvania", "philadelphia", "pittsburgh"], region: "Pennsylvania", location: [40.2732, -76.8867] },
+  { match: ["california", "sacramento"], region: "California", location: [38.5816, -121.4944] },
   { match: ["washington", "congress", "senate", "white house", "supreme court", "capitol"], region: "Washington", location: [38.9072, -77.0369] },
   { match: ["new york", "wall street", "nasdaq", "united nations", "manhattan"], region: "New York", location: [40.7128, -74.006] },
   { match: ["london", "uk", "u.k.", "britain", "parliament", "england"], region: "London", location: [51.5072, -0.1276] },
@@ -80,7 +88,8 @@ function inferStoryLocation(story) {
       if (!text) continue;
       for (const term of entry.match) {
         if (textHasTerm(text, term.toLowerCase())) {
-          score += part.weight + Math.min(4, term.length / 4);
+          const exactPlaceBoost = part.weight >= 5 && term.length >= 5 ? 3 : 0;
+          score += part.weight + Math.min(4, term.length / 4) + exactPlaceBoost;
         }
       }
     }

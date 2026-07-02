@@ -1,4 +1,5 @@
 export const API_BASE = import.meta.env.VITE_SIGNAL_API_URL || "";
+let wakePromise = null;
 
 export function hasApiBase() {
   return Boolean(API_BASE);
@@ -6,6 +7,7 @@ export function hasApiBase() {
 
 export async function apiGet(path) {
   if (!API_BASE) throw new Error("API is not configured for this build.");
+  await ensureAwake(path);
   const response = await fetch(`${API_BASE}${path}`);
   if (!response.ok) throw await apiError(response, path);
   return response.json();
@@ -13,6 +15,7 @@ export async function apiGet(path) {
 
 export async function apiPost(path, payload) {
   if (!API_BASE) throw new Error("API is not configured for this build.");
+  await ensureAwake(path);
   const response = await fetch(`${API_BASE}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -23,7 +26,6 @@ export async function apiPost(path, payload) {
 }
 
 export async function apiPostAfterWake(path, payload) {
-  await wakeApi();
   return apiPost(path, payload);
 }
 
@@ -59,6 +61,16 @@ async function wakeApi() {
   error.status = lastError?.status || 503;
   error.detail = error.message;
   throw error;
+}
+
+async function ensureAwake(path) {
+  if (!API_BASE || path === "/health") return;
+  if (!wakePromise) {
+    wakePromise = wakeApi().finally(() => {
+      wakePromise = null;
+    });
+  }
+  await wakePromise;
 }
 
 async function apiError(response, path) {

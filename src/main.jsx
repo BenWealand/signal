@@ -149,7 +149,7 @@ function App() {
       return [
         ...topicMarkers,
         ...articleMarkers.filter((marker) => !seen.has(String(marker.headline || "").toLowerCase())),
-      ].slice(0, 8);
+      ].slice(0, 18);
     },
     [trendingTopics, commandArticles, backendStories, sectionStories, activeSection],
   );
