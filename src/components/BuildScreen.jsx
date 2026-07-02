@@ -86,7 +86,7 @@ export function BuildScreen({ draft }) {
 
         <div className="build-progress-detail">
           <span className="build-stage-label" style={{ color: stageColor }}>
-            {isStuck ? "Warning: pipeline is taking longer than usual..." : progress.stage_label}
+            {isStuck ? "Still working — thorough sourcing can take a little longer..." : progress.stage_label}
           </span>
           <div className="build-progress-stats">
             {progress.sources_found > 0 && (

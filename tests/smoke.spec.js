@@ -16,28 +16,36 @@ test("prompt submit reaches build state", async ({ page }) => {
   await expect(page.locator(".build-terminal")).toBeVisible();
 });
 
-test("API failure shows clearly labeled fallback article reader", async ({ page }) => {
+test("API failure shows a clean preview article reader", async ({ page }) => {
   await page.getByLabel("Build a sourced draft").fill("coastal insurance flood risk");
   await page.getByRole("button", { name: "Write" }).click();
-  await expect(page.getByText("Backend failed - local draft shown")).toBeVisible();
+  await expect(page.getByText("Preview draft", { exact: true })).toBeVisible();
   await expect(page.locator(".article-reader h1")).toContainText(/Coastal Insurance Flood Risk/i);
 });
 
 test("generated article reader renders and can be saved", async ({ page }) => {
   await page.getByRole("button", { name: "Latest" }).click();
-  await page.locator(".feed-row").first().getByRole("button", { name: "Read" }).click();
+  await page.locator(".section-card").first().getByRole("button", { name: "Read" }).click();
   const headline = await page.locator(".article-reader h1").innerText();
-  await expect(page.getByText(/Local\/demo fallback article|Fast draft|Live sourced article|Thorough consensus article|Backend fallback article/)).toBeVisible();
-  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByText(/Preview edition|Preview draft|Quick edition|Live sourced article|Consensus edition|Early coverage/).first()).toBeVisible();
+  await page.getByRole("button", { name: "Save article" }).click();
   await page.getByRole("button", { name: "Saved" }).click();
   await expect(page.getByRole("heading", { name: headline })).toBeVisible();
 });
 
-test("section refresh shows loading and reload state", async ({ page }) => {
-  await page.getByRole("button", { name: "Politics" }).click();
-  await expect(page.getByText(/Loading live politics coverage|Backend unavailable/)).toBeVisible();
-  await page.getByRole("button", { name: /Refresh|Fetch now/ }).first().click();
-  await expect(page.locator(".feed-status").getByText(/Refresh requested|Backend unavailable/)).toBeVisible();
+test("article reader offers follow-up exploration prompts", async ({ page }) => {
+  await page.getByRole("button", { name: "Latest" }).click();
+  await page.locator(".section-card").first().getByRole("button", { name: "Read" }).click();
+  await expect(page.getByText("Keep exploring")).toBeVisible();
+  await expect(page.locator(".follow-up-searches button").first()).toBeVisible();
+});
+
+test("section screen shows friendly empty state without backend jargon", async ({ page }) => {
+  await page.getByRole("button", { name: "Politics" }).first().click();
+  await expect(
+    page.getByText(/Following the paper trail|Fresh politics stories are on their way/),
+  ).toBeVisible();
+  await expect(page.getByText(/backend|fallback/i)).toHaveCount(0);
 });
 
 test("core screens avoid horizontal overflow on mobile", async ({ page }) => {
@@ -47,11 +55,12 @@ test("core screens avoid horizontal overflow on mobile", async ({ page }) => {
 
   await page.getByLabel("Build a sourced draft").fill("mobile reader trust cues");
   await page.getByRole("button", { name: "Write" }).click();
-  await expect(page.getByText("Backend failed - local draft shown")).toBeVisible();
+  await expect(page.getByText("Preview draft", { exact: true })).toBeVisible();
 
-  await page.getByRole("button", { name: "Trends" }).click();
-  await expect(page.getByRole("heading", { name: "Trends" })).toBeVisible();
-  await page.getByRole("button", { name: "Climate" }).click();
+  await page.goto("/");
+  await page.locator(".mobile-bottom-nav").getByRole("button", { name: "Trending" }).click();
+  await expect(page.getByRole("heading", { name: "Trending" })).toBeVisible();
+  await page.locator(".mobile-topic-nav").getByRole("button", { name: "Climate" }).click();
   await expect(page.getByRole("heading", { name: "Climate" })).toBeVisible();
 
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);

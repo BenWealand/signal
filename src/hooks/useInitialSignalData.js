@@ -1,5 +1,5 @@
-import { useEffect } from "react";
-import { apiGetCached } from "../api/client.js";
+import { useEffect, useState } from "react";
+import { apiGetCached, preloadSignalFeeds } from "../api/client.js";
 import { dedupeStories, normalizeBackendStory, normalizeCommandArticle } from "../utils/articleNormalize.js";
 
 export function useInitialSignalData({
@@ -15,9 +15,17 @@ export function useInitialSignalData({
   setActiveScreen,
   trackEvent,
 }) {
+  const [feedsLoading, setFeedsLoading] = useState(true);
+
   useEffect(() => {
     let cancelled = false;
     const linkedArticleId = new URLSearchParams(window.location.search).get("article");
+
+    // Wake the backend and warm every reader feed (latest, trending, saved,
+    // and all sections) as soon as the app opens. Results land in the local
+    // cache, so screens render instantly afterwards.
+    preloadSignalFeeds({ userId: account?.id || null }).catch(() => {});
+
     Promise.allSettled([
       apiGetCached("/generated-articles", { ttlMs: 5 * 60 * 1000 }),
       apiGetCached("/stories", { ttlMs: 5 * 60 * 1000 }),
@@ -43,6 +51,7 @@ export function useInitialSignalData({
         setBackendStories(dedupeStories(stories.map(normalizeBackendStory)));
         setTrendingTopics(topics);
         setApiStatus(generatedResult.status === "fulfilled" || storiesResult.status === "fulfilled" ? "online" : "offline");
+        setFeedsLoading(false);
 
         const linkedFromApi = linkedResult.status === "fulfilled" && linkedResult.value ? linkedResult.value : null;
         const linkedFromStatic = linkedArticleId
@@ -63,10 +72,13 @@ export function useInitialSignalData({
           setCommandArticles([]);
           setBackendStories([]);
           setApiStatus("offline");
+          setFeedsLoading(false);
         }
       });
     return () => {
       cancelled = true;
     };
   }, []);
+
+  return { feedsLoading };
 }

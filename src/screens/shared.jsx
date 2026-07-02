@@ -19,3 +19,12 @@ export function EmptyState({ title, text, action }) {
     </div>
   );
 }
+
+export function LoadingState({ message, compact = false }) {
+  return (
+    <div className={`loading-state${compact ? " is-compact" : ""}`} role="status" aria-live="polite">
+      <span className="loading-ring" aria-hidden="true" />
+      <p>{message}</p>
+    </div>
+  );
+}

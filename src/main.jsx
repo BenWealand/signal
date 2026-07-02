@@ -199,7 +199,7 @@ function App() {
     apiGet(`/users/${account.id}/notifications`).then(setNotifications).catch(() => setNotifications([]));
   }, [account?.id, notificationsOpen]);
 
-  useInitialSignalData({
+  const { feedsLoading } = useInitialSignalData({
     account,
     setApiStatus,
     setBackendStories,
@@ -219,7 +219,7 @@ function App() {
     setExternalDraft(null);
     setDraftPrompt(nextPrompt);
     setPhase("building");
-    if (hasApiBase()) showToast("Waking the backend if needed...");
+    if (hasApiBase()) showToast("Signal is on it — sourcing your story...");
     trackEvent(account?.id, "prompt", { prompt: nextPrompt });
     apiPostAfterWake("/articles/write", { prompt: nextPrompt, source: "reader-prompt", tag: "prompt", limit: 10, mode: generationMode, user_id: account?.id || null })
       .then((article) => {
@@ -246,7 +246,7 @@ function App() {
     if (hasApiBase()) {
       setExternalDraft(null);
       setPhase("idle");
-      showToast(error?.detail || error?.message || "Backend is waking up. Try again in a moment.");
+      showToast(error?.detail || error?.message || "The newsroom is still warming up — try again in a few seconds.");
       return;
     }
     window.setTimeout(() => {
@@ -262,7 +262,7 @@ function App() {
     setDraftPrompt(nextPrompt);
     setPhase("building");
     setActiveScreen("Latest");
-    if (hasApiBase()) showToast("Waking the backend if needed...");
+    if (hasApiBase()) showToast("Signal is on it — sourcing your story...");
     trackEvent(account?.id, "prompt", { prompt: nextPrompt, topic: "recommended-follow-up" });
     apiPostAfterWake("/articles/write", { prompt: nextPrompt, source: "recommended-follow-up", tag: "prompt", limit: 10, mode: "fast", user_id: account?.id || null })
       .then((article) => {
@@ -374,7 +374,7 @@ function App() {
     setDraftPrompt(article.prompt);
     setPhase("building");
     setActiveScreen("Latest");
-    if (hasApiBase()) showToast("Waking the backend if needed...");
+    if (hasApiBase()) showToast("Signal is on it — sourcing your story...");
     apiPostAfterWake("/articles/write", { prompt: article.prompt, source: "reader-prompt", tag: "prompt", limit: 10, mode: generationMode, user_id: account?.id || null })
       .then((result) => {
         setExternalDraft(normalizeCommandArticle(result));
@@ -397,7 +397,7 @@ function App() {
     setDraftPrompt(topic);
     setPhase("building");
     setActiveScreen("Latest");
-    if (hasApiBase()) showToast("Waking the backend if needed...");
+    if (hasApiBase()) showToast("Signal is on it — sourcing your story...");
     trackEvent(account?.id, "prompt", { prompt: topic, section: "globe-trend" });
     apiPostAfterWake("/articles/write", { prompt: topic, source: "globe-trend", tag: "trend", limit: 10, mode: generationMode, user_id: account?.id || null })
       .then((article) => {
@@ -419,6 +419,7 @@ function App() {
           setDraftPrompt("");
           setExternalDraft(null);
           setPhase("idle");
+          window.scrollTo({ top: 0, behavior: "smooth" });
         }}
         onSectionChange={setActiveSection}
         onOpenAccount={() => setAccountOpen(true)}
@@ -450,7 +451,7 @@ function App() {
             commandArticles={[...commandArticles, ...backendStories]}
             onOpenArticle={openCommandArticle}
             onBuildArticle={startCommandPrompt}
-            apiStatus={apiStatus}
+            loading={feedsLoading}
             account={account}
           />
         )}
@@ -460,7 +461,7 @@ function App() {
         )}
 
         {!hasDraft && activeScreen === "Saved" && (
-          <SavedScreen savedArticles={savedArticles} onOpenAccount={() => setAccountOpen(true)} />
+          <SavedScreen savedArticles={savedArticles} account={account} onOpenAccount={() => setAccountOpen(true)} />
         )}
 
         {!hasDraft && SECTION_NAMES.includes(activeScreen) && (
@@ -474,7 +475,7 @@ function App() {
               setExternalDraft(null);
               setPhase("building");
               setActiveScreen("Latest");
-              if (hasApiBase()) showToast("Waking the backend if needed...");
+              if (hasApiBase()) showToast("Signal is on it — sourcing your story...");
               trackEvent(account?.id, "prompt", { prompt: topic, section: activeScreen });
                 apiPostAfterWake("/articles/write", { prompt: topic, source: "reader-prompt", tag: "prompt", limit: 10, mode: generationMode, user_id: account?.id || null })
                 .then((article) => { setExternalDraft(normalizeCommandArticle(article)); setPhase("complete"); })

@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { articleStateFor, dedupeStories } from "../utils/articleNormalize.js";
-import { EmptyState, ScreenShell } from "./shared.jsx";
+import { EmptyState, LoadingState, ScreenShell } from "./shared.jsx";
 
-export function LatestScreen({ commandArticles, onOpenArticle, onBuildArticle, apiStatus, account }) {
+export function LatestScreen({ commandArticles, onOpenArticle, onBuildArticle, loading = false, account }) {
   const [filter, setFilter] = useState("All");
   const sections = ["All", "World", "Politics", "Markets", "Technology", "Climate"];
   const filteredRaw = filter === "All"
@@ -26,11 +26,10 @@ export function LatestScreen({ commandArticles, onOpenArticle, onBuildArticle, a
             {s}
           </button>
         ))}
-        <span className={`feed-status feed-status-${apiStatus}`}>
-          {apiStatus === "online" ? "Live backend data" : "Static fallback/demo data"}
-        </span>
       </div>
-      {filtered.length ? (
+      {loading && !filtered.length ? (
+        <LoadingState message="Rolling the presses on today's coverage..." />
+      ) : filtered.length ? (
         <div className="section-grid">
           {filtered.map((article) => (
             <article className="section-card" key={article.id}>
@@ -51,8 +50,8 @@ export function LatestScreen({ commandArticles, onOpenArticle, onBuildArticle, a
                 </span>
               </div>
               <div className="card-action-row">
-                <button type="button" onClick={() => onOpenArticle(article)}>Read</button>
-                <button type="button" onClick={() => onBuildArticle(article)}>Refresh</button>
+                <button className="push-btn" type="button" onClick={() => onOpenArticle(article)}>Read</button>
+                <button className="push-btn push-btn-ghost" type="button" onClick={() => onBuildArticle(article)}>Refresh</button>
               </div>
             </article>
           ))}
