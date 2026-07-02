@@ -103,21 +103,6 @@ function App() {
 
   const hasDraft = draftPrompt.length > 0;
   const draft = useMemo(() => externalDraft || buildDraft(draftPrompt || prompt), [draftPrompt, prompt, externalDraft]);
-  const sectionStories = useMemo(
-    () => starterStories.filter((story) => story.section === activeSection),
-    [activeSection],
-  );
-
-  const liveHomeStories = useMemo(() => {
-    const live = dedupeStories(backendStories, 4).map((s) => ({
-      id: s.id,
-      section: activeSection,
-      title: s.headline,
-      dek: s.dek || s.summary,
-      sourceCount: s.sourceCount || 0,
-    }));
-    return live.length ? live : sectionStories;
-  }, [backendStories, sectionStories, activeSection]);
   const trendSuggestions = useMemo(() => {
     const liveTopicPrompts = trendingTopics
       .filter(isUsefulTrendTopic)
@@ -152,7 +137,7 @@ function App() {
         ...articleMarkers.filter((marker) => !seen.has(String(marker.headline || "").toLowerCase())),
       ].slice(0, 18);
     },
-    [trendingTopics, commandArticles, backendStories, sectionStories, activeSection],
+    [trendingTopics, commandArticles, backendStories, activeSection],
   );
 
   useEffect(() => {
@@ -413,7 +398,6 @@ function App() {
     <section className="hero-shell">
       <Header
         activeScreen={activeScreen}
-        activeSection={activeSection}
         onScreenChange={(screen) => {
           setActiveScreen(screen);
           setDraftPrompt("");
@@ -432,7 +416,6 @@ function App() {
       <main className="hero-main">
         {!hasDraft && activeScreen === "Home" && (
           <HomeScreen
-            activeSection={activeSection}
             globeMarkers={globeMarkers}
             onGlobeMarkerClick={handleGlobeMarkerClick}
             onSubmit={handleSubmit}
@@ -441,8 +424,6 @@ function App() {
             generationMode={generationMode}
             onGenerationModeChange={setGenerationMode}
             typedSuggestion={typedSuggestion}
-            stories={liveHomeStories}
-            onPromptStory={(story) => setPrompt(story.title || story.headline)}
           />
         )}
 

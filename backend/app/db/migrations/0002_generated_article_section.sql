@@ -1,0 +1,1 @@
+ALTER TABLE generated_articles ADD COLUMN IF NOT EXISTS section TEXT DEFAULT ''

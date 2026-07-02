@@ -2,7 +2,6 @@ import { SECTION_NAMES } from "../lib/constants.js";
 
 export function Header({
   activeScreen,
-  activeSection,
   onScreenChange,
   onSectionChange,
   onOpenAccount,
@@ -64,7 +63,7 @@ export function Header({
       <nav className="topic-nav" aria-label="Topic navigation">
         {sections.map((section) => (
           <button
-            className={activeScreen === section || (activeScreen === "Home" && activeSection === section) ? "is-active" : ""}
+            className={activeScreen === section ? "is-active" : ""}
             key={section}
             type="button"
             onClick={() => {
@@ -80,7 +79,7 @@ export function Header({
       <nav className="mobile-topic-nav" aria-label="Mobile topic navigation">
         {sections.map((section) => (
           <button
-            className={activeScreen === section || (activeScreen === "Home" && activeSection === section) ? "is-active" : ""}
+            className={activeScreen === section ? "is-active" : ""}
             key={section}
             type="button"
             onClick={() => {

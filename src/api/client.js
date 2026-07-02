@@ -77,6 +77,17 @@ export async function apiGetCached(path, { ttlMs = 5 * 60 * 1000 } = {}) {
   return promise;
 }
 
+/**
+ * Force a fresh fetch and update the local cache only on success, so a failed
+ * refresh never wipes out the cached copy readers are already seeing.
+ */
+export async function apiGetFresh(path, { ttlMs = 5 * 60 * 1000 } = {}) {
+  const value = await apiGet(path);
+  getCache.set(path, { value, expiresAt: Date.now() + ttlMs });
+  writeStoredEntry(path, value, Date.now() + ttlMs);
+  return value;
+}
+
 export function invalidateApiCache(prefix = "") {
   for (const key of getCache.keys()) {
     if (!prefix || key.startsWith(prefix)) {

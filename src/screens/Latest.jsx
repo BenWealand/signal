@@ -2,16 +2,24 @@ import { useState } from "react";
 import { articleStateFor, dedupeStories } from "../utils/articleNormalize.js";
 import { EmptyState, LoadingState, ScreenShell } from "./shared.jsx";
 
+function articleTimestamp(article) {
+  return String(article.createdAt || article.updated_at || article.created_at || "");
+}
+
 export function LatestScreen({ commandArticles, onOpenArticle, onBuildArticle, loading = false, account }) {
   const [filter, setFilter] = useState("All");
   const sections = ["All", "World", "Politics", "Markets", "Technology", "Climate"];
   const filteredRaw = filter === "All"
     ? commandArticles
     : commandArticles.filter((a) => {
+        const section = String(a.section || "").toLowerCase();
+        if (section) return section === filter.toLowerCase();
         const label = (a.tag || a.source || "").toLowerCase();
         return label.includes(filter.toLowerCase()) || (a.prompt || "").toLowerCase().includes(filter.toLowerCase());
       });
-  const filtered = dedupeStories(filteredRaw);
+  // Most recently written first.
+  const newestFirst = [...filteredRaw].sort((a, b) => articleTimestamp(b).localeCompare(articleTimestamp(a)));
+  const filtered = dedupeStories(newestFirst);
 
   return (
     <ScreenShell eyebrow="Latest" title="Latest">
@@ -34,7 +42,7 @@ export function LatestScreen({ commandArticles, onOpenArticle, onBuildArticle, l
           {filtered.map((article) => (
             <article className="section-card" key={article.id}>
               <div className="section-card-eyebrow">
-                <span>{article.source || "news desk"}</span>
+                <span>{article.section || article.source || "news desk"}</span>
                 <em>{article.sourceCount} sources</em>
               </div>
               <em className={`article-row-state article-row-state-${articleStateFor(article).kind}`}>

@@ -45,7 +45,7 @@ export function TrendsScreen({ commandArticles, onOpenArticle }) {
 
   return (
     <ScreenShell eyebrow="Trending" title="Trending">
-      <p className="screen-caption">Ranked by reads, saves, likes, comments, and recency</p>
+      <p className="screen-caption">Ranked by views, likes, comments, relevance, and recency</p>
       <div className="trend-board">
         {trends.map((trend, index) => {
           const preview = trend.dek || trend.summary || "";
