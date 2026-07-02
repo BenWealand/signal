@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiGet } from "../api/client.js";
+import { apiGetCached } from "../api/client.js";
 import { starterStories } from "../lib/constants.js";
 import { dedupeStories } from "../utils/articleNormalize.js";
 import { ScreenShell } from "./shared.jsx";
@@ -10,7 +10,7 @@ export function TrendsScreen({ commandArticles, onOpenArticle }) {
 
   useEffect(() => {
     setTopicStatus("loading");
-    apiGet("/news/trending?limit=18")
+    apiGetCached("/news/trending?limit=18", { ttlMs: 5 * 60 * 1000 })
       .then((data) => {
         setRankedTrends(Array.isArray(data) ? data : []);
         setTopicStatus("live");

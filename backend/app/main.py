@@ -17,6 +17,7 @@ from app.config import settings
 from app.db.connection import create_tables, get_connection
 from app.db import queries
 from app.ingest.rss_ingest import fetch_all_rss_fast, enrich_articles_in_background
+from app.observability import log_event
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +68,8 @@ def _ingest_and_enrich(articles: list[dict]) -> None:
             aid = queries.insert_article(article)
             inserted.append({**article, "id": aid})
         except Exception:
-            logger.exception("Failed to insert RSS article during background ingest", extra={"url": article.get("url"), "title": article.get("title")})
+            log_event(logger, "rss_insert_failed", level=logging.ERROR, url=article.get("url"), title=article.get("title"))
+            logger.exception("Failed to insert RSS article during background ingest")
     # Full-text enrichment pass — updates raw_text in DB for each article
     enriched = enrich_articles_in_background(inserted, workers=10)
     for article in enriched:
@@ -84,7 +86,8 @@ def _ingest_and_enrich(articles: list[dict]) -> None:
                 queries.replace_entities(int(article["id"]), entities)
                 queries.replace_claims(int(article["id"]), claims)
         except Exception:
-            logger.exception("Failed to enrich/process article during background ingest", extra={"article_id": article.get("id"), "url": article.get("url")})
+            log_event(logger, "rss_enrich_process_failed", level=logging.ERROR, article_id=article.get("id"), url=article.get("url"))
+            logger.exception("Failed to enrich/process article during background ingest")
 
 
 def _periodic_rss_refresh(interval_seconds: int = 900) -> None:
@@ -98,11 +101,13 @@ def _periodic_rss_refresh(interval_seconds: int = 900) -> None:
             articles = fetch_all_rss_fast(max_per_section=10)
             _ingest_and_enrich(articles)
         except Exception:
+            log_event(logger, "periodic_rss_refresh_failed", level=logging.ERROR)
             logger.exception("Periodic RSS refresh failed")
         try:
             for prompt in SECTION_PROMPTS.values():
                 _fetch_section(prompt)
         except Exception:
+            log_event(logger, "periodic_section_synthesis_failed", level=logging.ERROR)
             logger.exception("Periodic section synthesis failed")
 
 
@@ -116,6 +121,7 @@ def _startup_pipeline() -> None:
         articles = fetch_all_rss_fast(max_per_section=10)
         _ingest_and_enrich(articles)
     except Exception:
+        log_event(logger, "startup_rss_ingest_failed", level=logging.ERROR)
         logger.exception("Startup RSS ingest failed")
 
     try:
@@ -125,6 +131,7 @@ def _startup_pipeline() -> None:
         for prompt in SECTION_PROMPTS.values():
             _fetch_section(prompt)
     except Exception:
+        log_event(logger, "startup_section_synthesis_failed", level=logging.ERROR)
         logger.exception("Startup section synthesis failed")
 
 

@@ -2,10 +2,11 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { supabase } from "./lib/supabase.js";
 import { apiGet, apiPost, apiPostAfterWake, hasApiBase } from "./api/client.js";
+import { useInitialSignalData } from "./hooks/useInitialSignalData.js";
 import { useStoredState } from "./hooks/useStoredState.js";
 import { SESSION_ID } from "./lib/session.js";
 import { defaultSettings, SECTION_NAMES, SECTION_QUERIES, starterStories, trendPromptPreviews } from "./lib/constants.js";
-import { buildDraft, dedupeStories, normalizeBackendStory, normalizeCommandArticle, storyTitle } from "./utils/articleNormalize.js";
+import { buildDraft, dedupeStories, normalizeCommandArticle, storyTitle } from "./utils/articleNormalize.js";
 import { isUsefulTrendTopic, makeGlobeMarkers, normalizeTrendingTopic } from "./utils/globeMarkers.js";
 import { Header } from "./components/Header.jsx";
 import { BuildScreen } from "./components/BuildScreen.jsx";
@@ -198,59 +199,19 @@ function App() {
     apiGet(`/users/${account.id}/notifications`).then(setNotifications).catch(() => setNotifications([]));
   }, [account?.id, notificationsOpen]);
 
-  useEffect(() => {
-    let cancelled = false;
-    const linkedArticleId = new URLSearchParams(window.location.search).get("article");
-    Promise.allSettled([
-      apiGet("/generated-articles"),
-      apiGet("/stories"),
-      linkedArticleId ? apiGet(`/generated-articles/${encodeURIComponent(linkedArticleId)}`) : Promise.resolve(null),
-      apiGet("/news/trending-topics?limit=10"),
-      fetch(`/generated-articles.json?ts=${Date.now()}`).then((response) => (response.ok ? response.json() : [])),
-    ])
-      .then(([generatedResult, storiesResult, linkedResult, topicsResult, staticResult]) => {
-        if (cancelled) return;
-        const generated = generatedResult.status === "fulfilled" && Array.isArray(generatedResult.value)
-          ? generatedResult.value
-          : [];
-        const stories = storiesResult.status === "fulfilled" && Array.isArray(storiesResult.value)
-          ? storiesResult.value
-          : [];
-        const staticArticles = staticResult.status === "fulfilled" && Array.isArray(staticResult.value)
-          ? staticResult.value
-          : [];
-        const topics = topicsResult.status === "fulfilled" && Array.isArray(topicsResult.value)
-          ? topicsResult.value
-          : [];
-        setCommandArticles(dedupeStories(generated.length ? generated : staticArticles));
-        setBackendStories(dedupeStories(stories.map(normalizeBackendStory)));
-        setTrendingTopics(topics);
-        setApiStatus(generatedResult.status === "fulfilled" || storiesResult.status === "fulfilled" ? "online" : "offline");
-        const linkedFromApi = linkedResult.status === "fulfilled" && linkedResult.value ? linkedResult.value : null;
-        const linkedFromStatic = linkedArticleId
-          ? staticArticles.find((article) => String(article.id) === linkedArticleId)
-          : null;
-        if (linkedFromApi || linkedFromStatic) {
-          const linkedArticle = normalizeCommandArticle(linkedFromApi || linkedFromStatic);
-          setPrompt(linkedArticle.prompt);
-          setDraftPrompt(linkedArticle.prompt);
-          setExternalDraft(linkedArticle);
-          setPhase("complete");
-          setActiveScreen("Latest");
-          trackEvent(account?.id, "view", { prompt: linkedArticle.prompt, article_id: String(linkedArticle.id) });
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setCommandArticles([]);
-          setBackendStories([]);
-          setApiStatus("offline");
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  useInitialSignalData({
+    account,
+    setApiStatus,
+    setBackendStories,
+    setCommandArticles,
+    setTrendingTopics,
+    setPrompt,
+    setDraftPrompt,
+    setExternalDraft,
+    setPhase,
+    setActiveScreen,
+    trackEvent,
+  });
 
   const handleSubmit = (event) => {
     event.preventDefault();

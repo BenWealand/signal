@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from secrets import compare_digest
 
+try:
+    import jwt
+except ImportError:  # pragma: no cover - deploy installs PyJWT from requirements.
+    jwt = None
 from pydantic import BaseModel, EmailStr
 from fastapi import APIRouter, Header, HTTPException
 
@@ -63,18 +67,44 @@ def _extract_bearer_token(authorization: str) -> str:
     return ""
 
 
-def _require_user_route_guard(user_id: int | None, x_signal_token: str = "", authorization: str = "") -> None:
-    """
-    TODO(auth): Replace this shared agent-token guard with Supabase JWT validation
-    and derive user_id server-side. Until then, production deployments that set
-    SIGNAL_API_TOKEN fail closed for user-specific data routes.
-    """
-    expected = settings.signal_api_token.strip()
+def _user_id_from_supabase_jwt(authorization: str) -> int | None:
+    secret = getattr(settings, "supabase_jwt_secret", "").strip()
+    if not secret:
+        return None
+    if jwt is None:
+        raise HTTPException(status_code=503, detail="JWT authentication dependency is not installed")
+    token = _extract_bearer_token(authorization)
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing authentication token")
+    try:
+        payload = jwt.decode(token, secret, algorithms=["HS256"], audience="authenticated")
+    except jwt.InvalidAudienceError:
+        payload = jwt.decode(token, secret, algorithms=["HS256"], options={"verify_aud": False})
+    except jwt.PyJWTError as exc:
+        raise HTTPException(status_code=401, detail="Invalid authentication token") from exc
+    subject = str(payload.get("sub") or "")
+    if not subject:
+        raise HTTPException(status_code=401, detail="Invalid authentication token")
+    user = queries.get_user_by_supabase_id(subject)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authenticated user is not registered")
+    return int(user["id"])
+
+
+def _require_user_route_guard(user_id: int | None, x_signal_token: str = "", authorization: str = "") -> int | None:
+    jwt_user_id = _user_id_from_supabase_jwt(authorization)
+    if jwt_user_id is not None:
+        if user_id is not None and int(user_id) != jwt_user_id:
+            raise HTTPException(status_code=403, detail="Authenticated user does not match requested user")
+        return jwt_user_id
+
+    expected = getattr(settings, "signal_api_token", "").strip()
     if not expected:
-        return
+        return user_id
     supplied = (x_signal_token or _extract_bearer_token(authorization)).strip()
     if not supplied or not compare_digest(supplied, expected):
         raise HTTPException(status_code=401, detail="User route access requires authentication")
+    return user_id
 
 
 @router.post("/users")
@@ -84,21 +114,21 @@ def upsert_user(payload: UserPayload):
 
 @router.get("/users/{user_id}/saved")
 def saved_for_user(user_id: int, x_signal_token: str = Header(default=""), authorization: str = Header(default="")):
-    _require_user_route_guard(user_id, x_signal_token=x_signal_token, authorization=authorization)
-    return queries.list_saved_stories(user_id)
+    auth_user_id = _require_user_route_guard(user_id, x_signal_token=x_signal_token, authorization=authorization)
+    return queries.list_saved_stories(auth_user_id)
 
 
 @router.get("/users/{user_id}/preferences/auto")
 def auto_preferences(user_id: int, x_signal_token: str = Header(default=""), authorization: str = Header(default="")):
-    _require_user_route_guard(user_id, x_signal_token=x_signal_token, authorization=authorization)
-    return queries.get_auto_preferences(user_id=user_id)
+    auth_user_id = _require_user_route_guard(user_id, x_signal_token=x_signal_token, authorization=authorization)
+    return queries.get_auto_preferences(user_id=auth_user_id)
 
 
 @router.post("/history")
 def record_history(payload: HistoryPayload, x_signal_token: str = Header(default=""), authorization: str = Header(default="")):
-    _require_user_route_guard(payload.user_id, x_signal_token=x_signal_token, authorization=authorization)
+    auth_user_id = _require_user_route_guard(payload.user_id, x_signal_token=x_signal_token, authorization=authorization)
     queries.record_history(
-        user_id=payload.user_id,
+        user_id=auth_user_id,
         session_id=payload.session_id,
         action_type=payload.action_type,
         topic=payload.topic,
@@ -111,8 +141,8 @@ def record_history(payload: HistoryPayload, x_signal_token: str = Header(default
 
 @router.post("/saved-stories")
 def save_story(payload: SaveStoryPayload, x_signal_token: str = Header(default=""), authorization: str = Header(default="")):
-    _require_user_route_guard(payload.user_id, x_signal_token=x_signal_token, authorization=authorization)
-    saved_id = queries.save_story(payload.user_id, payload.story_id, payload.title, payload.source_count)
+    auth_user_id = _require_user_route_guard(payload.user_id, x_signal_token=x_signal_token, authorization=authorization)
+    saved_id = queries.save_story(auth_user_id, payload.story_id, payload.title, payload.source_count)
     return {"id": saved_id, "ok": True}
 
 
@@ -144,11 +174,13 @@ def like_comment(comment_id: int, payload: CommentLikePayload):
 
 
 @router.get("/users/{user_id}/notifications")
-def user_notifications(user_id: int):
-    return queries.list_notifications(user_id)
+def user_notifications(user_id: int, x_signal_token: str = Header(default=""), authorization: str = Header(default="")):
+    auth_user_id = _require_user_route_guard(user_id, x_signal_token=x_signal_token, authorization=authorization)
+    return queries.list_notifications(auth_user_id)
 
 
 @router.post("/users/{user_id}/notifications/read")
-def mark_user_notifications_read(user_id: int):
-    queries.mark_notifications_read(user_id)
+def mark_user_notifications_read(user_id: int, x_signal_token: str = Header(default=""), authorization: str = Header(default="")):
+    auth_user_id = _require_user_route_guard(user_id, x_signal_token=x_signal_token, authorization=authorization)
+    queries.mark_notifications_read(auth_user_id)
     return {"ok": True}

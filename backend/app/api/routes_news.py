@@ -9,6 +9,7 @@ from app.db import queries
 from app.db.connection import get_connection
 from app.processing.article_writer import write_article_from_prompt
 from app.ingest.rss_ingest import fetch_section_rss, fetch_all_rss_fast, SECTION_FEEDS
+from app.observability import log_event
 
 logger = logging.getLogger(__name__)
 
@@ -235,7 +236,8 @@ def _fetch_section(prompt: str) -> None:
     try:
         write_article_from_prompt(prompt, limit=15, use_gemini=False)
     except Exception:
-        logger.exception("Background section article generation failed", extra={"prompt": prompt})
+        log_event(logger, "section_article_generation_failed", level=logging.ERROR, prompt=prompt)
+        logger.exception("Background section article generation failed")
 
 
 def _run_full_rss_ingest() -> None:
@@ -244,6 +246,7 @@ def _run_full_rss_ingest() -> None:
         articles = fetch_all_rss_fast(max_per_section=12)
         _ingest_and_enrich(articles)
     except Exception:
+        log_event(logger, "full_rss_ingest_failed", level=logging.ERROR)
         logger.exception("Full RSS ingest task failed")
 
 
@@ -253,4 +256,5 @@ def _run_section_rss_ingest(section: str, enrich: bool) -> None:
         articles = fetch_section_rss(section, enrich=enrich, max_articles=40)
         _ingest_and_enrich(articles)
     except Exception:
-        logger.exception("Section RSS ingest task failed", extra={"section": section, "enrich": enrich})
+        log_event(logger, "section_rss_ingest_failed", level=logging.ERROR, section=section, enrich=enrich)
+        logger.exception("Section RSS ingest task failed")

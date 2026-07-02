@@ -22,6 +22,7 @@ class Settings:
     database_url: str = os.getenv("DATABASE_URL", "")
     supabase_url: str = os.getenv("SUPABASE_URL", "")
     supabase_service_role_key: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    supabase_jwt_secret: str = os.getenv("SUPABASE_JWT_SECRET", "")
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
     news_api_key: str = os.getenv("NEWS_API_KEY", "")

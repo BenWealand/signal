@@ -1,5 +1,8 @@
+import { supabase } from "../lib/supabase.js";
+
 export const API_BASE = import.meta.env.VITE_SIGNAL_API_URL || "";
 let wakePromise = null;
+const getCache = new Map();
 
 export function hasApiBase() {
   return Boolean(API_BASE);
@@ -8,9 +11,35 @@ export function hasApiBase() {
 export async function apiGet(path) {
   if (!API_BASE) throw new Error("API is not configured for this build.");
   await ensureAwake(path);
-  const response = await fetch(`${API_BASE}${path}`);
+  const response = await fetch(`${API_BASE}${path}`, { headers: await authHeaders() });
   if (!response.ok) throw await apiError(response, path);
   return response.json();
+}
+
+export async function apiGetCached(path, { ttlMs = 5 * 60 * 1000 } = {}) {
+  const now = Date.now();
+  const cached = getCache.get(path);
+  if (cached && cached.expiresAt > now) return cached.value;
+  if (cached?.promise) return cached.promise;
+
+  const promise = apiGet(path)
+    .then((value) => {
+      getCache.set(path, { value, expiresAt: Date.now() + ttlMs });
+      return value;
+    })
+    .catch((error) => {
+      if (cached?.value !== undefined) return cached.value;
+      getCache.delete(path);
+      throw error;
+    });
+  getCache.set(path, { ...(cached || {}), promise, expiresAt: cached?.expiresAt || 0 });
+  return promise;
+}
+
+export function invalidateApiCache(prefix = "") {
+  for (const key of getCache.keys()) {
+    if (!prefix || key.startsWith(prefix)) getCache.delete(key);
+  }
 }
 
 export async function apiPost(path, payload) {
@@ -18,11 +47,17 @@ export async function apiPost(path, payload) {
   await ensureAwake(path);
   const response = await fetch(`${API_BASE}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
     body: JSON.stringify(payload),
   });
   if (!response.ok) throw await apiError(response, path);
   return response.json();
+}
+
+async function authHeaders() {
+  const { data } = await supabase.auth.getSession().catch(() => ({ data: {} }));
+  const token = data?.session?.access_token;
+  return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
 export async function apiPostAfterWake(path, payload) {

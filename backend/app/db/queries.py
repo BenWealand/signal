@@ -678,6 +678,20 @@ def upsert_user(name: str, email: str, plan: str = "Reader", supabase_user_id: s
             return row_to_dict(cur.fetchone())
 
 
+def get_user(user_id: int) -> dict[str, Any]:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+            return row_to_dict(cur.fetchone())
+
+
+def get_user_by_supabase_id(supabase_user_id: str) -> dict[str, Any]:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM users WHERE supabase_user_id = %s", (supabase_user_id,))
+            return row_to_dict(cur.fetchone())
+
+
 def save_story(user_id: int | None, story_id: str, title: str, source_count: int = 0) -> int:
     with get_connection() as conn:
         with conn.cursor() as cur:

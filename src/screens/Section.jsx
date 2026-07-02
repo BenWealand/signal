@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { apiGet, apiPost } from "../api/client.js";
+import { apiGetCached, apiPost, invalidateApiCache } from "../api/client.js";
 import { SECTION_QUERIES } from "../lib/constants.js";
 import { SESSION_ID } from "../lib/session.js";
 import { dedupeStories, normalizeCommandArticle, storyDate, storyDek, storySourceCount, storyTitle } from "../utils/articleNormalize.js";
@@ -15,7 +15,7 @@ export function SectionScreen({ section, account, onPrompt, onOpenArticle }) {
   const loadStories = useCallback(() => {
     setLoading(true);
     setLoadState("loading");
-    apiGet(`/news/${slug}?limit=18`)
+    apiGetCached(`/news/${slug}?limit=18`, { ttlMs: 10 * 60 * 1000 })
       .then((data) => {
         setStories(dedupeStories(Array.isArray(data) ? data : [], 18));
         setLoadState("live");
@@ -35,6 +35,7 @@ export function SectionScreen({ section, account, onPrompt, onOpenArticle }) {
   const handleRefresh = () => {
     setRefreshing(true);
     setLoadState("refreshing");
+    invalidateApiCache(`/news/${slug}`);
     apiPost(`/news/refresh/${slug}`, {})
       .then(() => window.setTimeout(loadStories, 8000))
       .catch(() => setLoadState("offline"))
