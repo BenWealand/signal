@@ -3,9 +3,38 @@ import { supabase } from "../lib/supabase.js";
 export const API_BASE = import.meta.env.VITE_SIGNAL_API_URL || "";
 let wakePromise = null;
 const getCache = new Map();
+const STORAGE_PREFIX = "signal-cache-v1:";
 
 export function hasApiBase() {
   return Boolean(API_BASE);
+}
+
+function readStoredEntry(path) {
+  try {
+    const raw = window.localStorage.getItem(`${STORAGE_PREFIX}${path}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || parsed.value === undefined) return null;
+    return { value: parsed.value, expiresAt: Number(parsed.expiresAt) || 0 };
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredEntry(path, value, expiresAt) {
+  try {
+    window.localStorage.setItem(`${STORAGE_PREFIX}${path}`, JSON.stringify({ value, expiresAt }));
+  } catch {
+    // Storage may be full or unavailable; the in-memory cache still applies.
+  }
+}
+
+function removeStoredEntry(path) {
+  try {
+    window.localStorage.removeItem(`${STORAGE_PREFIX}${path}`);
+  } catch {
+    // Ignore storage failures.
+  }
 }
 
 export async function apiGet(path) {
@@ -18,13 +47,21 @@ export async function apiGet(path) {
 
 export async function apiGetCached(path, { ttlMs = 5 * 60 * 1000 } = {}) {
   const now = Date.now();
-  const cached = getCache.get(path);
-  if (cached && cached.expiresAt > now) return cached.value;
-  if (cached?.promise) return cached.promise;
+  let cached = getCache.get(path);
+  if (!cached || (cached.value === undefined && !cached.promise)) {
+    const stored = readStoredEntry(path);
+    if (stored) {
+      cached = { ...(cached || {}), ...stored };
+      getCache.set(path, cached);
+    }
+  }
+  if (cached && cached.value !== undefined && cached.expiresAt > now) return cached.value;
+  if (cached?.promise && cached.value === undefined) return cached.promise;
 
   const promise = apiGet(path)
     .then((value) => {
       getCache.set(path, { value, expiresAt: Date.now() + ttlMs });
+      writeStoredEntry(path, value, Date.now() + ttlMs);
       return value;
     })
     .catch((error) => {
@@ -33,13 +70,54 @@ export async function apiGetCached(path, { ttlMs = 5 * 60 * 1000 } = {}) {
       throw error;
     });
   getCache.set(path, { ...(cached || {}), promise, expiresAt: cached?.expiresAt || 0 });
+
+  // Stale-while-revalidate: serve the locally cached copy immediately while
+  // the refresh continues in the background.
+  if (cached?.value !== undefined) return cached.value;
   return promise;
 }
 
 export function invalidateApiCache(prefix = "") {
   for (const key of getCache.keys()) {
-    if (!prefix || key.startsWith(prefix)) getCache.delete(key);
+    if (!prefix || key.startsWith(prefix)) {
+      getCache.delete(key);
+      removeStoredEntry(key);
+    }
   }
+  if (prefix) {
+    try {
+      for (const storageKey of Object.keys(window.localStorage)) {
+        if (storageKey.startsWith(`${STORAGE_PREFIX}${prefix}`)) {
+          window.localStorage.removeItem(storageKey);
+        }
+      }
+    } catch {
+      // Ignore storage failures.
+    }
+  }
+}
+
+const PRELOAD_PATHS = [
+  "/generated-articles",
+  "/stories",
+  "/news/trending?limit=18",
+  "/news/trending-topics?limit=10",
+  "/news/world?limit=18",
+  "/news/politics?limit=18",
+  "/news/markets?limit=18",
+  "/news/technology?limit=18",
+  "/news/climate?limit=18",
+];
+
+/**
+ * Wake the backend (it sleeps after inactivity) and warm every reader-facing
+ * feed so navigating to Latest, Trending, Saved, and section pages is instant.
+ */
+export function preloadSignalFeeds({ userId = null } = {}) {
+  if (!API_BASE) return Promise.resolve([]);
+  const paths = [...PRELOAD_PATHS];
+  if (userId) paths.push(`/users/${userId}/saved`);
+  return Promise.allSettled(paths.map((path) => apiGetCached(path, { ttlMs: 5 * 60 * 1000 })));
 }
 
 export async function apiPost(path, payload) {
@@ -92,7 +170,7 @@ async function wakeApi() {
     }
   }
 
-  const error = new Error("Backend is still waking up. Try again in a moment.");
+  const error = new Error("The newsroom is still warming up — try again in a few seconds.");
   error.status = lastError?.status || 503;
   error.detail = error.message;
   throw error;

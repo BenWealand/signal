@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { apiGetCached } from "../api/client.js";
 import { starterStories } from "../lib/constants.js";
 import { dedupeStories } from "../utils/articleNormalize.js";
-import { ScreenShell } from "./shared.jsx";
+import { LoadingState, ScreenShell } from "./shared.jsx";
 
 export function TrendsScreen({ commandArticles, onOpenArticle }) {
   const [rankedTrends, setRankedTrends] = useState([]);
@@ -35,13 +35,17 @@ export function TrendsScreen({ commandArticles, onOpenArticle }) {
           accuracyScore: 88,
         }));
 
+  if (topicStatus === "loading" && !trends.length) {
+    return (
+      <ScreenShell eyebrow="Trending" title="Trending">
+        <LoadingState message="Charting what the world is reading..." />
+      </ScreenShell>
+    );
+  }
+
   return (
     <ScreenShell eyebrow="Trending" title="Trending">
-      <div className={`feed-status feed-status-${topicStatus}`}>
-        {topicStatus === "loading" && "Loading live trend rankings..."}
-        {topicStatus === "live" && "Ranked by reads, saves, likes, comments, and recency"}
-        {topicStatus === "fallback" && "Showing article-derived fallback trends"}
-      </div>
+      <p className="screen-caption">Ranked by reads, saves, likes, comments, and recency</p>
       <div className="trend-board">
         {trends.map((trend, index) => {
           const preview = trend.dek || trend.summary || "";
@@ -72,7 +76,7 @@ export function TrendsScreen({ commandArticles, onOpenArticle }) {
                   </span>
                 )}
                 {"prompt" in trend && (
-                  <button type="button" onClick={() => onOpenArticle(trend)}>Open</button>
+                  <button className="push-btn" type="button" onClick={() => onOpenArticle(trend)}>Open</button>
                 )}
               </div>
             </article>

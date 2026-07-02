@@ -3985,3 +3985,366 @@ a.source-link-title:hover {
     font-size: 0.59rem;
   }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Loading states — elegant, quiet indicators shown while feeds warm up.
+   ══════════════════════════════════════════════════════════════════════════ */
+.loading-state {
+  display: grid;
+  justify-items: center;
+  gap: 0.85rem;
+  width: 100%;
+  padding: 3.25rem 1.25rem;
+  border: 1px solid #e1e5dc;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.88);
+  text-align: center;
+}
+
+.loading-state.is-compact {
+  padding: 1.5rem 1rem;
+}
+
+.loading-state p {
+  margin: 0;
+  color: #4f574e;
+  font-size: 0.88rem;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
+.loading-ring {
+  width: 2.1rem;
+  height: 2.1rem;
+  border-radius: 999px;
+  border: 3px solid rgba(11, 90, 64, 0.16);
+  border-top-color: #0b5a40;
+  animation: loading-ring-spin 800ms linear infinite;
+}
+
+@keyframes loading-ring-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.section-grid .loading-state,
+.section-grid .section-empty {
+  grid-column: 1 / -1;
+}
+
+.screen-caption {
+  margin: -0.35rem 0 0;
+  color: #7a8076;
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Uniform push buttons — one shared layout for every single-action button.
+   Solid = primary action. Ghost = secondary action.
+   ══════════════════════════════════════════════════════════════════════════ */
+.push-btn,
+.prompt-row button,
+.rewrite-bar > button,
+.comment-form button,
+.comment-row button,
+.story-card button,
+.service-panel button,
+.modal-form button,
+.feed-row button,
+.trend-card button,
+.empty-state button,
+.card-action-row button,
+.section-refresh-btn,
+.article-toolbar button,
+.secondary-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  height: auto;
+  min-height: 2.55rem;
+  border: 1px solid #0b5a40;
+  border-radius: 999px;
+  background: #0b5a40;
+  color: #ffffff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 900;
+  letter-spacing: 0.01em;
+  line-height: 1.1;
+  padding: 0.35rem 1.1rem;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease,
+    transform 140ms ease, box-shadow 140ms ease;
+}
+
+.push-btn:hover,
+.push-btn:focus-visible,
+.prompt-row button:hover,
+.rewrite-bar > button:hover,
+.comment-form button:hover,
+.story-card button:hover,
+.modal-form button:hover,
+.feed-row button:hover,
+.trend-card button:hover,
+.empty-state button:hover,
+.card-action-row button:hover {
+  background: #0d6b4c;
+  border-color: #0d6b4c;
+  box-shadow: 0 6px 16px rgba(11, 90, 64, 0.22);
+  transform: translateY(-1px);
+}
+
+.push-btn:disabled,
+.section-refresh-btn:disabled,
+.card-action-row button:disabled {
+  opacity: 0.55;
+  box-shadow: none;
+  cursor: wait;
+  transform: none;
+}
+
+.push-btn.push-btn-ghost,
+.secondary-action,
+.modal-form .secondary-action,
+.article-toolbar button,
+.comment-row button,
+.card-action-row button + button,
+.feed-row button + button,
+.section-refresh-btn.secondary {
+  border-color: rgba(11, 90, 64, 0.32);
+  background: #ffffff;
+  color: #0b5a40;
+}
+
+.push-btn.push-btn-ghost:hover,
+.push-btn.push-btn-ghost:focus-visible,
+.secondary-action:hover,
+.secondary-action:focus-visible,
+.modal-form .secondary-action:hover,
+.modal-form .secondary-action:focus-visible,
+.article-toolbar button:hover,
+.article-toolbar button:focus-visible,
+.comment-row button:hover,
+.card-action-row button + button:hover,
+.feed-row button + button:hover,
+.section-refresh-btn.secondary:hover {
+  border-color: #0b5a40;
+  background: #eef5ef;
+  color: #0b5a40;
+  box-shadow: 0 4px 12px rgba(11, 90, 64, 0.12);
+  transform: translateY(-1px);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Keep exploring — LLM follow-up recommendations. Clean, green, modern.
+   ══════════════════════════════════════════════════════════════════════════ */
+.follow-up-searches {
+  gap: 0.65rem;
+  border: 1px solid rgba(11, 90, 64, 0.16);
+  border-top: 3px solid #0b5a40;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #f2f8f3 0%, #eaf3ec 100%);
+  padding: 0.9rem 1rem 1rem;
+}
+
+.follow-up-searches > span {
+  color: #0b5a40;
+}
+
+.follow-up-searches > div {
+  gap: 0.45rem;
+}
+
+.follow-up-searches button {
+  min-height: 2.3rem;
+  border: 1px solid rgba(11, 90, 64, 0.28);
+  border-radius: 999px;
+  background: #ffffff;
+  color: #0b5a40;
+  font-size: 0.76rem;
+  font-weight: 850;
+  line-height: 1.2;
+  padding: 0.3rem 0.85rem;
+  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.04);
+  text-align: left;
+}
+
+.follow-up-searches button:hover,
+.follow-up-searches button:focus-visible {
+  border-color: #0b5a40;
+  background: #0b5a40;
+  color: #ffffff;
+  box-shadow: 0 6px 16px rgba(11, 90, 64, 0.22);
+  transform: translateY(-1px);
+}
+
+.follow-up-searches button svg {
+  width: 0.82rem;
+  height: 0.82rem;
+  flex: 0 0 auto;
+}
+
+.follow-up-skeleton {
+  display: inline-block;
+  width: clamp(9rem, 24vw, 15rem);
+  height: 2.3rem;
+  border-radius: 999px;
+  background: linear-gradient(
+    100deg,
+    rgba(11, 90, 64, 0.08) 30%,
+    rgba(11, 90, 64, 0.16) 50%,
+    rgba(11, 90, 64, 0.08) 70%
+  );
+  background-size: 220% 100%;
+  animation: follow-up-shimmer 1400ms ease infinite;
+}
+
+@keyframes follow-up-shimmer {
+  from {
+    background-position: 130% 0;
+  }
+  to {
+    background-position: -110% 0;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Mobile refinements — clarity, spacing, and tap targets. Desktop untouched.
+   ══════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 900px) {
+  .hero-copy h1 {
+    font-size: clamp(1.6rem, 6.4vw, 2.2rem);
+  }
+
+  .hero-copy p {
+    font-size: 0.92rem;
+  }
+
+  .writer-hint {
+    display: none;
+  }
+
+  .dashboard-header h2,
+  .app-screen > header h1,
+  .section-header-left h1 {
+    font-size: clamp(1.85rem, 8vw, 2.7rem);
+  }
+
+  .story-card h3,
+  .trend-card h3,
+  .section-card h3,
+  .feed-row h3 {
+    font-size: clamp(1.2rem, 5vw, 1.55rem);
+    line-height: 1.12;
+  }
+
+  .story-card p,
+  .trend-card p,
+  .section-card p,
+  .feed-row p {
+    font-size: 0.9rem;
+  }
+
+  .push-btn,
+  .prompt-row button,
+  .rewrite-bar > button,
+  .comment-form button,
+  .story-card button,
+  .modal-form button,
+  .feed-row button,
+  .trend-card button,
+  .empty-state button,
+  .card-action-row button,
+  .section-refresh-btn,
+  .article-toolbar button,
+  .secondary-action {
+    min-height: 2.9rem;
+    font-size: 0.84rem;
+  }
+
+  .card-action-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+    overflow: visible;
+    padding-bottom: 0;
+  }
+
+  .card-action-row button {
+    width: 100%;
+  }
+
+  .section-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+    overflow: visible;
+    padding-bottom: 0;
+  }
+
+  .section-actions .push-btn {
+    width: 100%;
+    white-space: nowrap;
+  }
+
+  .article-toolbar {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+    overflow: visible;
+    padding-bottom: 0;
+  }
+
+  .follow-up-searches > div {
+    display: flex;
+    flex-wrap: wrap;
+    overflow: visible;
+    padding-bottom: 0;
+  }
+
+  .follow-up-searches button {
+    flex: 0 1 auto;
+    min-height: 2.55rem;
+    white-space: normal;
+  }
+
+  .follow-up-skeleton {
+    width: clamp(8rem, 42vw, 13rem);
+  }
+
+  .loading-state {
+    padding: 2.6rem 1rem;
+    border-radius: 0.85rem;
+  }
+
+  .screen-caption {
+    margin-top: -0.2rem;
+    font-size: 0.72rem;
+  }
+
+  .empty-state,
+  .section-empty {
+    justify-items: center;
+    text-align: center;
+  }
+}
+
+@media (max-width: 480px) {
+  .card-action-row,
+  .section-actions,
+  .article-toolbar {
+    gap: 0.45rem;
+  }
+
+  .follow-up-searches {
+    padding: 0.8rem 0.85rem 0.9rem;
+  }
+
+  .loading-state p {
+    font-size: 0.82rem;
+  }
+}

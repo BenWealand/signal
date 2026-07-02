@@ -3,6 +3,15 @@ import { apiGetCached, apiPost, invalidateApiCache } from "../api/client.js";
 import { SECTION_QUERIES } from "../lib/constants.js";
 import { SESSION_ID } from "../lib/session.js";
 import { dedupeStories, normalizeCommandArticle, storyDate, storyDek, storySourceCount, storyTitle } from "../utils/articleNormalize.js";
+import { LoadingState } from "./shared.jsx";
+
+const SECTION_LOADING_MESSAGES = {
+  World: "Scanning dispatches from every continent...",
+  Politics: "Following the paper trail through the capitol...",
+  Markets: "Reading the tape on today's markets...",
+  Technology: "Compiling the latest from labs and launchpads...",
+  Climate: "Checking readings from field stations worldwide...",
+};
 
 export function SectionScreen({ section, account, onPrompt, onOpenArticle }) {
   const [stories, setStories] = useState([]);
@@ -58,9 +67,9 @@ export function SectionScreen({ section, account, onPrompt, onOpenArticle }) {
           <h1>{section}</h1>
         </div>
         <div className="section-actions">
-          <button className="section-refresh-btn" type="button" onClick={() => onPrompt(sectionPrompt)}>Write section brief</button>
-          <button className="section-refresh-btn secondary" type="button" onClick={handleRefresh} disabled={refreshing}>
-            {refreshing ? "Fetching..." : "Refresh"}
+          <button className="push-btn" type="button" onClick={() => onPrompt(sectionPrompt)}>Write section brief</button>
+          <button className="push-btn push-btn-ghost" type="button" onClick={handleRefresh} disabled={refreshing}>
+            {refreshing ? "Refreshing..." : "Refresh"}
           </button>
         </div>
       </div>
@@ -72,20 +81,19 @@ export function SectionScreen({ section, account, onPrompt, onOpenArticle }) {
         </div>
       )}
 
-      <div className={`feed-status feed-status-${loadState}`}>
-        {loadState === "loading" && `Loading live ${section.toLowerCase()} coverage...`}
-        {loadState === "refreshing" && "Refresh requested from the backend..."}
-        {loadState === "live" && "Live backend section coverage"}
-        {loadState === "offline" && "Backend unavailable - no local section data is being invented"}
-      </div>
-
       <div className="section-layout section-layout-main">
         <div className="section-grid">
-          {loading && <div className="section-loading">Loading {section.toLowerCase()}...</div>}
-          {!loading && stories.length === 0 && (
+          {(loading || loadState === "refreshing") && stories.length === 0 && (
+            <LoadingState
+              message={loadState === "refreshing"
+                ? `Bringing in fresh ${section.toLowerCase()} coverage...`
+                : SECTION_LOADING_MESSAGES[section] || `Gathering ${section.toLowerCase()} coverage...`}
+            />
+          )}
+          {!loading && loadState !== "refreshing" && stories.length === 0 && (
             <div className="section-empty">
-              <p>No {section.toLowerCase()} stories indexed yet.</p>
-              <button className="section-refresh-btn" type="button" onClick={handleRefresh} disabled={refreshing}>
+              <p>Fresh {section.toLowerCase()} stories are on their way. Check back in a moment or fetch them now.</p>
+              <button className="push-btn" type="button" onClick={handleRefresh} disabled={refreshing}>
                 {refreshing ? "Fetching..." : "Fetch now"}
               </button>
             </div>

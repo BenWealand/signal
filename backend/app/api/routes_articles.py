@@ -51,6 +51,24 @@ class TrendArticleRequest(BaseModel):
         return value
 
 
+class FollowUpRequest(BaseModel):
+    prompt: str = ""
+    headline: str = ""
+    dek: str = ""
+    body: list[str] = []
+    limit: int = 5
+
+    @validator("prompt", "headline", "dek")
+    def follow_up_text_size(cls, value: str) -> str:
+        if len(value or "") > MAX_PROMPT_CHARS:
+            raise ValueError(f"text fields must be {MAX_PROMPT_CHARS} characters or fewer")
+        return (value or "").strip()
+
+    @validator("limit")
+    def follow_up_limit(cls, value: int) -> int:
+        return min(max(value, 1), 8)
+
+
 class XTrendArticleRequest(BaseModel):
     prompt: str = ""
     snippet: str = ""
@@ -160,6 +178,66 @@ def x_reply_text(article: dict, article_url: str) -> str:
     if len(text) <= 260:
         return text
     return f"{headline[: max(40, 256 - len(suffix))].rstrip()}...\n\n{suffix}"
+
+
+_FOLLOW_UP_STOPWORDS = frozenset({
+    "the", "a", "an", "and", "or", "of", "in", "on", "for", "is", "was",
+    "at", "to", "from", "with", "by", "that", "this", "it", "its", "be",
+    "are", "were", "has", "have", "had", "as", "new", "will", "more",
+    "said", "says", "about", "after", "over", "into", "also", "than",
+    "what", "how", "why", "latest", "update", "updates", "news",
+})
+
+
+def _follow_up_topic(payload: FollowUpRequest) -> str:
+    """Compress the prompt/headline into a short natural topic phrase."""
+    source = payload.prompt or payload.headline or ""
+    words = [w for w in re.findall(r"[A-Za-z0-9'&.-]+", source) if w.lower() not in _FOLLOW_UP_STOPWORDS]
+    if not words:
+        words = source.split()
+    return " ".join(words[:6]).strip() or "this story"
+
+
+def _editorial_follow_ups(payload: FollowUpRequest, limit: int) -> list[str]:
+    """
+    Exploration angles used when the LLM is unavailable. Each opens a
+    genuinely different direction instead of rewording the original prompt.
+    """
+    topic = _follow_up_topic(payload)
+    angles = [
+        f"who is most affected by {topic}",
+        f"economic impact of {topic}",
+        f"history and background of {topic}",
+        f"government and policy response to {topic}",
+        f"opposing views on {topic}",
+        f"what happens next with {topic}",
+        f"how {topic} compares around the world",
+        f"key players behind {topic}",
+    ]
+    return angles[:limit]
+
+
+@router.post("/articles/follow-ups")
+def article_follow_ups(payload: FollowUpRequest):
+    """
+    Follow-up search recommendations for the article reader.
+    Prefers LLM-generated exploration angles; falls back to editorial angles.
+    """
+    limit = min(max(payload.limit, 1), 8)
+    try:
+        from app.llm.gemini_writer import suggest_follow_up_prompts_with_gemini
+        llm_prompts = suggest_follow_up_prompts_with_gemini(
+            topic=payload.prompt,
+            headline=payload.headline,
+            dek=payload.dek,
+            body_paragraphs=payload.body[:6],
+            max_prompts=limit,
+        )
+    except Exception:
+        llm_prompts = None
+    if llm_prompts:
+        return {"prompts": llm_prompts[:limit], "source": "llm"}
+    return {"prompts": _editorial_follow_ups(payload, limit), "source": "editorial"}
 
 
 @router.get("/articles/progress")

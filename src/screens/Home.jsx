@@ -22,7 +22,7 @@ function NewsDashboard({
             <div>
               <strong>{story.sourceCount}</strong>
               <em>sources</em>
-              <button type="button" onClick={() => onPromptStory(story)}>Use as prompt</button>
+              <button className="push-btn" type="button" onClick={() => onPromptStory(story)}>Use as prompt</button>
             </div>
           </article>
         ))}

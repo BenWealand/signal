@@ -1,5 +1,38 @@
 import { GenerationModeToggle } from "./GenerationModeToggle.jsx";
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
+import { apiPost, hasApiBase } from "../api/client.js";
+
+const FOLLOW_UP_CACHE_PREFIX = "signal-follow-ups-v1:";
+
+function localFollowUps(draft) {
+  const base = String(draft.prompt || draft.headline || "this story").trim();
+  return [
+    `who is most affected by ${base}`,
+    `economic impact of ${base}`,
+    `history and background of ${base}`,
+    `what happens next with ${base}`,
+  ];
+}
+
+function readCachedFollowUps(key) {
+  if (!key) return null;
+  try {
+    const raw = window.localStorage.getItem(`${FOLLOW_UP_CACHE_PREFIX}${key}`);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return Array.isArray(parsed) && parsed.length ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedFollowUps(key, prompts) {
+  if (!key) return;
+  try {
+    window.localStorage.setItem(`${FOLLOW_UP_CACHE_PREFIX}${key}`, JSON.stringify(prompts));
+  } catch {
+    // Storage unavailable; suggestions still render for this session.
+  }
+}
 
 export function ArticleScreen({
   draft,
@@ -19,10 +52,12 @@ export function ArticleScreen({
   onLikeComment,
 }) {
   const [commentBody, setCommentBody] = useState("");
+  const [followUps, setFollowUps] = useState(() => localFollowUps(draft));
+  const [followUpsLoading, setFollowUpsLoading] = useState(false);
   const state = draft.articleState || {
     kind: "demo",
-    label: "Local/demo fallback article",
-    detail: "Static or local demo content. Treat as a product preview, not verified live reporting.",
+    label: "Preview edition",
+    detail: "A sample draft for preview. Fully sourced editions appear once live coverage loads.",
   };
   const facts = draft.facts || [
     {
@@ -45,17 +80,44 @@ export function ArticleScreen({
       return url;
     }
   };
-  const followUps = useMemo(() => {
-    const terms = (draft.terms || []).slice(0, 4);
-    const sources = (draft.sources || []).slice(0, 2);
-    const base = draft.prompt || draft.headline;
-    return [
-      `${base} latest source updates`,
-      terms.length ? `${terms.join(" ")} local impact` : `${base} local impact`,
-      sources.length ? `${base} according to ${sources.join(" and ")}` : `${base} timeline`,
-      `${base} what changed in the last 24 hours`,
-    ].filter(Boolean).slice(0, 4);
-  }, [draft]);
+  useEffect(() => {
+    const cacheKey = draft?.id ? String(draft.id) : "";
+    const cached = readCachedFollowUps(cacheKey);
+    if (cached) {
+      setFollowUps(cached);
+      return;
+    }
+    const fallback = localFollowUps(draft);
+    setFollowUps(fallback);
+    if (!hasApiBase() || !(draft?.headline || draft?.prompt)) return;
+
+    let cancelled = false;
+    setFollowUpsLoading(true);
+    apiPost("/articles/follow-ups", {
+      prompt: draft.prompt || "",
+      headline: draft.headline || "",
+      dek: draft.dek || "",
+      body: (draft.body || []).slice(0, 4),
+      limit: 5,
+    })
+      .then((result) => {
+        if (cancelled) return;
+        const prompts = Array.isArray(result?.prompts) && result.prompts.length
+          ? result.prompts.slice(0, 5)
+          : fallback;
+        setFollowUps(prompts);
+        writeCachedFollowUps(cacheKey, prompts);
+      })
+      .catch(() => {
+        if (!cancelled) setFollowUps(fallback);
+      })
+      .finally(() => {
+        if (!cancelled) setFollowUpsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [draft?.id, draft?.headline]);
 
   const submitComment = (event) => {
     event.preventDefault();
@@ -75,25 +137,29 @@ export function ArticleScreen({
           onChange={(event) => setPrompt(event.target.value)}
         />
         <GenerationModeToggle value={generationMode} onChange={onGenerationModeChange} />
-        <button type="submit">Rewrite</button>
+        <button className="push-btn" type="submit">Rewrite</button>
       </form>
       <div className="follow-up-searches">
-        <span>Recommended follow-up searches</span>
+        <span>Keep exploring</span>
         <div>
-          {followUps.map((item) => (
-            <button type="button" key={item} onClick={() => onRecommendedPrompt?.(item)}>
-              <SearchChipIcon />
-              {item}
-            </button>
-          ))}
+          {followUpsLoading
+            ? [0, 1, 2, 3].map((index) => (
+                <span className="follow-up-skeleton" key={index} aria-hidden="true" />
+              ))
+            : followUps.map((item) => (
+                <button type="button" key={item} onClick={() => onRecommendedPrompt?.(item)}>
+                  <SearchChipIcon />
+                  {item}
+                </button>
+              ))}
         </div>
       </div>
 
       <div className="article-toolbar" aria-label="Article actions">
-        <button type="button" onClick={onShare}>Share</button>
-        <button type="button" onClick={onCopyLink}>Copy link</button>
-        <button type="button" onClick={onShareX}>Share on X</button>
-        <button type="button" onClick={() => window.print()}>Print</button>
+        <button className="push-btn push-btn-ghost" type="button" onClick={onShare}>Share</button>
+        <button className="push-btn push-btn-ghost" type="button" onClick={onCopyLink}>Copy link</button>
+        <button className="push-btn push-btn-ghost" type="button" onClick={onShareX}>Share on X</button>
+        <button className="push-btn push-btn-ghost" type="button" onClick={() => window.print()}>Print</button>
       </div>
 
       <article className="article-reader">
@@ -197,7 +263,7 @@ export function ArticleScreen({
             placeholder="Add a source note, question, or correction"
             rows={3}
           />
-          <button type="submit">Comment</button>
+          <button className="push-btn" type="submit">Comment</button>
         </form>
         <div className="comment-list">
           {(social?.comments || []).map((comment) => (

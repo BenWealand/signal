@@ -272,6 +272,99 @@ Write a factual news article based ONLY on the source material above. Follow the
         return None
 
 
+def suggest_follow_up_prompts_with_gemini(
+    topic: str,
+    headline: str,
+    dek: str,
+    body_paragraphs: list[str] | None = None,
+    max_prompts: int = 5,
+) -> list[str] | None:
+    """
+    Ask Gemini for short follow-up search prompts that help a reader keep
+    exploring a story: adjacent angles, consequences, background, and open
+    questions — not rephrasings of the original headline.
+
+    Returns a list of prompt strings, or None when Gemini is unavailable.
+    """
+    key = settings.gemini_api_key
+    if not key:
+        _set_last_error(kind="config", message="GEMINI_API_KEY is not set")
+        return None
+    if _rate_limited():
+        _set_last_error(kind="rate_limit", message="Local Gemini rate cap reached")
+        return None
+
+    body = "\n\n".join(p.strip() for p in (body_paragraphs or []) if p and p.strip())
+    body_block = f"Opening paragraphs:\n{body[:2200]}" if body else ""
+    model = settings.gemini_model
+    _clear_last_error()
+
+    prompt = f"""You are a research editor at Signal, a news exploration platform.
+
+A reader just finished this article:
+Topic searched: {topic or headline}
+Headline: {headline}
+Summary: {dek}
+{body_block}
+
+Suggest {max_prompts} follow-up searches that would genuinely help this reader continue exploring.
+
+Rules:
+1. Each suggestion must open a DIFFERENT angle: consequences, affected people or industries, historical background, policy or regulatory response, money and markets, opposing viewpoints, or what to watch next.
+2. Do NOT rephrase the headline or swap a single word. Each suggestion must introduce a new dimension of the story.
+3. Each suggestion is a natural search phrase of 4-9 words, in plain language. No quotation marks, no numbering, no trailing punctuation.
+4. Suggestions must stay grounded in the topic above — no invented events or names.
+5. Return strict JSON only: an array of {max_prompts} strings. No markdown, no code fence, no explanation."""
+
+    payload = json.dumps({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": 0.55,
+            "maxOutputTokens": 320,
+            "topP": 0.92,
+        },
+    }).encode("utf-8")
+
+    url = f"{_API_BASE}/{urllib.parse.quote(model, safe='')}:generateContent"
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "x-goog-api-key": key,
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=14) as resp:
+            raw = resp.read().decode("utf-8", errors="ignore")
+        data = json.loads(raw)
+        parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        text = parts[0].get("text", "").strip() if parts else ""
+        if text.startswith("```"):
+            text = text.strip("`").removeprefix("json").strip()
+        parsed = json.loads(text)
+        if not isinstance(parsed, list):
+            raise ValueError("Gemini follow-ups were not a JSON array")
+        prompts: list[str] = []
+        for item in parsed:
+            cleaned = str(item).strip().strip('"').strip()
+            if 3 <= len(cleaned.split()) <= 12 and cleaned.lower() not in {p.lower() for p in prompts}:
+                prompts.append(cleaned)
+        return prompts[:max_prompts] or None
+    except urllib.error.HTTPError as exc:
+        if exc.code == 429:
+            _record_429()
+        _set_last_error(kind="follow_up_http", model=model, http_status=exc.code, message=str(exc))
+        print(f"[Gemini] Follow-up generation HTTP {exc.code}: {exc}", file=sys.stderr)
+        return None
+    except Exception as exc:
+        _set_last_error(kind="follow_up_request", model=model, message=str(exc))
+        print(f"[Gemini] Follow-up generation failed: {exc}", file=sys.stderr)
+        return None
+
+
 def write_article_header_with_gemini(
     query: str,
     body_paragraphs: list[str],
