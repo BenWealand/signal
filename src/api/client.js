@@ -4,6 +4,7 @@ export const API_BASE = import.meta.env.VITE_SIGNAL_API_URL || "";
 let wakePromise = null;
 const getCache = new Map();
 const STORAGE_PREFIX = "signal-cache-v1:";
+const BOOTSTRAP_CACHE_TTL_MS = 2 * 60 * 1000;
 
 export function hasApiBase() {
   return Boolean(API_BASE);
@@ -138,8 +139,8 @@ const BOOTSTRAP_PATH = "/feeds/bootstrap?latest_limit=25&story_limit=20&trending
  */
 export function preloadSignalFeeds({ userId = null } = {}) {
   if (!API_BASE) return Promise.resolve([]);
-  const tasks = [apiGetCached(BOOTSTRAP_PATH, { ttlMs: 5 * 60 * 1000 })];
-  if (userId) tasks.push(apiGetCached(`/users/${userId}/saved`, { ttlMs: 5 * 60 * 1000 }));
+  const tasks = [apiGetCached(BOOTSTRAP_PATH, { ttlMs: BOOTSTRAP_CACHE_TTL_MS })];
+  if (userId) tasks.push(apiGetCached(`/users/${userId}/saved`, { ttlMs: BOOTSTRAP_CACHE_TTL_MS }));
   return Promise.allSettled(tasks);
 }
 

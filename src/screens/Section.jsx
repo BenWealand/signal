@@ -13,6 +13,8 @@ const SECTION_LOADING_MESSAGES = {
   Climate: "Checking readings from field stations worldwide...",
 };
 
+const SECTION_CACHE_TTL_MS = 2 * 60 * 1000;
+
 export function SectionScreen({ section, account, onPrompt, onOpenArticle }) {
   const [stories, setStories] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -29,7 +31,7 @@ export function SectionScreen({ section, account, onPrompt, onOpenArticle }) {
     setLoading(true);
     setLoadState("loading");
     let cancelled = false;
-    apiGetCached(`/news/${slug}?limit=18`, { ttlMs: 10 * 60 * 1000 })
+    apiGetCached(`/news/${slug}?limit=18`, { ttlMs: SECTION_CACHE_TTL_MS })
       .then((data) => {
         if (cancelled) return;
         setStories(dedupeStories(Array.isArray(data) ? data : [], 18));

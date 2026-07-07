@@ -583,7 +583,7 @@ def _decode_generated_article(row: Any) -> dict[str, Any]:
 _GENERATED_FEED_COLUMNS = """
 id, source, tag, trend_url, prompt, headline, dek, summary, sources,
 source_count, denied_for_bias, fairness_score, accuracy_score,
-generation_mode, used_live_sources, fallback_reason, status, created_at
+generation_mode, used_live_sources, fallback_reason, section, status, created_at
 """
 
 FEED_SECTION_SLUGS = ("world", "politics", "markets", "technology", "climate")
@@ -610,6 +610,7 @@ def _decode_feed_article(row: Any, *, trend_metrics: dict[str, Any] | None = Non
         "generation_mode": item.get("generation_mode", ""),
         "used_live_sources": bool(item.get("used_live_sources", 0)),
         "fallback_reason": item.get("fallback_reason", ""),
+        "section": item.get("section", ""),
         "status": item["status"],
         "createdAt": item["created_at"],
         "preview": True,
@@ -837,7 +838,7 @@ def classify_article_section(article: dict[str, Any]) -> str:
     return best_section
 
 
-def list_generated_articles_by_section(section: str, limit: int = 20) -> list[dict[str, Any]]:
+def _list_generated_articles_by_section_cur(cur: Any, section: str, limit: int = 20) -> list[dict[str, Any]]:
     """
     Return the latest generated articles for a topic, newest first.
     Prefers the stored section assignment; legacy rows without one are
@@ -849,21 +850,113 @@ def list_generated_articles_by_section(section: str, limit: int = 20) -> list[di
         return list_generated_articles(limit=limit)
     keyword_conditions = " OR ".join(["prompt ILIKE %s OR headline ILIKE %s"] * len(keywords))
     keyword_params = [val for kw in keywords for val in (f"%{kw}%", f"%{kw}%")]
+    cur.execute(
+        f"""
+        SELECT {_GENERATED_FEED_COLUMNS}
+        FROM generated_articles
+        WHERE created_at > NOW() - INTERVAL '14 days'
+          AND (
+            section = %s
+            OR (COALESCE(section, '') = '' AND ({keyword_conditions}))
+          )
+        ORDER BY
+          (
+            source_count * 0.55
+            + accuracy_score * 0.035
+            + fairness_score * 0.02
+          ) / POWER(EXTRACT(EPOCH FROM (NOW() - created_at)) / 3600.0 + 2.0, 0.34) DESC,
+          created_at DESC
+        LIMIT %s
+        """,
+        [slug, *keyword_params, max(limit * 3, limit)],
+    )
+    items = [_decode_feed_article(row) for row in cur.fetchall()]
+    return _filter_feed_articles(items, limit)
+
+
+def list_generated_articles_by_section(section: str, limit: int = 20) -> list[dict[str, Any]]:
+    slug = section.lower()
+    keywords = _SECTION_KEYWORDS.get(slug, [])
+    if not keywords:
+        return list_generated_articles(limit=limit)
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            return _list_generated_articles_by_section_cur(cur, slug, limit)
+
+
+def generated_prompt_exists_recent(prompt: str, max_age_minutes: int = 45) -> bool:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1
+                FROM generated_articles
+                WHERE lower(prompt) = lower(%s)
+                  AND created_at > NOW() - (%s::text || ' minutes')::interval
+                LIMIT 1
+                """,
+                (prompt, max(1, max_age_minutes)),
+            )
+            return bool(cur.fetchone())
+
+
+def list_section_generation_prompts(section: str, limit: int = 9) -> list[str]:
+    slug = section.lower()
+    keywords = _SECTION_KEYWORDS.get(slug, [])
+    if not keywords:
+        return []
+    cluster_conditions = " OR ".join(["sc.topic_label ILIKE %s"] * len(keywords))
+    article_conditions = " OR ".join(
+        ["a.title ILIKE %s OR a.description ILIKE %s OR a.raw_text ILIKE %s"] * len(keywords)
+    )
+    cluster_params = [f"%{kw}%" for kw in keywords]
+    article_params = [val for kw in keywords for val in (f"%{kw}%", f"%{kw}%", f"%{kw}%")]
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 f"""
-                SELECT {_GENERATED_FEED_COLUMNS}
-                FROM generated_articles
-                WHERE section = %s
-                   OR (COALESCE(section, '') = '' AND ({keyword_conditions}))
-                ORDER BY created_at DESC
+                WITH candidates AS (
+                  SELECT
+                    sc.topic_label AS prompt,
+                    sc.updated_at AS observed_at,
+                    COUNT(DISTINCT sca.article_id) AS source_count,
+                    2 AS source_priority
+                  FROM story_clusters sc
+                  LEFT JOIN story_cluster_articles sca ON sca.story_cluster_id = sc.id
+                  WHERE sc.updated_at > NOW() - INTERVAL '48 hours'
+                    AND ({cluster_conditions})
+                  GROUP BY sc.id, sc.topic_label, sc.updated_at
+                  UNION ALL
+                  SELECT
+                    a.title AS prompt,
+                    a.created_at AS observed_at,
+                    1 AS source_count,
+                    1 AS source_priority
+                  FROM articles a
+                  WHERE a.created_at > NOW() - INTERVAL '48 hours'
+                    AND ({article_conditions})
+                )
+                SELECT prompt
+                FROM candidates
+                WHERE prompt IS NOT NULL AND length(prompt) > 12
+                ORDER BY
+                  (source_count * 1.25 + source_priority)
+                  / POWER(EXTRACT(EPOCH FROM (NOW() - observed_at)) / 3600.0 + 2.0, 0.28) DESC,
+                  observed_at DESC
                 LIMIT %s
                 """,
-                [slug, *keyword_params, max(limit * 3, limit)],
+                [*cluster_params, *article_params, max(limit, 1)],
             )
-            items = [_decode_feed_article(row) for row in cur.fetchall()]
-            return _filter_feed_articles(items, limit)
+            prompts: list[str] = []
+            seen: set[str] = set()
+            for row in cur.fetchall():
+                prompt = str(row.get("prompt") or "").strip()
+                key = " ".join(prompt.lower().split())
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                prompts.append(prompt)
+            return prompts
 
 
 def list_stories_by_section(section: str, limit: int = 20) -> list[dict[str, Any]]:
@@ -1437,27 +1530,7 @@ def bootstrap_feeds(
 
             sections: dict[str, list[dict[str, Any]]] = {}
             for slug in FEED_SECTION_SLUGS:
-                keywords = _SECTION_KEYWORDS.get(slug, [])
-                if not keywords:
-                    sections[slug] = latest[:section_limit]
-                    continue
-                keyword_conditions = " OR ".join(["prompt ILIKE %s OR headline ILIKE %s"] * len(keywords))
-                keyword_params = [val for kw in keywords for val in (f"%{kw}%", f"%{kw}%")]
-                cur.execute(
-                    f"""
-                    SELECT {_GENERATED_FEED_COLUMNS}
-                    FROM generated_articles
-                    WHERE section = %s
-                       OR (COALESCE(section, '') = '' AND ({keyword_conditions}))
-                    ORDER BY created_at DESC
-                    LIMIT %s
-                    """,
-                    [slug, *keyword_params, max(section_limit * 3, section_limit)],
-                )
-                sections[slug] = _filter_feed_articles(
-                    [_decode_feed_article(row) for row in cur.fetchall()],
-                    section_limit,
-                )
+                sections[slug] = _list_generated_articles_by_section_cur(cur, slug, section_limit)
 
             topics = _fetch_trending_topics(cur, topics_limit)
 

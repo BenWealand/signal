@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiGetCached } from "../api/client.js";
+import { apiGetCached, apiGetFresh } from "../api/client.js";
 import { starterStories } from "../lib/constants.js";
 import { dedupeStories } from "../utils/articleNormalize.js";
 import { LoadingState, ScreenShell } from "./shared.jsx";
@@ -10,7 +10,7 @@ export function TrendsScreen({ commandArticles, onOpenArticle }) {
 
   useEffect(() => {
     setTopicStatus("loading");
-    apiGetCached("/news/trending?limit=18", { ttlMs: 5 * 60 * 1000 })
+    apiGetCached("/news/trending?limit=18", { ttlMs: 30 * 1000 })
       .then((data) => {
         setRankedTrends(Array.isArray(data) ? data : []);
         setTopicStatus("live");
@@ -19,6 +19,18 @@ export function TrendsScreen({ commandArticles, onOpenArticle }) {
         setRankedTrends([]);
         setTopicStatus("fallback");
       });
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      apiGetFresh("/news/trending?limit=18", { ttlMs: 30 * 1000 })
+        .then((data) => {
+          setRankedTrends(Array.isArray(data) ? data : []);
+          setTopicStatus("live");
+        })
+        .catch(() => {});
+    }, 30 * 1000);
+    return () => window.clearInterval(timer);
   }, []);
 
   const trends = rankedTrends.length

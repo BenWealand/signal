@@ -46,7 +46,9 @@ class Settings:
     periodic_rss: bool = os.getenv("SIGNAL_PERIODIC_RSS", "false").lower() == "true"
     embedding_warmup_on_startup: bool = os.getenv("SIGNAL_EMBEDDING_WARMUP_ON_STARTUP", "false").lower() == "true"
     db_pool_max: int = int(os.getenv("DB_POOL_MAX", "8"))
-    feed_cache_ttl_seconds: int = int(os.getenv("FEED_CACHE_TTL_SECONDS", "60"))
+    feed_cache_ttl_seconds: int = int(os.getenv("FEED_CACHE_TTL_SECONDS", "30"))
+    section_fast_articles_per_refresh: int = int(os.getenv("SIGNAL_SECTION_FAST_COUNT", "3"))
+    section_fast_min_age_minutes: int = int(os.getenv("SIGNAL_SECTION_FAST_MIN_AGE_MINUTES", "45"))
     app_name: str = "Signal News Intelligence API"
 
 

@@ -12,7 +12,7 @@ from app.api.middleware import FeedCacheHeadersMiddleware
 from app.api.routes_articles import router as article_router
 from app.api.routes_feeds import router as feeds_router
 from app.api.routes_news import router as news_router
-from app.api.routes_news import SECTION_PROMPTS, _fetch_section
+from app.api.routes_news import SECTION_SLUGS, _generate_fast_section_articles
 from app.api.routes_search import router as search_router
 from app.api.routes_stories import router as story_router
 from app.api.routes_users import router as user_router
@@ -99,7 +99,7 @@ def _ingest_and_enrich(articles: list[dict]) -> None:
 def _periodic_rss_refresh(interval_seconds: int = 900) -> None:
     """
     Daemon thread: re-fetch RSS feeds every `interval_seconds` (default 15 min),
-    then regenerate one synthesised article per section so Trends stays current.
+    then generate shared fast-mode articles per section so feeds stay current.
     """
     while True:
         time.sleep(interval_seconds)
@@ -110,17 +110,17 @@ def _periodic_rss_refresh(interval_seconds: int = 900) -> None:
             log_event(logger, "periodic_rss_refresh_failed", level=logging.ERROR)
             logger.exception("Periodic RSS refresh failed")
         try:
-            for prompt in SECTION_PROMPTS.values():
-                _fetch_section(prompt)
+            for section in SECTION_SLUGS:
+                _generate_fast_section_articles(section)
         except Exception:
             log_event(logger, "periodic_section_synthesis_failed", level=logging.ERROR)
-            logger.exception("Periodic section synthesis failed")
+            logger.exception("Periodic section fast generation failed")
 
 
 def _startup_pipeline() -> None:
     """
     Background thread: fast RSS fetch → insert snippets → enrich full text
-    → synthesise one generated article per section (so Trends is populated).
+    → generate shared fast-mode articles per section (so feeds are populated).
     """
     try:
         # Phase 1: fetch all RSS feeds (fast — title + description only)
@@ -131,14 +131,13 @@ def _startup_pipeline() -> None:
         logger.exception("Startup RSS ingest failed")
 
     try:
-        # Phase 2: run write_article_from_prompt for every section.
-        # This combines the freshly ingested RSS articles with GDELT results
-        # and saves them to generated_articles, so they appear in Trends + Latest.
-        for prompt in SECTION_PROMPTS.values():
-            _fetch_section(prompt)
+        # Phase 2: save several fast-mode section articles to generated_articles
+        # so every reader sees the same shared feed items.
+        for section in SECTION_SLUGS:
+            _generate_fast_section_articles(section)
     except Exception:
         log_event(logger, "startup_section_synthesis_failed", level=logging.ERROR)
-        logger.exception("Startup section synthesis failed")
+        logger.exception("Startup section fast generation failed")
 
 
 @app.on_event("startup")

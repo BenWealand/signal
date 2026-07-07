@@ -3,7 +3,8 @@ import { apiGetCached, apiGetFresh, hasApiBase, preloadSignalFeeds } from "../ap
 import { dedupeStories, normalizeBackendStory, normalizeCommandArticle } from "../utils/articleNormalize.js";
 
 const BOOTSTRAP_PATH = "/feeds/bootstrap?latest_limit=25&story_limit=20&trending_limit=18&section_limit=18&topics_limit=10";
-const LATEST_REFRESH_MS = 60 * 1000;
+const BOOTSTRAP_CACHE_TTL_MS = 2 * 60 * 1000;
+const LATEST_REFRESH_MS = 30 * 1000;
 
 export function useInitialSignalData({
   account,
@@ -29,10 +30,10 @@ export function useInitialSignalData({
 
     Promise.allSettled([
       hasApiBase()
-        ? apiGetCached(BOOTSTRAP_PATH, { ttlMs: 5 * 60 * 1000 })
+        ? apiGetCached(BOOTSTRAP_PATH, { ttlMs: BOOTSTRAP_CACHE_TTL_MS })
         : Promise.resolve(null),
       linkedArticleId && hasApiBase()
-        ? apiGetCached(`/generated-articles/${encodeURIComponent(linkedArticleId)}`, { ttlMs: 5 * 60 * 1000 })
+        ? apiGetCached(`/generated-articles/${encodeURIComponent(linkedArticleId)}`, { ttlMs: BOOTSTRAP_CACHE_TTL_MS })
         : Promise.resolve(null),
       fetch(`/generated-articles.json?ts=${Date.now()}`).then((response) => (response.ok ? response.json() : [])),
     ])
@@ -85,7 +86,7 @@ export function useInitialSignalData({
   useEffect(() => {
     if (!hasApiBase()) return undefined;
     const timer = window.setInterval(() => {
-      apiGetFresh(BOOTSTRAP_PATH, { ttlMs: 5 * 60 * 1000 })
+      apiGetFresh(BOOTSTRAP_PATH, { ttlMs: BOOTSTRAP_CACHE_TTL_MS })
         .then((bootstrap) => {
           if (!bootstrap || typeof bootstrap !== "object") return;
           if (Array.isArray(bootstrap.latest) && bootstrap.latest.length) {

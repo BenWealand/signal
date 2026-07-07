@@ -21,8 +21,9 @@ SECTION_PROMPTS: dict[str, str] = {
     "markets": "stock market economy financial inflation interest rates",
     "technology": "artificial intelligence semiconductor technology cybersecurity",
     "climate": "climate change environment renewable energy weather",
-    "source-wire": "breaking news wire services latest",
 }
+
+SECTION_SLUGS = tuple(SECTION_PROMPTS)
 
 router = APIRouter()
 
@@ -107,8 +108,7 @@ def section_news(section: str, limit: int = 20):
 @router.post("/news/refresh/{section}")
 def refresh_section(section: str, background_tasks: BackgroundTasks):
     slug = section.lower().replace(" ", "-")
-    prompt = SECTION_PROMPTS.get(slug, slug.replace("-", " "))
-    background_tasks.add_task(_fetch_section, prompt)
+    background_tasks.add_task(_generate_fast_section_articles, slug)
     return {"ok": True, "section": section, "status": "fetching"}
 
 
@@ -169,13 +169,54 @@ def rss_status():
     return {"sources": rows, "total": sum(r["article_count"] for r in rows)}
 
 
-def _fetch_section(prompt: str) -> None:
-    """Background/startup article generation — skips Gemini to preserve quota."""
-    try:
-        write_article_from_prompt(prompt, limit=15, use_gemini=False)
-    except Exception:
-        log_event(logger, "section_article_generation_failed", level=logging.ERROR, prompt=prompt)
-        logger.exception("Background section article generation failed")
+def _section_prompts(section: str, count: int) -> list[str]:
+    slug = section.lower().replace(" ", "-")
+    base = SECTION_PROMPTS.get(slug, slug.replace("-", " "))
+    candidates = queries.list_section_generation_prompts(slug, limit=count * 4)
+    candidates.extend([
+        f"{base} latest developments",
+        f"{base} breaking updates",
+        f"{base} policy and public impact",
+    ])
+    prompts: list[str] = []
+    seen: set[str] = set()
+    for prompt in candidates:
+        cleaned = " ".join(str(prompt).strip().split())
+        key = cleaned.lower()
+        if not cleaned or key in seen:
+            continue
+        seen.add(key)
+        prompts.append(cleaned)
+        if len(prompts) >= count:
+            break
+    return prompts
+
+
+def _generate_fast_section_articles(section: str, count: int | None = None) -> None:
+    """Generate shared fast-mode section articles and save them to the DB."""
+    slug = section.lower().replace(" ", "-")
+    if slug not in SECTION_PROMPTS:
+        return
+    target_count = max(1, min(count or settings.section_fast_articles_per_refresh, 5))
+    generated = 0
+    for prompt in _section_prompts(slug, target_count * 3):
+        if queries.generated_prompt_exists_recent(prompt, settings.section_fast_min_age_minutes):
+            continue
+        try:
+            article = write_article_from_prompt(prompt, limit=10, use_gemini=False, mode="fast")
+            article["section"] = slug
+            article["source"] = "Signal desk"
+            article["tag"] = "fast-draft"
+            queries.save_generated_article(article)
+            generated += 1
+            if generated >= target_count:
+                break
+        except Exception:
+            log_event(logger, "section_fast_generation_failed", level=logging.ERROR, section=slug, prompt=prompt)
+            logger.exception("Background fast section article generation failed")
+    cache.invalidate("bootstrap:")
+    cache.invalidate(f"trending:")
+    cache.invalidate(f"trending-topics:")
 
 
 def _run_full_rss_ingest() -> None:
