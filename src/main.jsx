@@ -342,15 +342,28 @@ function App() {
   };
 
   const openCommandArticle = (article) => {
-    const normalized = normalizeCommandArticle(article);
-    setPrompt(normalized.prompt);
-    setDraftPrompt(normalized.prompt);
-    setExternalDraft(normalized);
-    setPhase("complete");
-    setActiveScreen("Latest");
-    if (normalized.id) window.history.replaceState(null, "", `?article=${encodeURIComponent(normalized.id)}`);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-    trackEvent(account?.id, "view", { prompt: normalized.prompt, article_id: String(normalized.id) });
+    const finalize = (resolved) => {
+      const normalized = normalizeCommandArticle(resolved);
+      setPrompt(normalized.prompt);
+      setDraftPrompt(normalized.prompt);
+      setExternalDraft(normalized);
+      setPhase("complete");
+      setActiveScreen("Latest");
+      if (normalized.id) window.history.replaceState(null, "", `?article=${encodeURIComponent(normalized.id)}`);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      trackEvent(account?.id, "view", { prompt: normalized.prompt, article_id: String(normalized.id) });
+    };
+
+    const needsFullArticle = hasApiBase()
+      && article?.id
+      && (!Array.isArray(article.body) || !article.body.length || article.preview);
+    if (needsFullArticle) {
+      apiGet(`/generated-articles/${encodeURIComponent(article.id)}`)
+        .then(finalize)
+        .catch(() => finalize(article));
+      return;
+    }
+    finalize(article);
   };
 
   const startCommandPrompt = (article) => {

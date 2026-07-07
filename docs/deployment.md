@@ -54,10 +54,34 @@ The repo includes `vercel.json` with a single-page-app rewrite so direct links l
 
 Static fallback behavior:
 
-- The frontend attempts to load `GET /generated-articles` from the backend.
+- The frontend attempts to load `GET /feeds/bootstrap` from the backend (one request for Latest, Trending, topics, and all section feeds).
 - It also loads `/generated-articles.json` from the static build.
 - If the backend is unavailable, the UI can still show cached/static generated articles and local demo drafts.
 - This is useful for demos but should be labeled carefully in production.
+
+## Backend keep-alive (recommended)
+
+If the backend host sleeps after inactivity (Render free tier, etc.), configure a scheduled ping so the first reader does not wait through a cold start:
+
+1. In GitHub → Settings → Secrets and variables → Actions, add `SIGNAL_API_URL` with your backend base URL (no trailing slash), e.g. `https://your-backend.onrender.com`.
+2. The workflow at `.github/workflows/keep-backend-alive.yml` pings `/health` every 10 minutes.
+
+Alternative: use UptimeRobot, Cron-job.org, or a Vercel cron job pointed at the same `/health` URL.
+
+## Feed performance settings
+
+Optional backend environment variables:
+
+```env
+DB_POOL_MAX=8
+FEED_CACHE_TTL_SECONDS=60
+```
+
+What these do:
+
+- `DB_POOL_MAX`: reuses Postgres connections instead of opening a new TLS session per request.
+- `FEED_CACHE_TTL_SECONDS`: memoizes trending rankings and the `/feeds/bootstrap` bundle in memory for all visitors.
+- List endpoints (`/generated-articles`, `/news/trending`, section pages) return slim card previews; opening an article fetches the full body from `/generated-articles/{id}`.
 
 ## Backend On Render
 

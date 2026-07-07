@@ -45,6 +45,8 @@ class Settings:
     auto_ingest_on_startup: bool = os.getenv("SIGNAL_AUTO_INGEST_ON_STARTUP", "false").lower() == "true"
     periodic_rss: bool = os.getenv("SIGNAL_PERIODIC_RSS", "false").lower() == "true"
     embedding_warmup_on_startup: bool = os.getenv("SIGNAL_EMBEDDING_WARMUP_ON_STARTUP", "false").lower() == "true"
+    db_pool_max: int = int(os.getenv("DB_POOL_MAX", "8"))
+    feed_cache_ttl_seconds: int = int(os.getenv("FEED_CACHE_TTL_SECONDS", "60"))
     app_name: str = "Signal News Intelligence API"
 
 

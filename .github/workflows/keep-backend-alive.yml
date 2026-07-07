@@ -1,0 +1,20 @@
+name: Keep backend awake
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Signal API health
+        env:
+          SIGNAL_API_URL: ${{ secrets.SIGNAL_API_URL }}
+        run: |
+          if [ -z "$SIGNAL_API_URL" ]; then
+            echo "SIGNAL_API_URL secret is not configured; skipping keep-alive ping."
+            exit 0
+          fi
+          curl -fsS --max-time 30 "${SIGNAL_API_URL%/}/health"

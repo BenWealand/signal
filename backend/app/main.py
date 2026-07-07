@@ -6,15 +6,18 @@ import time
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 
+from app.api.middleware import FeedCacheHeadersMiddleware
 from app.api.routes_articles import router as article_router
+from app.api.routes_feeds import router as feeds_router
 from app.api.routes_news import router as news_router
 from app.api.routes_news import SECTION_PROMPTS, _fetch_section
 from app.api.routes_search import router as search_router
 from app.api.routes_stories import router as story_router
 from app.api.routes_users import router as user_router
 from app.config import settings
-from app.db.connection import create_tables, get_connection
+from app.db.connection import create_tables, get_connection, close_pool
 from app.db import queries
 from app.ingest.rss_ingest import fetch_all_rss_fast, enrich_articles_in_background
 from app.observability import log_event
@@ -46,9 +49,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(GZipMiddleware, minimum_size=500)
+app.add_middleware(FeedCacheHeadersMiddleware)
 
 app.include_router(story_router)
 app.include_router(article_router)
+app.include_router(feeds_router)
 app.include_router(search_router)
 app.include_router(user_router)
 app.include_router(news_router)
@@ -156,6 +162,11 @@ def startup() -> None:
         threading.Thread(target=_startup_pipeline, daemon=True).start()
     if settings.periodic_rss:
         threading.Thread(target=_periodic_rss_refresh, args=(900,), daemon=True).start()
+
+
+@app.on_event("shutdown")
+def shutdown() -> None:
+    close_pool()
 
 
 @app.get("/health")

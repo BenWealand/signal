@@ -338,7 +338,7 @@ def save_summary(cluster_id: int, summary_text: str, model_name: str = "local-ru
             return int(cur.fetchone()["id"])
 
 
-def list_stories() -> list[dict[str, Any]]:
+def list_stories(limit: int = 30) -> list[dict[str, Any]]:
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -360,7 +360,9 @@ def list_stories() -> list[dict[str, Any]]:
                 LEFT JOIN story_cluster_articles sca ON sca.story_cluster_id = sc.id
                 GROUP BY sc.id
                 ORDER BY sc.updated_at DESC
-                """
+                LIMIT %s
+                """,
+                (limit,),
             )
             return [row_to_dict(row) for row in cur.fetchall()]
 
@@ -578,15 +580,70 @@ def _decode_generated_article(row: Any) -> dict[str, Any]:
     return decoded
 
 
+_GENERATED_FEED_COLUMNS = """
+id, source, tag, trend_url, prompt, headline, dek, summary, sources,
+source_count, denied_for_bias, fairness_score, accuracy_score,
+generation_mode, used_live_sources, fallback_reason, status, created_at
+"""
+
+FEED_SECTION_SLUGS = ("world", "politics", "markets", "technology", "climate")
+
+
+def _decode_feed_article(row: Any, *, trend_metrics: dict[str, Any] | None = None) -> dict[str, Any]:
+    item = row_to_dict(row)
+    if not item:
+        return {}
+    decoded = {
+        "id": item["id"],
+        "source": item["source"],
+        "tag": item["tag"],
+        "trendUrl": item["trend_url"],
+        "prompt": item["prompt"],
+        "headline": item["headline"],
+        "dek": item["dek"],
+        "summary": item["summary"],
+        "sources": _json_loads(item.get("sources"), []),
+        "sourceCount": item["source_count"],
+        "deniedForBias": item["denied_for_bias"],
+        "fairnessScore": item["fairness_score"],
+        "accuracyScore": item["accuracy_score"],
+        "generation_mode": item.get("generation_mode", ""),
+        "used_live_sources": bool(item.get("used_live_sources", 0)),
+        "fallback_reason": item.get("fallback_reason", ""),
+        "status": item["status"],
+        "createdAt": item["created_at"],
+        "preview": True,
+    }
+    if trend_metrics:
+        decoded["trendMetrics"] = trend_metrics
+    return decoded
+
+
+def _filter_feed_articles(items: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    filtered: list[dict[str, Any]] = []
+    for item in items:
+        if article_is_blocked(item).blocked:
+            continue
+        filtered.append(item)
+        if len(filtered) >= limit:
+            break
+    return filtered
+
+
 def list_generated_articles(limit: int = 25) -> list[dict[str, Any]]:
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT * FROM generated_articles ORDER BY created_at DESC LIMIT %s",
+                f"""
+                SELECT {_GENERATED_FEED_COLUMNS}
+                FROM generated_articles
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
                 (max(limit * 3, limit),),
             )
-            items = [_decode_generated_article(row) for row in cur.fetchall()]
-            return [item for item in items if not article_is_blocked(item).blocked][:limit]
+            items = [_decode_feed_article(row) for row in cur.fetchall()]
+            return _filter_feed_articles(items, limit)
 
 
 def get_generated_article(article_id: str) -> dict[str, Any]:
@@ -796,7 +853,8 @@ def list_generated_articles_by_section(section: str, limit: int = 20) -> list[di
         with conn.cursor() as cur:
             cur.execute(
                 f"""
-                SELECT * FROM generated_articles
+                SELECT {_GENERATED_FEED_COLUMNS}
+                FROM generated_articles
                 WHERE section = %s
                    OR (COALESCE(section, '') = '' AND ({keyword_conditions}))
                 ORDER BY created_at DESC
@@ -804,8 +862,8 @@ def list_generated_articles_by_section(section: str, limit: int = 20) -> list[di
                 """,
                 [slug, *keyword_params, max(limit * 3, limit)],
             )
-            items = [_decode_generated_article(row) for row in cur.fetchall()]
-            return [item for item in items if not article_is_blocked(item).blocked][:limit]
+            items = [_decode_feed_article(row) for row in cur.fetchall()]
+            return _filter_feed_articles(items, limit)
 
 
 def list_stories_by_section(section: str, limit: int = 20) -> list[dict[str, Any]]:
@@ -1132,10 +1190,12 @@ def list_trending_generated_articles(limit: int = 18) -> list[dict[str, Any]]:
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 WITH metrics AS (
                   SELECT
-                    ga.*,
+                    ga.id, ga.source, ga.tag, ga.trend_url, ga.prompt, ga.headline, ga.dek, ga.summary,
+                    ga.sources, ga.source_count, ga.denied_for_bias, ga.fairness_score, ga.accuracy_score,
+                    ga.generation_mode, ga.used_live_sources, ga.fallback_reason, ga.status, ga.created_at,
                     COUNT(DISTINCT uh.id) FILTER (WHERE uh.action_type IN ('view', 'read')) AS views,
                     COUNT(DISTINCT ss.id) AS saves,
                     COUNT(DISTINCT al.id) AS likes,
@@ -1174,10 +1234,7 @@ def list_trending_generated_articles(limit: int = 18) -> list[dict[str, Any]]:
             )
             items: list[dict[str, Any]] = []
             for row in cur.fetchall():
-                decoded = _decode_generated_article(row)
-                if article_is_blocked(decoded).blocked:
-                    continue
-                decoded["trendMetrics"] = {
+                trend_metrics = {
                     "views": int(row.get("views") or 0),
                     "saves": int(row.get("saves") or 0),
                     "likes": int(row.get("likes") or 0),
@@ -1186,5 +1243,228 @@ def list_trending_generated_articles(limit: int = 18) -> list[dict[str, Any]]:
                     "currentRank": int(row.get("current_rank") or 0),
                     "previousRank": int(row.get("previous_rank") or 0),
                 }
+                decoded = _decode_feed_article(row, trend_metrics=trend_metrics)
+                if article_is_blocked(decoded).blocked:
+                    continue
                 items.append(decoded)
             return items[:limit]
+
+
+def list_trending_topics(limit: int = 12) -> list[dict[str, Any]]:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            return _fetch_trending_topics(cur, limit)
+
+
+def _fetch_trending_topics(cur: Any, limit: int) -> list[dict[str, Any]]:
+    cur.execute(
+        """
+        SELECT entity_text, entity_type, COUNT(*) AS mentions
+        FROM entities
+        WHERE created_at > NOW() - INTERVAL '72 hours'
+          AND LENGTH(entity_text) > 2
+        GROUP BY entity_text, entity_type
+        HAVING COUNT(*) >= 2
+        ORDER BY mentions DESC
+        LIMIT %s
+        """,
+        (limit,),
+    )
+    rows = cur.fetchall()
+    if rows:
+        return [row_to_dict(r) for r in rows]
+
+    cur.execute(
+        """
+        SELECT entity_text, entity_type, COUNT(*) AS mentions
+        FROM entities
+        WHERE created_at > NOW() - INTERVAL '72 hours'
+          AND LENGTH(entity_text) > 3
+        GROUP BY entity_text, entity_type
+        ORDER BY mentions DESC
+        LIMIT %s
+        """,
+        (limit,),
+    )
+    rows = cur.fetchall()
+    if rows:
+        return [row_to_dict(r) for r in rows]
+
+    cur.execute(
+        """
+        SELECT sc.topic_label AS entity_text,
+               'topic'::text  AS entity_type,
+               COUNT(sca.article_id) AS mentions
+        FROM story_clusters sc
+        JOIN story_cluster_articles sca ON sca.story_cluster_id = sc.id
+        GROUP BY sc.id, sc.topic_label
+        ORDER BY mentions DESC
+        LIMIT %s
+        """,
+        (limit,),
+    )
+    rows = cur.fetchall()
+    if rows:
+        return [row_to_dict(r) for r in rows]
+
+    cur.execute(
+        """
+        SELECT title AS entity_text,
+               source_name AS entity_type,
+               1 AS mentions
+        FROM articles
+        WHERE status = 'processed'
+        ORDER BY created_at DESC
+        LIMIT %s
+        """,
+        (limit,),
+    )
+    return [row_to_dict(r) for r in cur.fetchall()]
+
+
+def bootstrap_feeds(
+    *,
+    latest_limit: int = 25,
+    story_limit: int = 20,
+    trending_limit: int = 18,
+    section_limit: int = 18,
+    topics_limit: int = 10,
+) -> dict[str, Any]:
+    """
+    Load every reader-facing feed in a single database connection so cold starts
+    pay one round-trip instead of nine.
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT {_GENERATED_FEED_COLUMNS}
+                FROM generated_articles
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                (max(latest_limit * 3, latest_limit),),
+            )
+            latest = _filter_feed_articles(
+                [_decode_feed_article(row) for row in cur.fetchall()],
+                latest_limit,
+            )
+
+            cur.execute(
+                """
+                SELECT
+                  sc.id,
+                  sc.topic_label,
+                  sc.created_at,
+                  sc.updated_at,
+                  COUNT(DISTINCT sca.article_id) AS article_count,
+                  COALESCE((
+                    SELECT gs.summary_text
+                    FROM generated_summaries gs
+                    WHERE gs.story_cluster_id = sc.id
+                    ORDER BY gs.created_at DESC, gs.id DESC
+                    LIMIT 1
+                  ), '') AS summary_text
+                FROM story_clusters sc
+                LEFT JOIN story_cluster_articles sca ON sca.story_cluster_id = sc.id
+                GROUP BY sc.id
+                ORDER BY sc.updated_at DESC
+                LIMIT %s
+                """,
+                (story_limit,),
+            )
+            stories = [row_to_dict(row) for row in cur.fetchall()]
+
+            cur.execute(
+                f"""
+                WITH metrics AS (
+                  SELECT
+                    ga.id, ga.source, ga.tag, ga.trend_url, ga.prompt, ga.headline, ga.dek, ga.summary,
+                    ga.sources, ga.source_count, ga.denied_for_bias, ga.fairness_score, ga.accuracy_score,
+                    ga.generation_mode, ga.used_live_sources, ga.fallback_reason, ga.status, ga.created_at,
+                    COUNT(DISTINCT uh.id) FILTER (WHERE uh.action_type IN ('view', 'read')) AS views,
+                    COUNT(DISTINCT ss.id) AS saves,
+                    COUNT(DISTINCT al.id) AS likes,
+                    COUNT(DISTINCT ac.id) AS comments,
+                    EXTRACT(EPOCH FROM (NOW() - ga.created_at)) / 3600.0 AS age_hours
+                  FROM generated_articles ga
+                  LEFT JOIN user_history uh ON uh.article_id = ga.id
+                  LEFT JOIN saved_stories ss ON ss.story_id = ga.id
+                  LEFT JOIN article_likes al ON al.article_id = ga.id
+                  LEFT JOIN article_comments ac ON ac.article_id = ga.id
+                  WHERE ga.created_at > NOW() - INTERVAL '14 days'
+                  GROUP BY ga.id
+                ),
+                ranked AS (
+                  SELECT *,
+                    (views * 3.0 + saves * 8.0 + likes * 5.0 + comments * 6.0 + source_count * 0.35)
+                    / POWER(age_hours + 2.0, 0.72) AS trend_score,
+                    ROW_NUMBER() OVER (
+                      ORDER BY
+                      (views * 3.0 + saves * 8.0 + likes * 5.0 + comments * 6.0 + source_count * 0.35)
+                      / POWER(age_hours + 2.0, 0.72) DESC
+                    ) AS current_rank,
+                    ROW_NUMBER() OVER (
+                      ORDER BY
+                      (views * 3.0 + saves * 8.0 + likes * 5.0 + comments * 6.0 + source_count * 0.35)
+                      / POWER(GREATEST(age_hours - 24.0, 2.0) + 2.0, 0.72) DESC
+                    ) AS previous_rank
+                  FROM metrics
+                )
+                SELECT * FROM ranked
+                ORDER BY current_rank
+                LIMIT %s
+                """,
+                (max(trending_limit * 3, trending_limit),),
+            )
+            trending: list[dict[str, Any]] = []
+            for row in cur.fetchall():
+                trend_metrics = {
+                    "views": int(row.get("views") or 0),
+                    "saves": int(row.get("saves") or 0),
+                    "likes": int(row.get("likes") or 0),
+                    "comments": int(row.get("comments") or 0),
+                    "score": round(float(row.get("trend_score") or 0), 3),
+                    "currentRank": int(row.get("current_rank") or 0),
+                    "previousRank": int(row.get("previous_rank") or 0),
+                }
+                decoded = _decode_feed_article(row, trend_metrics=trend_metrics)
+                if article_is_blocked(decoded).blocked:
+                    continue
+                trending.append(decoded)
+                if len(trending) >= trending_limit:
+                    break
+
+            sections: dict[str, list[dict[str, Any]]] = {}
+            for slug in FEED_SECTION_SLUGS:
+                keywords = _SECTION_KEYWORDS.get(slug, [])
+                if not keywords:
+                    sections[slug] = latest[:section_limit]
+                    continue
+                keyword_conditions = " OR ".join(["prompt ILIKE %s OR headline ILIKE %s"] * len(keywords))
+                keyword_params = [val for kw in keywords for val in (f"%{kw}%", f"%{kw}%")]
+                cur.execute(
+                    f"""
+                    SELECT {_GENERATED_FEED_COLUMNS}
+                    FROM generated_articles
+                    WHERE section = %s
+                       OR (COALESCE(section, '') = '' AND ({keyword_conditions}))
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                    """,
+                    [slug, *keyword_params, max(section_limit * 3, section_limit)],
+                )
+                sections[slug] = _filter_feed_articles(
+                    [_decode_feed_article(row) for row in cur.fetchall()],
+                    section_limit,
+                )
+
+            topics = _fetch_trending_topics(cur, topics_limit)
+
+    return {
+        "latest": latest,
+        "stories": stories,
+        "trending": trending,
+        "sections": sections,
+        "trendingTopics": topics,
+    }

@@ -37,6 +37,24 @@ function removeStoredEntry(path) {
   }
 }
 
+function seedBootstrapCaches(payload, expiresAt) {
+  if (!payload || typeof payload !== "object") return;
+  const entries = {
+    "/generated-articles": payload.latest,
+    "/stories": payload.stories,
+    "/news/trending?limit=18": payload.trending,
+    "/news/trending-topics?limit=10": payload.trendingTopics,
+  };
+  for (const [slug, articles] of Object.entries(payload.sections || {})) {
+    entries[`/news/${slug}?limit=18`] = articles;
+  }
+  for (const [path, value] of Object.entries(entries)) {
+    if (value === undefined) continue;
+    getCache.set(path, { value, expiresAt });
+    writeStoredEntry(path, value, expiresAt);
+  }
+}
+
 export async function apiGet(path) {
   if (!API_BASE) throw new Error("API is not configured for this build.");
   await ensureAwake(path);
@@ -60,8 +78,10 @@ export async function apiGetCached(path, { ttlMs = 5 * 60 * 1000 } = {}) {
 
   const promise = apiGet(path)
     .then((value) => {
-      getCache.set(path, { value, expiresAt: Date.now() + ttlMs });
-      writeStoredEntry(path, value, Date.now() + ttlMs);
+      const expiresAt = Date.now() + ttlMs;
+      getCache.set(path, { value, expiresAt });
+      writeStoredEntry(path, value, expiresAt);
+      if (path.startsWith("/feeds/bootstrap")) seedBootstrapCaches(value, expiresAt);
       return value;
     })
     .catch((error) => {
@@ -83,8 +103,10 @@ export async function apiGetCached(path, { ttlMs = 5 * 60 * 1000 } = {}) {
  */
 export async function apiGetFresh(path, { ttlMs = 5 * 60 * 1000 } = {}) {
   const value = await apiGet(path);
-  getCache.set(path, { value, expiresAt: Date.now() + ttlMs });
-  writeStoredEntry(path, value, Date.now() + ttlMs);
+  const expiresAt = Date.now() + ttlMs;
+  getCache.set(path, { value, expiresAt });
+  writeStoredEntry(path, value, expiresAt);
+  if (path.startsWith("/feeds/bootstrap")) seedBootstrapCaches(value, expiresAt);
   return value;
 }
 
@@ -108,27 +130,17 @@ export function invalidateApiCache(prefix = "") {
   }
 }
 
-const PRELOAD_PATHS = [
-  "/generated-articles",
-  "/stories",
-  "/news/trending?limit=18",
-  "/news/trending-topics?limit=10",
-  "/news/world?limit=18",
-  "/news/politics?limit=18",
-  "/news/markets?limit=18",
-  "/news/technology?limit=18",
-  "/news/climate?limit=18",
-];
+const BOOTSTRAP_PATH = "/feeds/bootstrap?latest_limit=25&story_limit=20&trending_limit=18&section_limit=18&topics_limit=10";
 
 /**
  * Wake the backend (it sleeps after inactivity) and warm every reader-facing
- * feed so navigating to Latest, Trending, Saved, and section pages is instant.
+ * feed in a single bootstrap request.
  */
 export function preloadSignalFeeds({ userId = null } = {}) {
   if (!API_BASE) return Promise.resolve([]);
-  const paths = [...PRELOAD_PATHS];
-  if (userId) paths.push(`/users/${userId}/saved`);
-  return Promise.allSettled(paths.map((path) => apiGetCached(path, { ttlMs: 5 * 60 * 1000 })));
+  const tasks = [apiGetCached(BOOTSTRAP_PATH, { ttlMs: 5 * 60 * 1000 })];
+  if (userId) tasks.push(apiGetCached(`/users/${userId}/saved`, { ttlMs: 5 * 60 * 1000 }));
+  return Promise.allSettled(tasks);
 }
 
 export async function apiPost(path, payload) {
@@ -159,9 +171,9 @@ export async function getArticleProgress() {
 
 async function wakeApi() {
   if (!API_BASE) return;
-  const attempts = Number(import.meta.env.VITE_SIGNAL_WAKE_ATTEMPTS || 8);
-  const timeoutMs = Number(import.meta.env.VITE_SIGNAL_WAKE_TIMEOUT_MS || 12000);
-  const delayMs = Number(import.meta.env.VITE_SIGNAL_WAKE_DELAY_MS || 3500);
+  const attempts = Number(import.meta.env.VITE_SIGNAL_WAKE_ATTEMPTS || 6);
+  const timeoutMs = Number(import.meta.env.VITE_SIGNAL_WAKE_TIMEOUT_MS || 10000);
+  const delayMs = Number(import.meta.env.VITE_SIGNAL_WAKE_DELAY_MS || 2000);
   let lastError = null;
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {

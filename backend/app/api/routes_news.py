@@ -5,6 +5,8 @@ import re
 
 from fastapi import APIRouter, BackgroundTasks
 
+from app import cache
+from app.config import settings
 from app.db import queries
 from app.db.connection import get_connection
 from app.processing.article_writer import write_article_from_prompt
@@ -112,85 +114,21 @@ def refresh_section(section: str, background_tasks: BackgroundTasks):
 
 @router.get("/news/trending-topics")
 def trending_topics(limit: int = 12):
-    """
-    Return trending topics. Primary source: entity co-occurrence across recent articles.
-    Fallback 1: story cluster titles with source counts.
-    Fallback 2: top articles ordered by recency/source.
-    """
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            # Primary: named entities mentioned by 2+ articles in last 72h
-            cur.execute(
-                """
-                SELECT entity_text, entity_type, COUNT(*) AS mentions
-                FROM entities
-                WHERE created_at > NOW() - INTERVAL '72 hours'
-                  AND LENGTH(entity_text) > 2
-                GROUP BY entity_text, entity_type
-                HAVING COUNT(*) >= 2
-                ORDER BY mentions DESC
-                LIMIT %s
-                """,
-                (limit,),
-            )
-            rows = cur.fetchall()
-            if rows:
-                return [queries.row_to_dict(r) for r in rows]
-
-            # Fallback 1: entity mentions regardless of threshold
-            cur.execute(
-                """
-                SELECT entity_text, entity_type, COUNT(*) AS mentions
-                FROM entities
-                WHERE created_at > NOW() - INTERVAL '72 hours'
-                  AND LENGTH(entity_text) > 3
-                GROUP BY entity_text, entity_type
-                ORDER BY mentions DESC
-                LIMIT %s
-                """,
-                (limit,),
-            )
-            rows = cur.fetchall()
-            if rows:
-                return [queries.row_to_dict(r) for r in rows]
-
-            # Fallback 2: story clusters with member counts
-            cur.execute(
-                """
-                SELECT sc.topic_label AS entity_text,
-                       'topic'::text  AS entity_type,
-                       COUNT(sca.article_id) AS mentions
-                FROM story_clusters sc
-                JOIN story_cluster_articles sca ON sca.story_cluster_id = sc.id
-                GROUP BY sc.id, sc.topic_label
-                ORDER BY mentions DESC
-                LIMIT %s
-                """,
-                (limit,),
-            )
-            rows = cur.fetchall()
-            if rows:
-                return [queries.row_to_dict(r) for r in rows]
-
-            # Fallback 3: most recent article titles as topics
-            cur.execute(
-                """
-                SELECT title AS entity_text,
-                       source_name AS entity_type,
-                       1 AS mentions
-                FROM articles
-                WHERE status = 'processed'
-                ORDER BY created_at DESC
-                LIMIT %s
-                """,
-                (limit,),
-            )
-            return [queries.row_to_dict(r) for r in cur.fetchall()]
+    return cache.get_or_set(
+        f"trending-topics:{limit}",
+        float(max(15, settings.feed_cache_ttl_seconds)),
+        lambda: queries.list_trending_topics(limit=min(max(limit, 1), 30)),
+    )
 
 
 @router.get("/news/trending")
 def trending_articles(limit: int = 18):
-    return queries.list_trending_generated_articles(limit=limit)
+    safe_limit = min(max(limit, 1), 50)
+    return cache.get_or_set(
+        f"trending:{safe_limit}",
+        float(max(15, settings.feed_cache_ttl_seconds)),
+        lambda: queries.list_trending_generated_articles(limit=safe_limit),
+    )
 
 
 @router.post("/ingest/rss")

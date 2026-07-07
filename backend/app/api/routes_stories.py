@@ -9,18 +9,18 @@ router = APIRouter()
 
 
 @router.get("/stories")
-def stories():
-    return queries.list_stories()
+def stories(limit: int = 30):
+    return queries.list_stories(limit=min(max(limit, 1), 100))
 
 
 @router.get("/stories/latest")
 def latest_stories():
-    return queries.list_stories()[:10]
+    return queries.list_stories(limit=10)
 
 
 @router.get("/stories/trending")
 def trending_stories():
-    return sorted(queries.list_stories(), key=lambda story: story["article_count"], reverse=True)[:10]
+    return sorted(queries.list_stories(limit=30), key=lambda story: story["article_count"], reverse=True)[:10]
 
 
 @router.get("/stories/{story_id}")

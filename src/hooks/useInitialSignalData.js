@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { apiGetCached, apiGetFresh, hasApiBase, preloadSignalFeeds } from "../api/client.js";
 import { dedupeStories, normalizeBackendStory, normalizeCommandArticle } from "../utils/articleNormalize.js";
 
+const BOOTSTRAP_PATH = "/feeds/bootstrap?latest_limit=25&story_limit=20&trending_limit=18&section_limit=18&topics_limit=10";
 const LATEST_REFRESH_MS = 60 * 1000;
 
 export function useInitialSignalData({
@@ -23,37 +24,32 @@ export function useInitialSignalData({
     let cancelled = false;
     const linkedArticleId = new URLSearchParams(window.location.search).get("article");
 
-    // Wake the backend and warm every reader feed (latest, trending, saved,
-    // and all sections) as soon as the app opens. Results land in the local
-    // cache, so screens render instantly afterwards.
+    // Wake the backend and warm every reader feed in one bootstrap request.
     preloadSignalFeeds({ userId: account?.id || null }).catch(() => {});
 
     Promise.allSettled([
-      apiGetCached("/generated-articles", { ttlMs: 5 * 60 * 1000 }),
-      apiGetCached("/stories", { ttlMs: 5 * 60 * 1000 }),
-      linkedArticleId ? apiGetCached(`/generated-articles/${encodeURIComponent(linkedArticleId)}`, { ttlMs: 5 * 60 * 1000 }) : Promise.resolve(null),
-      apiGetCached("/news/trending-topics?limit=10", { ttlMs: 5 * 60 * 1000 }),
+      hasApiBase()
+        ? apiGetCached(BOOTSTRAP_PATH, { ttlMs: 5 * 60 * 1000 })
+        : Promise.resolve(null),
+      linkedArticleId && hasApiBase()
+        ? apiGetCached(`/generated-articles/${encodeURIComponent(linkedArticleId)}`, { ttlMs: 5 * 60 * 1000 })
+        : Promise.resolve(null),
       fetch(`/generated-articles.json?ts=${Date.now()}`).then((response) => (response.ok ? response.json() : [])),
     ])
-      .then(([generatedResult, storiesResult, linkedResult, topicsResult, staticResult]) => {
+      .then(([bootstrapResult, linkedResult, staticResult]) => {
         if (cancelled) return;
-        const generated = generatedResult.status === "fulfilled" && Array.isArray(generatedResult.value)
-          ? generatedResult.value
-          : [];
-        const stories = storiesResult.status === "fulfilled" && Array.isArray(storiesResult.value)
-          ? storiesResult.value
-          : [];
+        const bootstrap = bootstrapResult.status === "fulfilled" ? bootstrapResult.value : null;
+        const generated = Array.isArray(bootstrap?.latest) ? bootstrap.latest : [];
+        const stories = Array.isArray(bootstrap?.stories) ? bootstrap.stories : [];
+        const topics = Array.isArray(bootstrap?.trendingTopics) ? bootstrap.trendingTopics : [];
         const staticArticles = staticResult.status === "fulfilled" && Array.isArray(staticResult.value)
           ? staticResult.value
           : [];
-        const topics = topicsResult.status === "fulfilled" && Array.isArray(topicsResult.value)
-          ? topicsResult.value
-          : [];
+
         setCommandArticles(dedupeStories(generated.length ? generated : staticArticles));
         setBackendStories(dedupeStories(stories.map(normalizeBackendStory)));
         setTrendingTopics(topics);
-        setApiStatus(generatedResult.status === "fulfilled" || storiesResult.status === "fulfilled" ? "online" : "offline");
-        setFeedsLoading(false);
+        setApiStatus(bootstrapResult.status === "fulfilled" ? "online" : "offline");
 
         const linkedFromApi = linkedResult.status === "fulfilled" && linkedResult.value ? linkedResult.value : null;
         const linkedFromStatic = linkedArticleId
@@ -74,30 +70,32 @@ export function useInitialSignalData({
           setCommandArticles([]);
           setBackendStories([]);
           setApiStatus("offline");
-          setFeedsLoading(false);
         }
+      })
+      .finally(() => {
+        if (!cancelled) setFeedsLoading(false);
       });
+
     return () => {
       cancelled = true;
     };
   }, []);
 
-  // Keep Latest current: pull the newest written articles every minute and
-  // fold them into the cached feed.
+  // Keep Latest current: refresh the bootstrap bundle every minute.
   useEffect(() => {
     if (!hasApiBase()) return undefined;
     const timer = window.setInterval(() => {
-      apiGetFresh("/generated-articles")
-        .then((generated) => {
-          if (Array.isArray(generated) && generated.length) {
-            setCommandArticles(dedupeStories(generated));
+      apiGetFresh(BOOTSTRAP_PATH, { ttlMs: 5 * 60 * 1000 })
+        .then((bootstrap) => {
+          if (!bootstrap || typeof bootstrap !== "object") return;
+          if (Array.isArray(bootstrap.latest) && bootstrap.latest.length) {
+            setCommandArticles(dedupeStories(bootstrap.latest));
           }
-        })
-        .catch(() => {});
-      apiGetFresh("/stories")
-        .then((stories) => {
-          if (Array.isArray(stories)) {
-            setBackendStories(dedupeStories(stories.map(normalizeBackendStory)));
+          if (Array.isArray(bootstrap.stories)) {
+            setBackendStories(dedupeStories(bootstrap.stories.map(normalizeBackendStory)));
+          }
+          if (Array.isArray(bootstrap.trendingTopics)) {
+            setTrendingTopics(bootstrap.trendingTopics);
           }
         })
         .catch(() => {});
