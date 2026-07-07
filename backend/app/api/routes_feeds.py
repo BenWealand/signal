@@ -15,12 +15,12 @@ def _cache_ttl() -> float:
 
 @router.get("/feeds/bootstrap")
 def feeds_bootstrap(
+    response: Response,
     latest_limit: int = 25,
     story_limit: int = 20,
     trending_limit: int = 18,
     section_limit: int = 18,
     topics_limit: int = 10,
-    response: Response,
 ):
     cache_key = (
         f"bootstrap:{latest_limit}:{story_limit}:{trending_limit}:"
@@ -37,6 +37,5 @@ def feeds_bootstrap(
             topics_limit=min(max(topics_limit, 1), 30),
         ),
     )
-    if response is not None:
-        response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=300"
+    response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=300"
     return payload
