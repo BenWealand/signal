@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -16,7 +17,7 @@ def source(url: str, title: str, text: str, *, name: str = "Outlet") -> dict:
         "domain": url.split("/")[2],
         "title": title,
         "url": url,
-        "published_at": "2026-05-29T12:00:00Z",
+        "published_at": datetime.now(timezone.utc).isoformat(),
         "description": text[:200],
         "raw_text": text,
         "topic": "senate budget vote",
