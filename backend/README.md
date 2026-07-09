@@ -228,7 +228,7 @@ Prompt article responses include source-transparency metadata:
 - `source_quality`: usable source count, domain diversity, text-length gates, recency requirements, ranking/rejection details when available.
 - `consensus_level`: `none`, `limited`, `moderate`, `strong`, or `conflicting`.
 - `used_live_sources`: whether live RSS/GDELT/API candidates were used.
-- `fallback_reason`: present when the writer returns a transparent fallback article.
+- `fallback_reason`: legacy metadata on older generated articles. New prompt/section generation does not save fallback articles.
 - `scoreMetadata`: explains that legacy `fairnessScore` and `accuracyScore` are heuristic estimates, not audited ratings.
 
 The frontend currently sends `mode: "fast"` for prompt writes.
@@ -264,8 +264,8 @@ Signal is wired to spend money late:
 6. Extract claims with local rules by default.
 7. Optionally enable LLM claim extraction with `USE_LLM_CLAIMS=true`.
 8. Compare claims locally first.
-9. Use Gemini only for final prose when configured.
-10. Fall back to rule-based prose when Gemini is unavailable.
+9. Use Gemini for final prose.
+10. Fail the write without saving an article when Gemini cannot produce a usable draft.
 
 ## Tests
 
@@ -274,7 +274,7 @@ cd backend
 python -m unittest discover tests
 ```
 
-The existing test suite covers agent access, article parsing, source ranking/filtering, prompt article metadata/fallbacks, claim extraction, text cleaning, and consensus grouping.
+The existing test suite covers agent access, article parsing, source ranking/filtering, prompt article metadata, Gemini-only prompt writes, claim extraction, text cleaning, and consensus grouping.
 
 ## Troubleshooting
 
@@ -288,11 +288,11 @@ The API started, but startup table creation failed. Check backend logs and datab
 
 Article generation finds too few sources
 
-Try a more specific prompt, add optional provider keys, or wait for RSS/GDELT availability. The writer saves fallback articles when source coverage is not strong enough.
+Try a more specific prompt, add optional provider keys, or wait for RSS/GDELT availability. The writer now fails without saving an article when source coverage is not strong enough for a Gemini draft.
 
 Gemini does not write articles
 
-Check `GEMINI_API_KEY`, `GEMINI_MODEL`, `/articles/test-gemini`, and rate limits. The fallback writer is expected to run when Gemini fails.
+Check `GEMINI_API_KEY`, `GEMINI_MODEL`, `/articles/test-gemini`, and rate limits. Prompt and section article generation now require a usable Gemini draft.
 
 ML packages are slow or fail to install
 

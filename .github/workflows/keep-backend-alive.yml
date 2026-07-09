@@ -12,9 +12,16 @@ jobs:
       - name: Ping Signal API health
         env:
           SIGNAL_API_URL: ${{ secrets.SIGNAL_API_URL }}
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          RENDER_BACKEND_URL: ${{ secrets.RENDER_BACKEND_URL }}
         run: |
-          if [ -z "$SIGNAL_API_URL" ]; then
-            echo "SIGNAL_API_URL secret is not configured; skipping keep-alive ping."
-            exit 0
+          TARGET_URL="${SIGNAL_API_URL:-${BACKEND_URL:-${RENDER_BACKEND_URL:-}}}"
+          if [ -z "$TARGET_URL" ]; then
+            echo "Set one GitHub repository secret: SIGNAL_API_URL, BACKEND_URL, or RENDER_BACKEND_URL."
+            exit 1
           fi
-          curl -fsS --max-time 30 "${SIGNAL_API_URL%/}/health"
+          if ! echo "$TARGET_URL" | grep -Eq '^https?://'; then
+            echo "Backend URL must include https:// or http://"
+            exit 1
+          fi
+          curl -fsS --max-time 45 --retry 2 --retry-delay 10 "${TARGET_URL%/}/health"

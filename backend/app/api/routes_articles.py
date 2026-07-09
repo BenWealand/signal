@@ -13,7 +13,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request
 from app.db import queries
 from app.config import settings
 from app.policy.prompt_filter import prompt_is_blocked
-from app.processing.article_writer import write_article_from_prompt, get_build_progress
+from app.processing.article_writer import GeminiArticleUnavailable, write_article_from_prompt, get_build_progress
 
 
 router = APIRouter()
@@ -146,6 +146,19 @@ def _reject_blocked_prompt(prompt: str) -> None:
                 "source": match.source,
             },
         )
+
+
+def _write_gemini_article(prompt: str, *, limit: int, mode: str, build_id: str) -> dict:
+    try:
+        return write_article_from_prompt(prompt, limit=limit, mode=mode, build_id=build_id)
+    except GeminiArticleUnavailable as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "gemini_article_unavailable",
+                "message": str(exc) or "Gemini could not write an article from the available sources.",
+            },
+        ) from exc
 
 
 def _prompt_from_x_payload(payload: XTrendArticleRequest) -> str:
@@ -326,7 +339,7 @@ def generate_from_trend(
     _check_article_rate_limit(_client_rate_key(request, "generate-from-trend"))
     _reject_blocked_prompt(payload.prompt)
     build_id = f"build-{uuid.uuid4().hex}"
-    article = write_article_from_prompt(payload.prompt, limit=payload.limit, mode=payload.mode, build_id=build_id)
+    article = _write_gemini_article(payload.prompt, limit=payload.limit, mode=payload.mode, build_id=build_id)
     article["buildId"] = build_id
     article["source"] = payload.source
     article["trendUrl"] = payload.trend_url
@@ -348,7 +361,7 @@ def generate_x_article_reply(
     prompt = _prompt_from_x_payload(payload)
     _reject_blocked_prompt(prompt)
     build_id = f"build-{uuid.uuid4().hex}"
-    article = write_article_from_prompt(prompt, limit=payload.limit, mode=payload.mode, build_id=build_id)
+    article = _write_gemini_article(prompt, limit=payload.limit, mode=payload.mode, build_id=build_id)
     article["buildId"] = build_id
     article["source"] = payload.source
     article["trendUrl"] = payload.trend_url
@@ -370,7 +383,7 @@ def write_article(request: Request, payload: TrendArticleRequest):
     _check_article_rate_limit(_client_rate_key(request, "write"))
     _reject_blocked_prompt(payload.prompt)
     build_id = f"build-{uuid.uuid4().hex}"
-    article = write_article_from_prompt(payload.prompt, limit=payload.limit, mode=payload.mode, build_id=build_id)
+    article = _write_gemini_article(payload.prompt, limit=payload.limit, mode=payload.mode, build_id=build_id)
     article["buildId"] = build_id
     article["ownerUserId"] = payload.user_id
     queries.save_generated_article(article)

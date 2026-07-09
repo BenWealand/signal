@@ -76,6 +76,10 @@ from app.llm.claim_extractor import extract_claims
 THOROUGH_SOURCE_GATE = SourceGate(min_sources=4, min_domains=3, min_text_chars=300, max_current_age_days=14)
 
 
+class GeminiArticleUnavailable(RuntimeError):
+    """Raised when an article cannot be written by Gemini."""
+
+
 # ── Language / relevance helpers ──────────────────────────────────────────────
 
 _STOPWORDS = frozenset({
@@ -502,6 +506,7 @@ def _article_body(
     supported: list[dict],
     unique_claims: list[dict],
     use_gemini: bool = True,
+    require_gemini: bool = False,
 ) -> list[str]:
     """
     Try Gemini first for a polished, grammar-correct article.
@@ -518,6 +523,9 @@ def _article_body(
             paragraphs = [p.strip() for p in gemini_text.split("\n") if len(p.strip()) > 60]
         if len(paragraphs) >= 2:
             return paragraphs
+
+    if require_gemini:
+        raise GeminiArticleUnavailable("Gemini did not return a usable article draft")
 
     # ── Rule-based fallback ───────────────────────────────────────────────────
     prompt_kw = _prompt_keywords(prompt)
@@ -631,6 +639,7 @@ def _article_from_consensus(
     source_quality: dict | None = None,
     used_live_sources: bool = True,
     fallback_reason: str | None = None,
+    require_gemini: bool = False,
 ) -> dict:
     supported = [c for c in consensus if c["status"] == "supported"]
     unique = [c for c in consensus if c["status"] in ("unique", "uncertain")]
@@ -645,7 +654,14 @@ def _article_from_consensus(
         headline if headline.endswith("— Signal Coverage") is False
         else f"Signal tracked {source_count} public sources for: {prompt}."
     )
-    body = _article_body(prompt, source_articles, supported, unique, use_gemini=use_gemini)
+    body = _article_body(
+        prompt,
+        source_articles,
+        supported,
+        unique,
+        use_gemini=use_gemini or require_gemini,
+        require_gemini=require_gemini,
+    )
     if use_gemini and body:
         try:
             from app.llm.gemini_writer import write_article_header_with_gemini
@@ -794,20 +810,7 @@ def _fast_article_from_prompt(prompt: str, limit: int = 8, use_gemini: bool = Tr
 
     if not candidates:
         _set_progress(build_id, active=False, stage="idle", stage_label="No sources found")
-        from app.llm.trend_article import build_trend_article
-        fallback = build_trend_article(prompt=prompt, source="Signal desk", tag="prompt")
-        fallback["buildId"] = build_id
-        fallback["summary"] = (
-            f"Signal searched public source indexes for '{prompt}' but no accessible "
-            "articles were found. Try a slightly different search."
-        )
-        fallback["generation_mode"] = "fast"
-        fallback["source_quality"] = evaluate_source_quality([], prompt, gate=THOROUGH_SOURCE_GATE)
-        fallback["consensus_level"] = "none"
-        fallback["used_live_sources"] = False
-        fallback["fallback_reason"] = "no_accessible_sources"
-        queries.save_generated_article(fallback)
-        return fallback
+        raise GeminiArticleUnavailable("No accessible sources were found for a Gemini draft")
 
     candidates.sort(key=lambda a: len(a.get("raw_text", "") or a.get("description", "")), reverse=True)
     for candidate in candidates:
@@ -828,11 +831,11 @@ def _fast_article_from_prompt(prompt: str, limit: int = 8, use_gemini: bool = Tr
         prompt,
         candidates,
         consensus,
-        use_gemini=use_gemini,
+        use_gemini=True,
         generation_mode="fast",
         source_quality=source_quality,
         used_live_sources=bool(rss_candidates or gdelt_candidates),
-        fallback_reason="snippet_only_fast_mode" if source_quality.get("level") == "limited" else None,
+        require_gemini=True,
     )
     article["buildId"] = build_id
     article["tag"] = "fast-draft"
@@ -859,6 +862,7 @@ def write_article_from_prompt(prompt: str, limit: int = 50, use_gemini: bool = T
     The DB cache supplements if live sources are sparse.
     """
     build_id = build_id or f"build-{uuid.uuid4().hex}"
+    use_gemini = True
     if mode == "fast":
         return _fast_article_from_prompt(prompt, limit=limit, use_gemini=use_gemini, build_id=build_id)
 
@@ -924,21 +928,7 @@ def write_article_from_prompt(prompt: str, limit: int = 50, use_gemini: bool = T
 
     if not all_candidates:
         _set_progress(build_id, active=False, stage="idle", stage_label="No sources found")
-        from app.llm.trend_article import build_trend_article
-        fallback = build_trend_article(prompt=prompt, source="Signal desk", tag="prompt")
-        fallback["buildId"] = build_id
-        fallback["summary"] = (
-            f"Signal searched public source indexes for '{prompt}' but no accessible "
-            "articles were found. Try a slightly different search."
-        )
-        fallback["generation_mode"] = "thorough"
-        fallback["source_quality"] = evaluate_source_quality([], prompt, gate=THOROUGH_SOURCE_GATE)
-        fallback["source_quality"]["ranking"] = ranked_source_meta if "ranked_source_meta" in locals() else live_source_meta
-        fallback["consensus_level"] = "none"
-        fallback["used_live_sources"] = bool(rss_candidates or gdelt_candidates)
-        fallback["fallback_reason"] = "no_accessible_sources"
-        queries.save_generated_article(fallback)
-        return fallback
+        raise GeminiArticleUnavailable("No accessible sources were found for a Gemini draft")
 
     # Step 3: quality gate - require enough usable, diverse, fresh source text.
     source_quality = evaluate_source_quality(all_candidates, prompt, gate=THOROUGH_SOURCE_GATE)
@@ -949,29 +939,7 @@ def write_article_from_prompt(prompt: str, limit: int = 50, use_gemini: bool = T
     ]
     if source_quality["failed_gates"]:
         _set_progress(build_id, active=False, stage="idle", stage_label="Too few sources found")
-        from app.llm.trend_article import build_trend_article
-        fallback = build_trend_article(prompt=prompt, source="Signal desk", tag="prompt")
-        fallback["buildId"] = build_id
-        fallback["summary"] = (
-            f"Signal found {source_quality['usable_source_count']} usable source"
-            f"{'s' if source_quality['usable_source_count'] != 1 else ''} across "
-            f"{source_quality['domain_count']} domain"
-            f"{'s' if source_quality['domain_count'] != 1 else ''} for '{prompt}', "
-            "below the quality gate for a full consensus article."
-        )
-        fallback["body"] = [
-            f"Signal searched Bing News, The Guardian, NewsAPI, GNews, and Currents for '{prompt}' "
-            f"but the source set failed these gates: {', '.join(source_quality['failed_gates'])}.",
-            "For best results, try a more specific topic (e.g. 'Mike Tomlin NBC debut' instead of "
-            "'mike tomlin') or a topic covered by major wire services like AP, Reuters, or BBC.",
-        ]
-        fallback["generation_mode"] = "thorough"
-        fallback["source_quality"] = source_quality
-        fallback["consensus_level"] = "none"
-        fallback["used_live_sources"] = bool(rss_candidates or gdelt_candidates)
-        fallback["fallback_reason"] = "quality_gate_failed"
-        queries.save_generated_article(fallback)
-        return fallback
+        raise GeminiArticleUnavailable("Source coverage did not meet the quality gate for a Gemini article")
     _set_progress(
         build_id,
         stage="processing",
@@ -988,19 +956,7 @@ def write_article_from_prompt(prompt: str, limit: int = 50, use_gemini: bool = T
 
     if not processed:
         _set_progress(build_id, active=False, stage="idle", stage_label="Processing failed")
-        from app.llm.trend_article import build_trend_article
-        fallback = build_trend_article(
-            prompt=prompt, source="Signal desk", tag="prompt",
-            source_articles=all_candidates,
-        )
-        fallback["buildId"] = build_id
-        fallback["generation_mode"] = "thorough"
-        fallback["source_quality"] = source_quality
-        fallback["consensus_level"] = "none"
-        fallback["used_live_sources"] = bool(rss_candidates or gdelt_candidates)
-        fallback["fallback_reason"] = "processing_failed"
-        queries.save_generated_article(fallback)
-        return fallback
+        raise GeminiArticleUnavailable("Source processing failed before Gemini could write an article")
 
     # ── Step 4: cluster → consensus → synthesise ─────────────────────────────
     cluster_id = queries.create_cluster(prompt, [int(a["id"]) for a in processed])
@@ -1031,6 +987,7 @@ def write_article_from_prompt(prompt: str, limit: int = 50, use_gemini: bool = T
         generation_mode="thorough",
         source_quality=source_quality,
         used_live_sources=bool(rss_candidates or gdelt_candidates),
+        require_gemini=True,
     )
     article["buildId"] = build_id
     queries.save_generated_article(article)
