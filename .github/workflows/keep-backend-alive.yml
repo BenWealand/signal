@@ -24,4 +24,34 @@ jobs:
             echo "Backend URL must include https:// or http://"
             exit 1
           fi
-          curl -fsS --max-time 45 --retry 2 --retry-delay 10 "${TARGET_URL%/}/health"
+
+          BASE_URL="${TARGET_URL%/}"
+          WAKE_URL="$BASE_URL/awake"
+          HEALTH_URL="$BASE_URL/health"
+          echo "Pinging backend wake endpoint: $WAKE_URL"
+
+          success=0
+          for attempt in 1 2 3 4 5 6; do
+            echo "Wake attempt $attempt at $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+            http_code=$(curl -L -sS -o wake-response.json -w "%{http_code}" --connect-timeout 10 --max-time 25 "$WAKE_URL")
+            curl_exit=$?
+            if [ "$curl_exit" -eq 0 ] && [ "$http_code" -ge 200 ] && [ "$http_code" -lt 300 ]; then
+              echo "Wake succeeded with HTTP $http_code"
+              cat wake-response.json
+              success=1
+              break
+            fi
+            echo "Wake failed: curl_exit=$curl_exit http_code=$http_code"
+            if [ -f wake-response.json ]; then
+              cat wake-response.json
+            fi
+            sleep 10
+          done
+
+          if [ "$success" -ne 1 ]; then
+            echo "Backend did not respond to /awake after multiple attempts."
+            exit 1
+          fi
+
+          echo "Checking health endpoint: $HEALTH_URL"
+          curl -L -fsS --connect-timeout 10 --max-time 60 "$HEALTH_URL"

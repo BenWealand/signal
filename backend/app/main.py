@@ -196,3 +196,8 @@ def health():
         },
         "rss_feed_count": len(ALL_FEEDS),
     }
+
+
+@app.get("/awake")
+def awake():
+    return {"ok": True, "service": "signal-api"}
