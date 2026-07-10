@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { supabase } from "./lib/supabase.js";
 import { apiGet, apiPost, apiPostAfterWake, hasApiBase, isAuthenticated, subscribeWakeState } from "./api/client.js";
@@ -81,6 +81,7 @@ function App() {
   const [typedSuggestion, setTypedSuggestion] = useState("");
   const [articleSocial, setArticleSocial] = useState({ likeCount: 0, liked: false, comments: [] });
   const [notifications, setNotifications] = useState([]);
+  const toastTimerRef = useRef(0);
 
   useEffect(() => {
     const unsubscribeWake = subscribeWakeState(setWakeState);
@@ -226,20 +227,27 @@ function App() {
       });
   };
 
-  const showToast = (message) => {
+  const showToast = (message, durationMs = 2400) => {
     setToast(message);
-    window.setTimeout(() => setToast(""), 2400);
+    // Cancel the previous toast timer so an earlier short-lived toast cannot
+    // dismiss a later message (e.g. a write-failure explanation) early.
+    window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => setToast(""), durationMs);
   };
 
   const handleArticleWriteFailure = (failedPrompt, error) => {
     if (error?.status === 422 && String(error.detail || error.message || "").toLowerCase().includes("blocked")) {
+      // Clear the draft along with the phase; leaving draftPrompt set while
+      // phase is "idle" matches no screen and renders an empty page.
       setExternalDraft(null);
+      setDraftPrompt("");
       setPhase("idle");
-      showToast("That prompt is blocked by the Signal prompt filter.");
+      showToast("That prompt is blocked by the Signal prompt filter.", 6000);
       return;
     }
     if (hasApiBase()) {
       setExternalDraft(null);
+      setDraftPrompt("");
       setPhase("idle");
       const rawMessage = String(error?.detail || error?.message || "");
       const message = rawMessage.includes("gemini_article_unavailable")
@@ -247,7 +255,7 @@ function App() {
         || rawMessage.toLowerCase().includes("source")
         ? "Could not generate from enough reliable sources. Try a more specific prompt."
         : rawMessage || "The newsroom is still waking up. Wait a moment and try again.";
-      showToast(message);
+      showToast(message, 6000);
       return;
     }
     window.setTimeout(() => {
