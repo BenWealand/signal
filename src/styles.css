@@ -3797,26 +3797,52 @@ a.source-link-title:hover {
   .writing-screen.is-building,
   .writing-screen {
     min-height: auto;
-    padding: 1rem;
+    /* Cap the single grid column at the container width. Without minmax(0),
+       the stage-pip labels set an intrinsic width wider than the phone
+       viewport and the right side of the build screen gets clipped. */
+    grid-template-columns: minmax(0, 1fr);
+    padding: 1rem 0.85rem 1.5rem;
   }
 
   .build-progress-bar,
-  .build-stage {
+  .build-stage,
+  .build-terminal {
     width: 100%;
+    max-width: 100%;
+    min-width: 0;
   }
 
   .build-progress-bar {
     border-radius: 0.85rem;
-    padding: 0.9rem;
+    padding: 0.85rem 0.8rem 0.9rem;
+    margin-bottom: 0.75rem;
   }
 
   .build-progress-stages {
-    overflow-x: auto;
     padding-bottom: 0.35rem;
   }
 
   .build-stage-pip {
-    min-width: 4.6rem;
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .pip-label {
+    max-width: 100%;
+    overflow: hidden;
+    font-size: 0.54rem;
+    letter-spacing: 0.03em;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .build-stage-label {
+    font-size: 0.78rem;
+  }
+
+  .build-progress-stats {
+    gap: 0.35rem 0.65rem;
+    font-size: 0.72rem;
   }
 
   .build-stage {

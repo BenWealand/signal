@@ -82,7 +82,7 @@ Use the connection string for your own Supabase region/project.
 
 ```env
 PUBLIC_ARTICLE_BASE_URL=http://127.0.0.1:5175
-GEMINI_MODEL=gemini-2.0-flash
+GEMINI_MODEL=gemini-flash-latest
 CLAIM_MODEL=gpt-4o-mini
 SUMMARY_MODEL=gpt-4o-mini
 USE_LLM_CLAIMS=false

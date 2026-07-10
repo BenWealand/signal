@@ -48,6 +48,27 @@ test("section screen shows friendly empty state without backend jargon", async (
   await expect(page.getByText(/backend|fallback/i)).toHaveCount(0);
 });
 
+test("article build screen fits the mobile viewport", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.getByLabel("Build a sourced draft").fill("regional banks commercial property loans");
+  await page.getByRole("button", { name: "Write" }).click();
+  await expect(page.locator(".build-terminal")).toBeVisible();
+  const fits = await page.evaluate(() => {
+    const width = document.documentElement.clientWidth;
+    // The build screen can transition to the article reader while this runs;
+    // only elements still on screen are measured.
+    return [".build-progress-bar", ".build-progress-stages", ".build-stage", ".build-terminal"]
+      .map((selector) => document.querySelector(selector))
+      .filter(Boolean)
+      .every((el) => {
+        const box = el.getBoundingClientRect();
+        return box.left >= -1 && box.right <= width + 1;
+      });
+  });
+  expect(fits).toBe(true);
+});
+
 test("core screens avoid horizontal overflow on mobile", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");

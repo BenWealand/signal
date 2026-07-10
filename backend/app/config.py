@@ -40,7 +40,10 @@ class Settings:
     prompt_blacklist_regex: str = os.getenv("PROMPT_BLACKLIST_REGEX", "")
     claim_model: str = os.getenv("CLAIM_MODEL", "gpt-4o-mini")
     summary_model: str = os.getenv("SUMMARY_MODEL", "gpt-4o-mini")
-    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+    # "gemini-flash-latest" is a Google-maintained alias that always points at
+    # the current flash model, so writes keep working when pinned model ids
+    # (like the retired gemini-2.0-flash) are shut down.
+    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
     use_llm_claims: bool = os.getenv("USE_LLM_CLAIMS", "false").lower() == "true"
     auto_ingest_on_startup: bool = os.getenv("SIGNAL_AUTO_INGEST_ON_STARTUP", "false").lower() == "true"
     periodic_rss: bool = os.getenv("SIGNAL_PERIODIC_RSS", "false").lower() == "true"
