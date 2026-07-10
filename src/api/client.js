@@ -172,18 +172,21 @@ export async function getArticleProgress() {
 
 async function wakeApi() {
   if (!API_BASE) return;
-  const attempts = Number(import.meta.env.VITE_SIGNAL_WAKE_ATTEMPTS || 6);
-  const timeoutMs = Number(import.meta.env.VITE_SIGNAL_WAKE_TIMEOUT_MS || 10000);
-  const delayMs = Number(import.meta.env.VITE_SIGNAL_WAKE_DELAY_MS || 2000);
+  const attempts = Number(import.meta.env.VITE_SIGNAL_WAKE_ATTEMPTS || 8);
+  const timeoutMs = Number(import.meta.env.VITE_SIGNAL_WAKE_TIMEOUT_MS || 30000);
+  const delayMs = Number(import.meta.env.VITE_SIGNAL_WAKE_DELAY_MS || 5000);
   let lastError = null;
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const response = await fetch(`${API_BASE}/health`, { signal: controller.signal });
+      const response = await fetch(`${API_BASE}/awake`, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
       if (response.ok) return;
-      lastError = await apiError(response, "/health");
+      lastError = await apiError(response, "/awake");
     } catch (error) {
       lastError = error;
     } finally {
@@ -194,14 +197,14 @@ async function wakeApi() {
     }
   }
 
-  const error = new Error("The newsroom is still warming up — try again in a few seconds.");
+  const error = new Error("The newsroom is still waking up. Wait a moment and try again.");
   error.status = lastError?.status || 503;
   error.detail = error.message;
   throw error;
 }
 
 async function ensureAwake(path) {
-  if (!API_BASE || path === "/health") return;
+  if (!API_BASE || path === "/health" || path === "/awake") return;
   if (!wakePromise) {
     wakePromise = wakeApi().finally(() => {
       wakePromise = null;
