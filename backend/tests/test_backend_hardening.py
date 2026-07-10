@@ -245,7 +245,7 @@ class BackendHardeningTest(unittest.TestCase):
     def test_gemini_429_fallback_is_reachable(self):
         original_settings = gemini_writer.settings
         original_last_429 = gemini_writer._last_429_at
-        gemini_writer.settings = SimpleNamespace(gemini_api_key="key", gemini_model="gemini-2.0-flash")
+        gemini_writer.settings = SimpleNamespace(gemini_api_key="key", gemini_model="gemini-flash-latest")
         gemini_writer._last_429_at = 0.0
         gemini_writer._call_times.clear()
 
@@ -272,7 +272,66 @@ class BackendHardeningTest(unittest.TestCase):
 
         self.assertEqual(result, fallback_text.strip())
         self.assertEqual(len(calls), 2)
-        self.assertIn("gemini-1.5-flash-latest", calls[1])
+        self.assertIn("gemini-flash-lite-latest", calls[1])
+
+    def test_gemini_retired_model_is_remapped_to_maintained_alias(self):
+        original_settings = gemini_writer.settings
+        gemini_writer.settings = SimpleNamespace(gemini_api_key="key", gemini_model="gemini-2.0-flash")
+        gemini_writer._last_429_at = 0.0
+        gemini_writer._call_times.clear()
+
+        article_text = "Paragraph one has enough detail to pass validation. " * 4
+        calls = []
+
+        def fake_urlopen(_req, timeout=30):
+            calls.append(_req.full_url)
+            return _FakeResponse({"candidates": [{"content": {"parts": [{"text": article_text}]}}]})
+
+        try:
+            with patch.object(gemini_writer.urllib.request, "urlopen", side_effect=fake_urlopen):
+                result = gemini_writer.write_article_with_gemini(
+                    "test topic",
+                    [{"source_name": "Source", "title": "Title", "raw_text": "Source material. " * 80}],
+                )
+        finally:
+            gemini_writer.settings = original_settings
+            gemini_writer._call_times.clear()
+
+        self.assertEqual(result, article_text.strip())
+        self.assertEqual(len(calls), 1)
+        self.assertIn("gemini-flash-latest", calls[0])
+        self.assertNotIn("gemini-2.0-flash", calls[0])
+
+    def test_gemini_404_shutdown_falls_back_to_alias_model(self):
+        original_settings = gemini_writer.settings
+        gemini_writer.settings = SimpleNamespace(gemini_api_key="key", gemini_model="gemini-9.9-flash-custom")
+        gemini_writer._last_429_at = 0.0
+        gemini_writer._call_times.clear()
+
+        article_text = "Paragraph one has enough detail to pass validation. " * 4
+        calls = []
+
+        def fake_urlopen(_req, timeout=30):
+            calls.append(_req.full_url)
+            if len(calls) == 1:
+                body = json.dumps({"error": {"status": "NOT_FOUND", "message": "model not found"}}).encode("utf-8")
+                raise urllib.error.HTTPError(_req.full_url, 404, "Not Found", {}, io.BytesIO(body))
+            return _FakeResponse({"candidates": [{"content": {"parts": [{"text": article_text}]}}]})
+
+        try:
+            with patch.object(gemini_writer.urllib.request, "urlopen", side_effect=fake_urlopen):
+                result = gemini_writer.write_article_with_gemini(
+                    "test topic",
+                    [{"source_name": "Source", "title": "Title", "raw_text": "Source material. " * 80}],
+                )
+        finally:
+            gemini_writer.settings = original_settings
+            gemini_writer._call_times.clear()
+
+        self.assertEqual(result, article_text.strip())
+        self.assertEqual(len(calls), 2)
+        self.assertIn("gemini-9.9-flash-custom", calls[0])
+        self.assertIn("gemini-flash-latest", calls[1])
 
 
 if __name__ == "__main__":

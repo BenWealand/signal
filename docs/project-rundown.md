@@ -432,7 +432,7 @@ Defaults:
 
 - `CLAIM_MODEL`: `gpt-4o-mini`
 - `SUMMARY_MODEL`: `gpt-4o-mini`
-- `GEMINI_MODEL`: `gemini-2.0-flash`
+- `GEMINI_MODEL`: `gemini-flash-latest`
 - `USE_LLM_CLAIMS`: `false`
 - `app_name`: `Signal News Intelligence API`
 
@@ -1154,7 +1154,7 @@ Each consensus item includes:
 Important details:
 
 - API base: `https://generativelanguage.googleapis.com/v1beta/models`
-- Default model from settings: `gemini-2.0-flash`
+- Default model from settings: `gemini-flash-latest`
 - Local rate limit: 10 calls per 60 seconds.
 - Cooldown after HTTP 429: 65 seconds.
 - Source material budget: about 9,000 total characters.

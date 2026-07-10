@@ -32,6 +32,35 @@ _last_429_at: float = 0.0      # monotonic timestamp of most recent 429
 _last_error_lock = threading.Lock()
 _last_error: dict[str, object] | None = None
 
+# Model ids Google has shut down; requests to them fail with HTTP 404.
+# Deployments may still pin one of these via GEMINI_MODEL, so remap to the
+# maintained "-latest" alias instead of failing every article write.
+_RETIRED_MODELS = frozenset({
+    "gemini-1.0-pro",
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-8b",
+    "gemini-1.5-flash-latest",
+    "gemini-1.5-pro",
+    "gemini-1.5-pro-latest",
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-001",
+    "gemini-2.0-flash-lite",
+    "gemini-2.0-flash-lite-001",
+})
+_MODEL_ALIAS_FALLBACK = "gemini-flash-latest"       # always points at the current flash model
+_MODEL_LITE_FALLBACK  = "gemini-flash-lite-latest"  # separate quota bucket for 429 retries
+
+
+def _active_model() -> str:
+    model = (settings.gemini_model or "").strip() or _MODEL_ALIAS_FALLBACK
+    if model in _RETIRED_MODELS:
+        print(
+            f"[Gemini] Model {model} has been retired by Google - using {_MODEL_ALIAS_FALLBACK} instead.",
+            file=sys.stderr,
+        )
+        return _MODEL_ALIAS_FALLBACK
+    return model
+
 
 def _set_last_error(**error: object) -> None:
     global _last_error
@@ -126,8 +155,7 @@ def write_article_with_gemini(
     Returns the article body as plain text (paragraphs separated by blank
     lines), or None if Gemini is unavailable or the call fails.
 
-    Quota: 1 API call per article generation.
-    Free tier: Gemini 2.0 Flash — 1 500 req/day, 15 RPM.
+    Quota: 1 API call per article generation (plus at most one fallback retry).
     """
     key = settings.gemini_api_key
     if not key:
@@ -144,7 +172,7 @@ def write_article_with_gemini(
         _set_last_error(kind="input", message="No source material was available for Gemini")
         return None
 
-    model = settings.gemini_model  # default "gemini-2.0-flash"
+    model = _active_model()
     _clear_last_error()
 
     prompt = f"""You are a journalist at Signal, a news-transparency platform that shows readers how multiple outlets cover the same story.
@@ -235,10 +263,12 @@ Write a factual news article based ONLY on the source material above. Follow the
             reason=reason,
             message=message,
         )
-        if exc.code == 429:
-            print(f"[Gemini] 429 detail — status: {status}, message: {str(message)[:200]}", file=sys.stderr)
-            # Try fallback model before giving up
-            fallback_model = "gemini-1.5-flash-latest"
+        if exc.code in (404, 429):
+            # 404: the configured model id has been retired/renamed by Google.
+            # 429: quota exhausted on the primary model.
+            # Either way, retry once on a maintained alias before giving up.
+            fallback_model = _MODEL_ALIAS_FALLBACK if exc.code == 404 else _MODEL_LITE_FALLBACK
+            print(f"[Gemini] HTTP {exc.code} detail — status: {status}, message: {str(message)[:200]}", file=sys.stderr)
             if model != fallback_model:
                 print(f"[Gemini] Trying fallback model {fallback_model}…", file=sys.stderr)
                 fallback_url = f"{_API_BASE}/{urllib.parse.quote(fallback_model, safe='')}:generateContent"
@@ -261,8 +291,9 @@ Write a factual news article based ONLY on the source material above. Follow the
                         return text
                 except Exception as fe:
                     print(f"[Gemini] Fallback also failed: {fe}", file=sys.stderr)
-            _record_429()
-            print("[Gemini] 65 s cooldown started. Rule-based fallback active.", file=sys.stderr)
+            if exc.code == 429:
+                _record_429()
+                print("[Gemini] 65 s cooldown started. Rule-based fallback active.", file=sys.stderr)
         else:
             print(f"[Gemini] HTTP {exc.code}: {message}", file=sys.stderr)
         return None
@@ -296,7 +327,7 @@ def suggest_follow_up_prompts_with_gemini(
 
     body = "\n\n".join(p.strip() for p in (body_paragraphs or []) if p and p.strip())
     body_block = f"Opening paragraphs:\n{body[:2200]}" if body else ""
-    model = settings.gemini_model
+    model = _active_model()
     _clear_last_error()
 
     prompt = f"""You are a research editor at Signal, a news exploration platform.
@@ -388,7 +419,7 @@ def write_article_header_with_gemini(
         return None
 
     source_names = sorted({str(a.get("source_name") or "").strip() for a in source_articles if a.get("source_name")})
-    model = settings.gemini_model
+    model = _active_model()
     _clear_last_error()
 
     prompt = f"""You are a senior news editor at Signal.
