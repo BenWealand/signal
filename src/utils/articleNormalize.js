@@ -34,7 +34,21 @@ export function articleStateFor(article = {}) {
       detail: "Prepared locally because no backend API is configured for this build.",
     };
   }
-  if (article.articleState) return article.articleState;
+  if (article.articleState) {
+    const kind = String(article.articleState.kind || "");
+    const label = String(article.articleState.label || "");
+    if (
+      ["demo", "backend_failed_local", "backend_fallback"].includes(kind)
+      || ["Preview edition", "Preview draft", "Early coverage"].includes(label)
+    ) {
+      return {
+        kind: "offline_preview",
+        label: "Offline preview",
+        detail: "A local preview for offline development. Backend-configured builds use Gemini-sourced articles.",
+      };
+    }
+    return article.articleState;
+  }
   if (article.fallback_reason) {
     return {
       kind: "legacy_limited",
@@ -68,7 +82,7 @@ export function articleStateFor(article = {}) {
   }
   return {
     kind: "offline_preview",
-    label: "Preview edition",
+    label: "Offline preview",
     detail: "A local preview for offline development. Backend-configured builds use Gemini-sourced articles.",
   };
 }

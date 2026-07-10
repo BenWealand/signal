@@ -9,7 +9,7 @@
     "backend:test": "cd backend && python -m unittest discover tests",
     "article:trend": "node scripts/generate-article.cjs",
     "build": "vite build",
-    "check:scripts": "node --check scripts/run-all.cjs && node --check scripts/generate-article.cjs && node --check serve-dist.cjs && node --check server.js",
+    "check:scripts": "node --check scripts/run-all.cjs && node --check scripts/generate-article.cjs && node --check serve-dist.cjs && node --check server.js && node tests/globe-markers.mjs",
     "test": "playwright test",
     "test:e2e": "playwright test",
     "start:all": "node scripts/run-all.cjs",

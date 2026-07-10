@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { supabase } from "./lib/supabase.js";
-import { apiGet, apiPost, apiPostAfterWake, hasApiBase } from "./api/client.js";
+import { apiGet, apiPost, apiPostAfterWake, hasApiBase, isAuthenticated } from "./api/client.js";
 import { useInitialSignalData } from "./hooks/useInitialSignalData.js";
 import { useStoredState } from "./hooks/useStoredState.js";
 import { SESSION_ID } from "./lib/session.js";
@@ -45,12 +45,14 @@ function articleUrl(article) {
 }
 
 function trackEvent(userId, actionType, fields = {}) {
-  apiPost("/history", {
-    user_id: userId || null,
-    session_id: SESSION_ID,
-    action_type: actionType,
-    ...fields,
-  }).catch(() => {});
+  isAuthenticated().then((authed) => {
+    apiPost("/history", {
+      user_id: authed ? userId || null : null,
+      session_id: SESSION_ID,
+      action_type: actionType,
+      ...fields,
+    }).catch(() => {});
+  });
 }
 
 function App() {
@@ -92,6 +94,8 @@ function App() {
         apiPost("/users", restoredAccount).then((saved) => {
           setAccount((prev) => ({ ...prev, id: saved.id }));
         }).catch(() => {});
+      } else if (!session && account) {
+        setAccount(null);
       }
     });
 

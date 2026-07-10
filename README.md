@@ -210,6 +210,7 @@ uvicorn app.main:app --reload --port 8000
 - [Backend setup](backend/README.md)
 - [Architecture](docs/architecture.md)
 - [Deployment](docs/deployment.md)
+- [Predeploy smoke checklist](docs/predeploy-smoke-checklist.md)
 - [Demo script](docs/demo-script.md)
 - [Project rundown](docs/project-rundown.md)
 - [X trend agent](docs/x-trend-agent.md)

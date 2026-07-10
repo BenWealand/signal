@@ -51,7 +51,7 @@ export function BuildScreen({ draft }) {
         const data = await getArticleProgress();
         if (data.active || data.stage !== "idle") setProgress(data);
       } catch {
-        // Local fallback progress remains visible when the API is unavailable.
+        // Offline progress remains visible when no backend progress is available.
       }
     }, 1500);
 

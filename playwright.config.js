@@ -12,7 +12,8 @@ export default defineConfig({
     url: "http://127.0.0.1:5174",
     reuseExistingServer: false,
     env: {
-      VITE_SIGNAL_FALLBACK_DELAY_MS: "75",
+      VITE_SIGNAL_API_URL: "",
+      VITE_SIGNAL_OFFLINE_PREVIEW_DELAY_MS: "75",
     },
   },
 });

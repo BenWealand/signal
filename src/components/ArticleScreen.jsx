@@ -55,9 +55,9 @@ export function ArticleScreen({
   const [followUps, setFollowUps] = useState(() => localFollowUps(draft));
   const [followUpsLoading, setFollowUpsLoading] = useState(false);
   const state = draft.articleState || {
-    kind: "demo",
-    label: "Preview edition",
-    detail: "A sample draft for preview. Fully sourced editions appear once live coverage loads.",
+    kind: "offline_preview",
+    label: "Offline preview",
+    detail: "A local preview for offline development. Backend-configured builds use Gemini-sourced articles.",
   };
   const facts = draft.facts || [
     {

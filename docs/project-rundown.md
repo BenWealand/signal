@@ -120,7 +120,7 @@ VITE_SUPABASE_ANON_KEY
 const API_BASE = import.meta.env.VITE_SIGNAL_API_URL || "";
 ```
 
-If `VITE_SIGNAL_API_URL` is not present, `apiGet` and `apiPost` throw `API is not configured for this build.` The app still has static fallbacks and locally simulated draft behavior, but live backend interactions require this environment variable.
+If `VITE_SIGNAL_API_URL` is not present, `apiGet` and `apiPost` throw `API is not configured for this build.` The app can still show offline preview drafts for local development, but backend-configured deployments do not present those previews as generated articles.
 
 `src/lib/supabase.js` creates the Supabase client from `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`.
 
@@ -136,7 +136,7 @@ The `App` component controls most of the frontend behavior. Its core state inclu
 - `accountOpen`: whether the account modal is open.
 - `settingsOpen`: whether settings are open.
 - `toast`: transient toast text.
-- `commandArticles`: generated articles from backend/static queue.
+- `commandArticles`: generated articles from the backend and offline/static preview entries used only when no backend URL is configured.
 - `backendStories`: normalized story clusters from backend.
 - `trendingTopics`: trending entity/topic data from backend.
 - `apiStatus`: `"online"` or `"offline"`.
@@ -174,7 +174,7 @@ The result is merged into frontend state:
 - Generated backend articles become `commandArticles`.
 - Backend story clusters are normalized by `normalizeBackendStory`.
 - Trending entity/topic data becomes globe/topic content.
-- Static JSON is used if backend-generated articles are unavailable.
+- Static JSON is used only as offline/local preview data when backend-generated articles are unavailable.
 - A linked article from `?article=...` opens directly into the reader screen.
 
 ### Frontend Screens
@@ -209,9 +209,9 @@ The globe markers come from a combination of:
 - Backend trending topics.
 - Generated articles.
 - Backend story clusters.
-- Static starter stories.
+- Offline starter stories.
 
-Locations are inferred from topic text with `LOCATION_KEYWORDS`, section defaults, and fallback locations around the world.
+Locations are inferred from topic/article text with `LOCATION_KEYWORDS`. If no real location is detected, no globe marker is shown.
 
 #### Latest Screen
 
@@ -234,7 +234,7 @@ Each article row shows:
 - `Read` action.
 - `Refresh` action.
 
-The screen displays `Live` if backend calls succeeded and `Cached` if only static/fallback data is available.
+The screen displays `Live` if backend calls succeeded and `Cached` if only cached/offline data is available.
 
 #### Trends Screen
 
@@ -1009,12 +1009,12 @@ The frontend currently calls `/articles/write` with `mode: "fast"` and `limit: 1
 2. Fetches query RSS/Bing/API candidates and GDELT candidates in parallel.
 3. Merges candidates by URL.
 4. Supplements from cached DB articles if fewer than four candidates are found.
-5. If no candidates exist, creates a fallback trend article.
+5. If no candidates exist, refuses the write.
 6. Uses snippet/raw text without full consensus processing.
-7. Calls `_article_from_consensus` with an empty consensus list.
-8. Saves the generated article.
+7. Requires Gemini to write the article body.
+8. Saves the generated article only after Gemini returns usable prose.
 
-Fast mode is optimized for latency and demo responsiveness.
+Fast mode is optimized for latency while still requiring Gemini-written prose.
 
 #### Thorough Mode
 
@@ -1038,7 +1038,7 @@ The thorough path:
 13. Synthesizes an article.
 14. Saves the generated article.
 
-If any major quality gate fails, the system saves a fallback article explaining that too few accessible sources were found.
+If any major quality gate fails, the system refuses the write instead of saving a non-Gemini fallback article.
 
 ### Build Progress
 
@@ -1167,19 +1167,9 @@ Important details:
   - No headline/byline/dateline.
   - No markdown.
 
-If Gemini fails, article synthesis returns to rule-based fallback.
+If Gemini fails, generated article writes fail without saving an article.
 
-Notable issue: In the HTTP 429 handler, there is unreachable fallback-model code after `return None`. The code comments imply a fallback to `gemini-1.5-flash-latest`, but the immediate return prevents that code from running.
-
-### Rule-Based Article Writer
-
-When Gemini is unavailable, `_article_body` builds a body from:
-
-- Supported consensus claims.
-- Source count and source names.
-- Extracted source prose paragraphs.
-- Single-source caveats.
-- Unconfirmed claim count.
+### Article Object Builder
 
 `_article_from_consensus` builds the final article object:
 
@@ -1207,7 +1197,7 @@ When Gemini is unavailable, `_article_body` builds a body from:
 - `source_quality`
 - `consensus_level`
 - `used_live_sources`
-- `fallback_reason` when a fallback article is returned
+- `fallback_reason` only on legacy rows that predate the Gemini-only policy
 
 The frontend expects this mostly camelCase shape. The newer source-intelligence
 metadata intentionally uses snake_case because it is passed through from the
@@ -1529,11 +1519,9 @@ Recommended fix: split into:
 - `components/modals/AccountModal.jsx`
 - `components/modals/SettingsModal.jsx`
 
-### Static Fallback Can Hide Backend Failures
+### Offline Preview Must Not Hide Backend Failures
 
-If `/articles/write` fails, the frontend eventually shows a simulated local draft. This is good for demos but risky for real usage because a user may not realize the live sourcing pipeline failed.
-
-Recommended fix: visibly label fallback drafts as demo/local drafts and show the backend failure reason if available.
+If `VITE_SIGNAL_API_URL` is configured, `/articles/write` failures are shown as clear errors and no local article is generated. Offline preview drafts are only available when the frontend has no configured backend API URL.
 
 ### Requirements Are Heavy
 
@@ -1559,8 +1547,8 @@ Positive security choices:
 
 Areas to harden:
 
-- Add auth around user-specific saved story and preference endpoints.
-- Do not rely on client-supplied `user_id` for saved stories/history in production.
+- Keep `SUPABASE_JWT_SECRET` configured so user-specific routes can validate Supabase JWTs.
+- Do not accept client-supplied `user_id` without route-guard verification.
 - Add rate limiting to article-generation endpoints.
 - Add request size limits for prompts/snippets.
 - Store fewer sensitive values in local storage if user accounts become real.
@@ -1630,10 +1618,10 @@ Suggested frontend tests:
 
 - Clear product concept: source overlap and claim consensus as the basis for generated reporting.
 - Backend has modular boundaries for ingestion, processing, NLP, LLM helpers, DB, and routes.
-- The article pipeline has graceful fallbacks when external services fail.
+- The article pipeline fails closed for generated articles when Gemini or source coverage is unavailable.
 - The system can run in a cheap/free-source mode before optional LLM work.
 - Agent integration is already protected by a token and returns the exact artifact an X bot would need.
-- The frontend has useful demo resilience through static generated articles and local draft generation.
+- The frontend has useful local/offline preview resilience when no backend API URL is configured.
 - The database model is broad enough to support stories, articles, claims, consensus, generated articles, users, preferences, saves, and history.
 
 ## Architectural Weaknesses

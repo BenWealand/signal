@@ -61,6 +61,27 @@ class _FakeConnection:
         return self._cursor
 
 
+class _FakePurgeCursor:
+    def __init__(self, rows):
+        self.rows = rows
+        self.executed = []
+        self.rowcount = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def execute(self, sql, params=()):
+        self.executed.append((sql, params))
+        if "DELETE FROM generated_articles" in sql:
+            self.rowcount = 1
+
+    def fetchall(self):
+        return self.rows
+
+
 class _FakeResponse:
     def __init__(self, payload):
         self._payload = payload
@@ -102,6 +123,17 @@ class BackendHardeningTest(unittest.TestCase):
         finally:
             routes_users.settings = original
 
+    def test_user_routes_fail_closed_when_auth_is_not_configured(self):
+        original = routes_users.settings
+        routes_users.settings = SimpleNamespace(signal_api_token="", supabase_jwt_secret="")
+        try:
+            self.assertIsNone(routes_users._require_user_route_guard(user_id=None))
+            with self.assertRaises(HTTPException) as ctx:
+                routes_users._require_user_route_guard(user_id=1)
+            self.assertEqual(ctx.exception.status_code, 503)
+        finally:
+            routes_users.settings = original
+
     def test_social_user_id_requires_route_guard(self):
         with patch.object(routes_users, "_require_user_route_guard", return_value=42) as guard, \
              patch.object(routes_users.queries, "like_article", return_value={"liked": True}) as like_article:
@@ -115,6 +147,61 @@ class BackendHardeningTest(unittest.TestCase):
         self.assertEqual(result["liked"], True)
         guard.assert_called_once_with(7, x_signal_token="", authorization="Bearer token")
         like_article.assert_called_once_with("article-1", 42, "s", "Pat")
+
+    def test_purge_legacy_generated_articles_removes_clear_noncompliant_rows(self):
+        base_row = {
+            "owner_user_id": None,
+            "source": "Signal desk",
+            "tag": "prompt",
+            "trend_url": "",
+            "dek": "",
+            "summary": "",
+            "facts": "[]",
+            "terms": "[]",
+            "sources": "[]",
+            "source_links": "[]",
+            "consensus": "[]",
+            "source_count": 1,
+            "denied_for_bias": 0,
+            "fairness_score": 80,
+            "accuracy_score": 80,
+            "score_metadata": "{}",
+            "source_quality": "{}",
+            "consensus_level": "",
+            "section": "",
+            "status": "published",
+            "created_at": "2026-07-10T00:00:00Z",
+        }
+        cursor = _FakePurgeCursor([
+            {
+                **base_row,
+                "id": "legacy-1",
+                "prompt": "old",
+                "headline": "Old",
+                "body": "[]",
+                "fallback_reason": "quality_gate_failed",
+                "generation_mode": "fast",
+                "used_live_sources": True,
+            },
+            {
+                **base_row,
+                "id": "legacy-2",
+                "prompt": "offline",
+                "headline": "Offline",
+                "body": '["body"]',
+                "fallback_reason": "",
+                "generation_mode": "offline-preview",
+                "used_live_sources": False,
+            },
+        ])
+        with patch.object(queries, "get_connection", return_value=_FakeConnection(cursor)):
+            result = queries.purge_legacy_generated_articles(limit=25)
+
+        self.assertEqual(result["scanned"], 2)
+        self.assertEqual(result["deleted"], 2)
+        self.assertEqual(result["articleIds"], ["legacy-1", "legacy-2"])
+        deletes = [sql for sql, _params in cursor.executed if "DELETE FROM generated_articles" in sql]
+        self.assertEqual(len(deletes), 2)
 
     def test_article_request_size_and_rate_limit(self):
         with self.assertRaises(ValidationError):

@@ -185,6 +185,19 @@ def _write_gemini_article(prompt: str, *, limit: int, mode: str, build_id: str) 
         ) from exc
 
 
+def _resolve_optional_owner_user_id(user_id: int | None, authorization: str = "") -> int | None:
+    if user_id is None:
+        return None
+    try:
+        from app.api.routes_users import _require_user_route_guard
+        return _require_user_route_guard(user_id, authorization=authorization)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("Owner user auth check failed", extra={"user_id": user_id})
+        raise HTTPException(status_code=401, detail="Article owner requires authentication") from exc
+
+
 def _prompt_from_x_payload(payload: XTrendArticleRequest) -> str:
     prompt = _clean_social_text(payload.prompt, 240)
     topic = _clean_social_text(payload.trending_topic, 120)
@@ -378,7 +391,7 @@ def generate_from_trend(
     article["source"] = payload.source
     article["trendUrl"] = payload.trend_url
     article["tag"] = payload.tag
-    article["ownerUserId"] = payload.user_id
+    article["ownerUserId"] = _resolve_optional_owner_user_id(payload.user_id, authorization)
     queries.save_generated_article(article)
     return article
 
@@ -413,12 +426,12 @@ def generate_x_article_reply(
 
 
 @router.post("/articles/write")
-def write_article(request: Request, payload: TrendArticleRequest):
+def write_article(request: Request, payload: TrendArticleRequest, authorization: str = Header(default="")):
     _check_article_rate_limit(_client_rate_key(request, "write"))
     _reject_blocked_prompt(payload.prompt)
     build_id = f"build-{uuid.uuid4().hex}"
     article = _write_gemini_article(payload.prompt, limit=payload.limit, mode=payload.mode, build_id=build_id)
     article["buildId"] = build_id
-    article["ownerUserId"] = payload.user_id
+    article["ownerUserId"] = _resolve_optional_owner_user_id(payload.user_id, authorization)
     queries.save_generated_article(article)
     return article

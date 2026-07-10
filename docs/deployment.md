@@ -56,17 +56,17 @@ Static fallback behavior:
 
 - The frontend attempts to load `GET /feeds/bootstrap` from the backend (one request for Latest, Trending, topics, and all section feeds).
 - It also loads `/generated-articles.json` from the static build.
-- If the backend is unavailable, the UI can still show cached/static generated articles and local demo drafts.
-- This is useful for demos but should be labeled carefully in production.
+- If the backend is unavailable, the UI can show cached feed data. Local preview drafts are only used when the frontend is intentionally built without `VITE_SIGNAL_API_URL`.
+- Backend-configured deployments should not present local/demo drafts as generated articles.
 
 ## Backend keep-alive (recommended)
 
 If the backend host sleeps after inactivity (Render free tier, etc.), configure a scheduled ping so the first reader does not wait through a cold start:
 
 1. In GitHub → Settings → Secrets and variables → Actions, add `SIGNAL_API_URL` with your backend base URL (no trailing slash), e.g. `https://your-backend.onrender.com`.
-2. The workflow at `.github/workflows/keep-backend-alive.yml` pings `/health` every 10 minutes.
+2. The workflow at `.github/workflows/keep-backend-alive.yml` pings `/awake` every 5 minutes.
 
-Alternative: use UptimeRobot, Cron-job.org, or a Vercel cron job pointed at the same `/health` URL.
+Alternative: use UptimeRobot, Cron-job.org, or a Vercel cron job pointed at the same `/awake` URL.
 
 ## Feed performance settings
 
@@ -98,24 +98,27 @@ Backend environment variables:
 
 ```env
 DATABASE_URL=postgresql://...
+GEMINI_API_KEY=...
 PUBLIC_ARTICLE_BASE_URL=https://your-frontend.vercel.app
 CORS_ORIGINS=https://your-frontend.vercel.app
 GEMINI_MODEL=gemini-2.0-flash
 USE_LLM_CLAIMS=false
 SIGNAL_AUTO_INGEST_ON_STARTUP=false
 SIGNAL_PERIODIC_RSS=false
+SIGNAL_EMBEDDING_WARMUP_ON_STARTUP=false
+SIGNAL_SECTION_FAST_COUNT=3
 ```
 
 Optional:
 
 ```env
-GEMINI_API_KEY=
 OPENAI_API_KEY=
 NEWS_API_KEY=
 CURRENTS_API_KEY=
 GNEWS_API_KEY=
 GUARDIAN_CONTENT_API_KEY=
 SIGNAL_API_TOKEN=
+SUPABASE_JWT_SECRET=
 ```
 
 After first deploy, run:
@@ -233,7 +236,7 @@ For production-like deployments, add a real migration tool before making schema-
 Backend can run without paid/news provider keys:
 
 - RSS/Bing/GDELT still provide source candidates.
-- Gemini falls back to rule-based article writing.
+- Gemini is required for generated article prose. If Gemini is unavailable, the write fails without saving an article.
 - OpenAI claim extraction stays disabled unless explicitly enabled.
 
 Recommended demo backend:
@@ -245,6 +248,7 @@ GEMINI_API_KEY=...
 GEMINI_MODEL=gemini-2.0-flash
 USE_LLM_CLAIMS=false
 SIGNAL_API_TOKEN=...
+SUPABASE_JWT_SECRET=...
 ```
 
 ## Production Gaps
@@ -256,5 +260,5 @@ Do not claim production readiness until these are addressed:
 - Article builds use per-job progress rather than global progress.
 - Ingestion/background failures are logged and observable.
 - Schema migrations are managed.
-- Fast/local fallback articles are clearly labeled.
+- Backend-configured deployments do not save local, quick consensus-only, or fallback articles.
 - Rate limiting exists on generation endpoints.

@@ -182,7 +182,7 @@ See `backend/app/db/schema.sql` for exact columns.
 
 The file is intentionally broad right now. A contributor-friendly refactor would split it into screens, components, hooks, and API modules.
 
-## Static Fallbacks
+## Offline Preview Data
 
 Static/demo data paths:
 
@@ -191,7 +191,7 @@ Static/demo data paths:
 - `public/generated-articles.json`
 - `scripts/generate-article.cjs`
 
-These keep the demo usable when the backend or providers fail. They should not be confused with fully sourced backend-generated articles.
+These keep local/offline development usable when no backend URL is configured. Backend-configured deployments should not present these as generated articles.
 
 ## Known Limitations
 
@@ -199,7 +199,7 @@ These keep the demo usable when the backend or providers fail. They should not b
 - CORS origins are hard-coded for local hosts.
 - Build progress is a single global object.
 - Fast mode is not full consensus mode.
-- User-specific backend routes do not enforce auth.
+- User-specific backend routes require `SUPABASE_JWT_SECRET` for Supabase JWT enforcement.
 - Many background failures are swallowed.
 - No schema migration framework exists.
 - No frontend test suite exists.

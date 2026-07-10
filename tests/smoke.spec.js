@@ -16,10 +16,10 @@ test("prompt submit reaches build state", async ({ page }) => {
   await expect(page.locator(".build-terminal")).toBeVisible();
 });
 
-test("API failure shows a clean preview article reader", async ({ page }) => {
+test("offline build shows a clean preview article reader", async ({ page }) => {
   await page.getByLabel("Build a sourced draft").fill("coastal insurance flood risk");
   await page.getByRole("button", { name: "Write" }).click();
-  await expect(page.getByText("Preview draft", { exact: true })).toBeVisible();
+  await expect(page.getByText("Offline preview", { exact: true })).toBeVisible();
   await expect(page.locator(".article-reader h1")).toContainText(/Coastal Insurance Flood Risk/i);
 });
 
@@ -27,7 +27,7 @@ test("generated article reader renders and can be saved", async ({ page }) => {
   await page.getByRole("button", { name: "Latest" }).click();
   await page.locator(".section-card").first().click();
   const headline = await page.locator(".article-reader h1").innerText();
-  await expect(page.getByText(/Preview edition|Preview draft|Quick edition|Live sourced article|Consensus edition|Early coverage/).first()).toBeVisible();
+  await expect(page.getByText(/Offline preview|Quick edition|Live sourced article|Consensus edition|Legacy limited article/).first()).toBeVisible();
   await page.getByRole("button", { name: "Save article" }).click();
   await page.getByRole("button", { name: "Saved" }).click();
   await expect(page.getByRole("heading", { name: headline })).toBeVisible();
@@ -55,7 +55,7 @@ test("core screens avoid horizontal overflow on mobile", async ({ page }) => {
 
   await page.getByLabel("Build a sourced draft").fill("mobile reader trust cues");
   await page.getByRole("button", { name: "Write" }).click();
-  await expect(page.getByText("Preview draft", { exact: true })).toBeVisible();
+  await expect(page.getByText("Offline preview", { exact: true })).toBeVisible();
 
   await page.goto("/");
   await page.locator(".mobile-bottom-nav").getByRole("button", { name: "Trending" }).click();

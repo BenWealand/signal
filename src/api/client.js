@@ -147,9 +147,10 @@ export function preloadSignalFeeds({ userId = null } = {}) {
 export async function apiPost(path, payload) {
   if (!API_BASE) throw new Error("API is not configured for this build.");
   await ensureAwake(path);
+  const headers = { "Content-Type": "application/json", ...(await authHeaders()) };
   const response = await fetch(`${API_BASE}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+    headers,
     body: JSON.stringify(payload),
   });
   if (!response.ok) throw await apiError(response, path);
@@ -160,6 +161,11 @@ async function authHeaders() {
   const { data } = await supabase.auth.getSession().catch(() => ({ data: {} }));
   const token = data?.session?.access_token;
   return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+export async function isAuthenticated() {
+  const { data } = await supabase.auth.getSession().catch(() => ({ data: {} }));
+  return Boolean(data?.session?.access_token);
 }
 
 export async function apiPostAfterWake(path, payload) {

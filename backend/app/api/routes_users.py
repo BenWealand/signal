@@ -99,8 +99,10 @@ def _require_user_route_guard(user_id: int | None, x_signal_token: str = "", aut
         return jwt_user_id
 
     expected = getattr(settings, "signal_api_token", "").strip()
+    if user_id is None:
+        return None
     if not expected:
-        return user_id
+        raise HTTPException(status_code=503, detail="User route authentication is not configured")
     supplied = (x_signal_token or _extract_bearer_token(authorization)).strip()
     if not supplied or not compare_digest(supplied, expected):
         raise HTTPException(status_code=401, detail="User route access requires authentication")

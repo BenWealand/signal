@@ -70,7 +70,7 @@ Short version:
 
 Pipeline version:
 
-> The backend starts cheap: RSS, Bing News RSS, GDELT, and optional news APIs. It cleans text, extracts entities and claims, groups similar claims, and only then uses Gemini for prose if configured. If Gemini or a provider fails, the system falls back instead of stopping the demo.
+> The backend starts cheap: RSS, Bing News RSS, GDELT, and optional news APIs. It cleans text, extracts entities and claims, groups similar claims, and then requires Gemini for generated article prose. If Gemini or source coverage fails, the write is refused instead of saving a local or consensus-only article.
 
 Product positioning:
 
@@ -86,8 +86,8 @@ Product positioning:
 - Article text extraction with trafilatura.
 - Entity and claim extraction.
 - Consensus detection with semantic similarity when ML deps are installed.
-- Gemini article writing when configured.
-- Rule-based article fallback.
+- Gemini-required generated article writing.
+- Clear refusal when Gemini or source coverage is unavailable.
 - Generated article storage and deep links.
 - X agent endpoint protected by `SIGNAL_API_TOKEN`.
 - Saved articles and history endpoints.
@@ -95,10 +95,10 @@ Product positioning:
 ## Demo/Fallback Features
 
 - `public/generated-articles.json` can populate the UI when backend-generated content is unavailable.
-- The frontend can show a locally simulated draft if `/articles/write` fails.
+- The frontend can show a local offline preview only when no backend API URL is configured.
 - Fast article mode prioritizes responsiveness and may not run the full claim-consensus path.
 - Fairness and accuracy scores are heuristic display signals, not audited editorial metrics.
-- Supabase Auth is wired on the frontend, but backend user routes do not enforce Supabase authentication.
+- Supabase Auth is wired on the frontend; set `SUPABASE_JWT_SECRET` on the backend to enforce user-route JWT checks.
 
 Be explicit about these if the audience asks about production readiness.
 
@@ -127,12 +127,12 @@ If article generation fails:
 2. Try a topic with strong public coverage.
 3. Check provider/API rate limits.
 4. Use `Latest` to show existing generated/static articles.
-5. Explain that fallback mode is deliberate for demo continuity.
+5. Explain that backend-configured builds do not save fallback articles.
 
 If Gemini fails:
 
-1. Continue the demo with rule-based output.
-2. Mention that source gathering and claim work are independent from Gemini.
+1. Show the Gemini/source-coverage error.
+2. Mention that the backend refuses to save non-Gemini generated articles.
 3. Check `/articles/test-gemini` after the demo.
 
 If PostgreSQL fails:
