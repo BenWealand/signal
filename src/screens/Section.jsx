@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { apiGetCached, apiPost, invalidateApiCache } from "../api/client.js";
+import { apiGetCached, apiPost, invalidateApiCache, peekApiCache } from "../api/client.js";
 import { SECTION_QUERIES } from "../lib/constants.js";
 import { SESSION_ID } from "../lib/session.js";
 import { dedupeStories, normalizeCommandArticle, storyDate, storyDek, storySourceCount, storyTitle } from "../utils/articleNormalize.js";
@@ -24,14 +24,14 @@ export function SectionScreen({ section, account, onPrompt, onOpenArticle }) {
   const sectionPrompt = SECTION_QUERIES[section] || section.toLowerCase();
 
   const loadStories = useCallback(() => {
-    // Clear the previous topic's stories immediately so switching topics never
-    // shows stale articles under the new topic's heading. The local cache makes
-    // already-visited topics reappear almost instantly.
-    setStories([]);
+    const path = `/news/${slug}?limit=18`;
+    const cached = peekApiCache(path);
+    const cachedStories = Array.isArray(cached) ? dedupeStories(cached, 18) : [];
+    setStories(cachedStories);
     setLoading(true);
-    setLoadState("loading");
+    setLoadState(cachedStories.length ? "refreshing" : "loading");
     let cancelled = false;
-    apiGetCached(`/news/${slug}?limit=18`, { ttlMs: SECTION_CACHE_TTL_MS })
+    apiGetCached(path, { ttlMs: SECTION_CACHE_TTL_MS })
       .then((data) => {
         if (cancelled) return;
         setStories(dedupeStories(Array.isArray(data) ? data : [], 18));

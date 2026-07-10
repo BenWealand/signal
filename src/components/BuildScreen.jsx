@@ -12,7 +12,7 @@ const STAGE_COLORS = {
   idle:       "#555a50",
 };
 
-export function BuildScreen({ draft }) {
+export function BuildScreen({ draft, wakeState }) {
   const WINDOW = 15;
   const tickRef = useRef(WINDOW);
 
@@ -64,6 +64,12 @@ export function BuildScreen({ draft }) {
   const stageColor = STAGE_COLORS[progress.stage] || STAGE_COLORS.idle;
   const elapsedLabel = progress.elapsed_s > 0 ? `${progress.elapsed_s}s` : "";
   const isStuck = progress.elapsed_s > 45;
+  const isWaking = ["waking", "retrying"].includes(wakeState?.status);
+  const stageLabel = isWaking
+    ? wakeState.message || "Waking the backend before sourcing..."
+    : isStuck
+      ? "Still working - thorough sourcing can take a little longer..."
+      : progress.stage_label;
 
   return (
     <section className="writing-screen is-building">
@@ -86,7 +92,7 @@ export function BuildScreen({ draft }) {
 
         <div className="build-progress-detail">
           <span className="build-stage-label" style={{ color: stageColor }}>
-            {isStuck ? "Still working — thorough sourcing can take a little longer..." : progress.stage_label}
+            {stageLabel}
           </span>
           <div className="build-progress-stats">
             {progress.sources_found > 0 && (

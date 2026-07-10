@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { supabase } from "./lib/supabase.js";
-import { apiGet, apiPost, apiPostAfterWake, hasApiBase, isAuthenticated } from "./api/client.js";
+import { apiGet, apiPost, apiPostAfterWake, hasApiBase, isAuthenticated, subscribeWakeState } from "./api/client.js";
 import { useInitialSignalData } from "./hooks/useInitialSignalData.js";
 import { useStoredState } from "./hooks/useStoredState.js";
 import { SESSION_ID } from "./lib/session.js";
@@ -19,6 +19,7 @@ import { LatestScreen } from "./screens/Latest.jsx";
 import { TrendsScreen } from "./screens/Trends.jsx";
 import { SectionScreen } from "./screens/Section.jsx";
 import { SavedScreen } from "./screens/Saved.jsx";
+import { WakeStatus } from "./screens/shared.jsx";
 import "./styles.css";
 
 const OFFLINE_PREVIEW_DELAY_MS = Number(import.meta.env.VITE_SIGNAL_OFFLINE_PREVIEW_DELAY_MS || 7200);
@@ -69,6 +70,7 @@ function App() {
   const [backendStories, setBackendStories] = useState([]);
   const [trendingTopics, setTrendingTopics] = useState([]);
   const [apiStatus, setApiStatus] = useState("offline");
+  const [wakeState, setWakeState] = useState({ status: hasApiBase() ? "idle" : "disabled" });
   const [externalDraft, setExternalDraft] = useState(null);
   const [account, setAccount] = useStoredState("signal-account", null);
   const [savedArticles, setSavedArticles] = useStoredState("signal-saved-articles", []);
@@ -81,6 +83,7 @@ function App() {
   const [notifications, setNotifications] = useState([]);
 
   useEffect(() => {
+    const unsubscribeWake = subscribeWakeState(setWakeState);
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user && !account) {
         const user = session.user;
@@ -102,7 +105,10 @@ function App() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!session) setAccount(null);
     });
-    return () => subscription.unsubscribe();
+    return () => {
+      unsubscribeWake();
+      subscription.unsubscribe();
+    };
   }, []);
 
   const hasDraft = draftPrompt.length > 0;
@@ -489,7 +495,7 @@ function App() {
           />
         )}
 
-        {hasDraft && phase === "building" && <BuildScreen draft={draft} />}
+        {hasDraft && phase === "building" && <BuildScreen draft={draft} wakeState={wakeState} />}
         {hasDraft && phase === "complete" && (
           <ArticleScreen
             draft={draft}
@@ -549,6 +555,7 @@ function App() {
         />
       )}
       {toast && <div className="toast" role="status">{toast}</div>}
+      <WakeStatus state={wakeState} />
     </section>
   );
 }

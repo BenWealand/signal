@@ -4005,6 +4005,79 @@ a.source-link-title:hover {
   }
 }
 
+.wake-status {
+  position: fixed;
+  left: 50%;
+  bottom: 1.15rem;
+  z-index: 70;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.8rem;
+  width: min(28rem, calc(100vw - 1.5rem));
+  padding: 0.75rem 0.9rem;
+  border: 1px solid rgba(11, 90, 64, 0.22);
+  border-radius: 10px;
+  background: rgba(252, 253, 249, 0.96);
+  box-shadow: 0 18px 48px rgba(24, 35, 28, 0.16);
+  color: #101510;
+  transform: translateX(-50%);
+  animation: wake-status-in 180ms ease-out both;
+}
+
+.wake-status strong {
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 950;
+  letter-spacing: 0.02em;
+}
+
+.wake-status p {
+  margin: 0.12rem 0 0;
+  color: #596257;
+  font-size: 0.74rem;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
+.wake-status-pulse {
+  width: 0.95rem;
+  height: 0.95rem;
+  border-radius: 999px;
+  background: #0b5a40;
+  box-shadow: 0 0 0 0 rgba(11, 90, 64, 0.28);
+  animation: wake-pulse 1.1s ease-out infinite;
+}
+
+.wake-status-ready .wake-status-pulse {
+  animation: none;
+}
+
+.wake-status-failed {
+  border-color: rgba(140, 52, 38, 0.22);
+}
+
+.wake-status-failed .wake-status-pulse {
+  background: #8c3426;
+  animation: none;
+}
+
+@keyframes wake-pulse {
+  70% {
+    box-shadow: 0 0 0 0.65rem rgba(11, 90, 64, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(11, 90, 64, 0);
+  }
+}
+
+@keyframes wake-status-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 0.5rem);
+  }
+}
+
 .section-grid .loading-state,
 .section-grid .section-empty {
   grid-column: 1 / -1;

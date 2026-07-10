@@ -2,12 +2,41 @@ import { supabase } from "../lib/supabase.js";
 
 export const API_BASE = import.meta.env.VITE_SIGNAL_API_URL || "";
 let wakePromise = null;
+let lastWakeOkAt = 0;
 const getCache = new Map();
 const STORAGE_PREFIX = "signal-cache-v1:";
 const BOOTSTRAP_CACHE_TTL_MS = 2 * 60 * 1000;
+const WAKE_OK_TTL_MS = Number(import.meta.env.VITE_SIGNAL_WAKE_OK_TTL_MS || 90 * 1000);
+const wakeTarget = typeof EventTarget !== "undefined" ? new EventTarget() : null;
+let wakeState = { status: API_BASE ? "idle" : "disabled", attempt: 0, attempts: 0, message: "" };
 
 export function hasApiBase() {
   return Boolean(API_BASE);
+}
+
+export function peekApiCache(path) {
+  const cached = getCache.get(path);
+  if (cached?.value !== undefined) return cached.value;
+  return readStoredEntry(path)?.value;
+}
+
+export function getWakeState() {
+  return wakeState;
+}
+
+export function subscribeWakeState(listener) {
+  listener(wakeState);
+  if (!wakeTarget) return () => {};
+  const handler = (event) => listener(event.detail);
+  wakeTarget.addEventListener("signal-wake", handler);
+  return () => wakeTarget.removeEventListener("signal-wake", handler);
+}
+
+function setWakeState(next) {
+  wakeState = { ...wakeState, ...next };
+  if (wakeTarget) {
+    wakeTarget.dispatchEvent(new CustomEvent("signal-wake", { detail: wakeState }));
+  }
 }
 
 function readStoredEntry(path) {
@@ -178,12 +207,20 @@ export async function getArticleProgress() {
 
 async function wakeApi() {
   if (!API_BASE) return;
-  const attempts = Number(import.meta.env.VITE_SIGNAL_WAKE_ATTEMPTS || 8);
-  const timeoutMs = Number(import.meta.env.VITE_SIGNAL_WAKE_TIMEOUT_MS || 30000);
-  const delayMs = Number(import.meta.env.VITE_SIGNAL_WAKE_DELAY_MS || 5000);
+  const attempts = Number(import.meta.env.VITE_SIGNAL_WAKE_ATTEMPTS || 5);
+  const timeoutMs = Number(import.meta.env.VITE_SIGNAL_WAKE_TIMEOUT_MS || 12000);
+  const delayMs = Number(import.meta.env.VITE_SIGNAL_WAKE_DELAY_MS || 2500);
   let lastError = null;
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    setWakeState({
+      status: attempt === 1 ? "waking" : "retrying",
+      attempt,
+      attempts,
+      message: attempt === 1
+        ? "Waking the backend..."
+        : `Backend is still starting. Retry ${attempt} of ${attempts}...`,
+    });
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -191,7 +228,14 @@ async function wakeApi() {
         cache: "no-store",
         signal: controller.signal,
       });
-      if (response.ok) return;
+      if (response.ok) {
+        lastWakeOkAt = Date.now();
+        setWakeState({ status: "ready", attempt, attempts, message: "Backend ready." });
+        window.setTimeout(() => {
+          if (wakeState.status === "ready") setWakeState({ status: "idle", message: "" });
+        }, 1800);
+        return;
+      }
       lastError = await apiError(response, "/awake");
     } catch (error) {
       lastError = error;
@@ -206,11 +250,13 @@ async function wakeApi() {
   const error = new Error("The newsroom is still waking up. Wait a moment and try again.");
   error.status = lastError?.status || 503;
   error.detail = error.message;
+  setWakeState({ status: "failed", message: error.message });
   throw error;
 }
 
 async function ensureAwake(path) {
   if (!API_BASE || path === "/health" || path === "/awake") return;
+  if (Date.now() - lastWakeOkAt < WAKE_OK_TTL_MS) return;
   if (!wakePromise) {
     wakePromise = wakeApi().finally(() => {
       wakePromise = null;
