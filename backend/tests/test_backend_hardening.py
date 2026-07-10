@@ -102,6 +102,20 @@ class BackendHardeningTest(unittest.TestCase):
         finally:
             routes_users.settings = original
 
+    def test_social_user_id_requires_route_guard(self):
+        with patch.object(routes_users, "_require_user_route_guard", return_value=42) as guard, \
+             patch.object(routes_users.queries, "like_article", return_value={"liked": True}) as like_article:
+            result = routes_users.like_article(
+                "article-1",
+                routes_users.ArticleLikePayload(user_id=7, session_id="s", actor_name="Pat"),
+                x_signal_token="",
+                authorization="Bearer token",
+            )
+
+        self.assertEqual(result["liked"], True)
+        guard.assert_called_once_with(7, x_signal_token="", authorization="Bearer token")
+        like_article.assert_called_once_with("article-1", 42, "s", "Pat")
+
     def test_article_request_size_and_rate_limit(self):
         with self.assertRaises(ValidationError):
             routes_articles.TrendArticleRequest(prompt="x" * (routes_articles.MAX_PROMPT_CHARS + 1))

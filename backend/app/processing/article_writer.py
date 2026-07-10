@@ -510,7 +510,7 @@ def _article_body(
 ) -> list[str]:
     """
     Try Gemini first for a polished, grammar-correct article.
-    Fall back to rule-based prose synthesis if Gemini is unavailable.
+    When Gemini is required, fail without saving a generated article.
     """
     from app.llm.gemini_writer import write_article_with_gemini
 

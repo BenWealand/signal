@@ -12,7 +12,7 @@ This repository contains:
 
 ## Current Readiness
 
-This is a prototype/demo project, not a production-ready news system. It has live ingestion paths, optional LLM writing, Supabase auth hooks, and static fallbacks, but some flows are deliberately demo-friendly. Fast article mode prioritizes responsiveness and does not run the full consensus pipeline.
+This is a deployment-stage prototype. Backend-generated articles require Gemini-written prose; when Gemini or source coverage is unavailable, the write fails instead of saving a local, consensus-only, or fallback article. Offline preview drafts are only used when the frontend is intentionally built without a backend URL.
 
 ## Requirements
 
@@ -31,6 +31,7 @@ Required backend variable:
 
 ```env
 DATABASE_URL=postgresql://...
+GEMINI_API_KEY=...
 ```
 
 Common local variables:
@@ -38,20 +39,36 @@ Common local variables:
 ```env
 VITE_SIGNAL_API_URL=http://127.0.0.1:8000
 PUBLIC_ARTICLE_BASE_URL=http://127.0.0.1:5175
+CORS_ORIGINS=http://127.0.0.1:5175
 ```
 
 Optional keys:
 
 ```env
-GEMINI_API_KEY=
 OPENAI_API_KEY=
 NEWS_API_KEY=
 CURRENTS_API_KEY=
 GNEWS_API_KEY=
 GUARDIAN_CONTENT_API_KEY=
 SIGNAL_API_TOKEN=
+SUPABASE_JWT_SECRET=
 PROMPT_BLACKLIST=
 PROMPT_BLACKLIST_REGEX=
+```
+
+Deployment env checklist:
+
+- Vercel frontend: `VITE_SIGNAL_API_URL`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`
+- Render backend: `DATABASE_URL`, `GEMINI_API_KEY`, `CORS_ORIGINS`, `PUBLIC_ARTICLE_BASE_URL`, `SIGNAL_API_TOKEN`, `SUPABASE_JWT_SECRET`
+- GitHub Actions: `SIGNAL_API_URL`
+
+For the Render free tier, keep memory-heavy work disabled unless you upgrade:
+
+```env
+SIGNAL_AUTO_INGEST_ON_STARTUP=false
+SIGNAL_PERIODIC_RSS=false
+SIGNAL_EMBEDDING_WARMUP_ON_STARTUP=false
+SIGNAL_SECTION_FAST_COUNT=3
 ```
 
 See `.env.example` and [backend/README.md](backend/README.md) for the full variable list.
@@ -65,7 +82,7 @@ npm install
 npm run dev
 ```
 
-Open the Vite URL shown in the terminal. Without `VITE_SIGNAL_API_URL`, backend-backed features will be offline and static/generated fallbacks will be used.
+Open the Vite URL shown in the terminal. Without `VITE_SIGNAL_API_URL`, backend-backed features are offline and the UI can show local preview drafts for development only.
 
 To point the frontend at a running backend:
 
@@ -158,13 +175,13 @@ VITE_SUPABASE_URL=
 VITE_SUPABASE_ANON_KEY=
 ```
 
-The current backend user upsert path stores local user rows by email and does not enforce server-side Supabase auth.
+Set `SUPABASE_JWT_SECRET` on the backend to enforce Supabase JWT checks for user-specific routes.
 
 ## Provider Behavior
 
 - RSS, Bing News RSS, and GDELT are the main low-cost discovery paths.
 - Guardian, NewsAPI, Currents, and GNews keys add more source candidates when configured.
-- Gemini writes polished article prose when `GEMINI_API_KEY` is set. If Gemini is missing, rate-limited, or failing, the backend uses rule-based prose.
+- Gemini writes article prose. If Gemini is missing, rate-limited, failing, or given too few usable sources, the backend returns a clear error and does not save an article.
 - OpenAI is used only for optional LLM claim extraction when `USE_LLM_CLAIMS=true` and `OPENAI_API_KEY` is set.
 - Sentence-transformers/spaCy are optional ML improvements. Without them, fallback heuristics are used where the code supports it.
 
@@ -215,6 +232,6 @@ Frontend says cached/offline
 
 Confirm `VITE_SIGNAL_API_URL` points at the backend and `GET /health` works.
 
-Article generation returns fallback content
+Article generation fails with a Gemini/source-coverage message
 
-The backend may have too few accessible sources, missing provider keys, or an LLM rate limit. The app is designed to return a clear fallback instead of crashing.
+The backend may have too few accessible sources, a missing `GEMINI_API_KEY`, or a Gemini rate limit. Try a more specific prompt and check Render logs for the generation failure reason.

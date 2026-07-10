@@ -23,51 +23,6 @@ type ProjectedMarker = GlobeMarker & {
   scale: number;
 };
 
-const NEWS_MARKERS: GlobeMarker[] = [
-  {
-    id: "new-york",
-    location: [40.7128, -74.006] as [number, number],
-    size: 0.024,
-    region: "New York",
-    headline: "Markets parse rate signal",
-  },
-  {
-    id: "london",
-    location: [51.5072, -0.1276] as [number, number],
-    size: 0.022,
-    region: "London",
-    headline: "Parliament weighs media rules",
-  },
-  {
-    id: "tokyo",
-    location: [35.6762, 139.6503] as [number, number],
-    size: 0.02,
-    region: "Tokyo",
-    headline: "Chip supply chain expands",
-  },
-  {
-    id: "sao-paulo",
-    location: [-23.5505, -46.6333] as [number, number],
-    size: 0.024,
-    region: "Sao Paulo",
-    headline: "Climate desk tracks rainfall",
-  },
-  {
-    id: "delhi",
-    location: [28.6139, 77.209] as [number, number],
-    size: 0.022,
-    region: "Delhi",
-    headline: "Air quality brief updates",
-  },
-  {
-    id: "cairo",
-    location: [30.0444, 31.2357] as [number, number],
-    size: 0.02,
-    region: "Cairo",
-    headline: "Regional summit sources align",
-  },
-];
-
 const GLOBE_CONFIG: COBEOptions = {
   width: 800,
   height: 800,
@@ -98,7 +53,7 @@ const GLOBE_CONFIG: COBEOptions = {
 export function Globe({
   className = "",
   config,
-  markers = NEWS_MARKERS,
+  markers = [],
   onMarkerClick,
 }: {
   className?: string;

@@ -3205,9 +3205,8 @@ a.source-link-title:hover {
   line-height: 1.35;
 }
 
-.article-state-demo,
-.article-state-backend_failed_local,
-.article-state-backend_fallback {
+.article-state-offline_preview,
+.article-state-legacy_limited {
   border-left-color: #a45a16;
   background: #fff4e6;
 }
@@ -3243,7 +3242,6 @@ a.source-link-title:hover {
 }
 
 .feed-status-offline,
-.feed-status-fallback,
 .feed-status-refreshing {
   border-color: rgba(164, 90, 22, 0.28);
   color: #7a410f;
@@ -3266,9 +3264,8 @@ a.source-link-title:hover {
   text-transform: uppercase;
 }
 
-.article-row-state-demo,
-.article-row-state-backend_failed_local,
-.article-row-state-backend_fallback {
+.article-row-state-offline_preview,
+.article-row-state-legacy_limited {
   border-color: rgba(164, 90, 22, 0.3);
   color: #7a410f;
   background: #fff4e6;

@@ -114,8 +114,8 @@ GDELT_QUERIES=
 
 Behavior:
 
-- No Gemini key: article body falls back to local rule-based writing.
-- Gemini rate limit/API failure: local rule-based writing is used.
+- No Gemini key: generated article writes fail without saving an article.
+- Gemini rate limit/API failure: generated article writes fail without saving an article.
 - No OpenAI key: local claim extraction is used.
 - `USE_LLM_CLAIMS=false`: OpenAI is not used for claim extraction.
 - No paid/news provider keys: RSS, Bing News RSS, and GDELT still provide candidates.

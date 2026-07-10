@@ -22,25 +22,25 @@ const FALLBACK_REASON_NOTES = {
   no_accessible_sources: "Signal could not find enough accessible reporting on this topic yet. Try a slightly more specific search.",
   quality_gate_failed: "Not enough independent reporting has surfaced on this topic yet for a full edition. Try a more specific search.",
   processing_failed: "Signal gathered coverage but could not finish a full edition. Try again in a moment.",
-  snippet_only_fast_mode: "This quick edition drew on short source snippets. Rewrite in thorough mode for deeper sourcing.",
-  local_simulation: "A preview draft prepared instantly while live coverage loads.",
+  snippet_only_fast_mode: "This older quick edition drew on short source snippets. Rewrite it for a Gemini-sourced edition.",
+  local_simulation: "An offline preview draft prepared without the backend.",
 };
 
 export function articleStateFor(article = {}) {
   if (article.backendError || article.localFallback) {
     return {
-      kind: "backend_failed_local",
-      label: "Preview draft",
-      detail: "A quick preview while the newsroom finishes warming up. Rewrite in a moment for the fully sourced edition.",
+      kind: "offline_preview",
+      label: "Offline preview",
+      detail: "Prepared locally because no backend API is configured for this build.",
     };
   }
   if (article.articleState) return article.articleState;
   if (article.fallback_reason) {
     return {
-      kind: "backend_fallback",
-      label: "Early coverage",
+      kind: "legacy_limited",
+      label: "Legacy limited article",
       detail: FALLBACK_REASON_NOTES[String(article.fallback_reason)]
-        || "Signal is still gathering enough independent reporting on this topic for a full edition.",
+        || "This older saved article predates the Gemini-only writing policy.",
     };
   }
   if (article.generation_mode === "fast") {
@@ -67,9 +67,9 @@ export function articleStateFor(article = {}) {
     };
   }
   return {
-    kind: "demo",
+    kind: "offline_preview",
     label: "Preview edition",
-    detail: "A sample draft for preview. Fully sourced editions appear once live coverage loads.",
+    detail: "A local preview for offline development. Backend-configured builds use Gemini-sourced articles.",
   };
 }
 
@@ -134,13 +134,13 @@ export function buildDraft(prompt) {
     terms: keyTerms.length ? keyTerms : ["public", "record", "wire"],
     body: null,
     facts: null,
-    generation_mode: "local-demo",
+    generation_mode: "offline-preview",
     used_live_sources: false,
     fallback_reason: "local_simulation",
     articleState: {
-      kind: "demo",
-      label: "Preview edition",
-      detail: "A preview draft prepared instantly while live coverage loads.",
+      kind: "offline_preview",
+      label: "Offline preview",
+      detail: "Prepared locally because no backend API is configured for this build.",
     },
   };
 }

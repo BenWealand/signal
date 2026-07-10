@@ -21,7 +21,7 @@ import { SectionScreen } from "./screens/Section.jsx";
 import { SavedScreen } from "./screens/Saved.jsx";
 import "./styles.css";
 
-const FALLBACK_DELAY_MS = Number(import.meta.env.VITE_SIGNAL_FALLBACK_DELAY_MS || 7200);
+const OFFLINE_PREVIEW_DELAY_MS = Number(import.meta.env.VITE_SIGNAL_OFFLINE_PREVIEW_DELAY_MS || 7200);
 
 function localFailureDraft(prompt, error) {
   return normalizeCommandArticle({
@@ -30,8 +30,8 @@ function localFailureDraft(prompt, error) {
     prompt,
     localFallback: true,
     backendError: error?.message || "Article API unavailable.",
-    source: "local browser draft",
-    tag: "fallback",
+    source: "offline browser preview",
+    tag: "offline-preview",
   });
 }
 
@@ -204,7 +204,7 @@ function App() {
     setExternalDraft(null);
     setDraftPrompt(nextPrompt);
     setPhase("building");
-    if (hasApiBase()) showToast("Signal is on it — sourcing your story...");
+    if (hasApiBase()) showToast("Signal is on it. Waking the newsroom and sourcing your story...");
     trackEvent(account?.id, "prompt", { prompt: nextPrompt });
     apiPostAfterWake("/articles/write", { prompt: nextPrompt, source: "reader-prompt", tag: "prompt", limit: 10, mode: generationMode, user_id: account?.id || null })
       .then((article) => {
@@ -231,13 +231,19 @@ function App() {
     if (hasApiBase()) {
       setExternalDraft(null);
       setPhase("idle");
-      showToast(error?.detail || error?.message || "The newsroom is still warming up — try again in a few seconds.");
+      const rawMessage = String(error?.detail || error?.message || "");
+      const message = rawMessage.includes("gemini_article_unavailable")
+        || rawMessage.toLowerCase().includes("gemini")
+        || rawMessage.toLowerCase().includes("source")
+        ? "Could not generate from enough reliable sources. Try a more specific prompt."
+        : rawMessage || "The newsroom is still waking up. Wait a moment and try again.";
+      showToast(message);
       return;
     }
     window.setTimeout(() => {
       setExternalDraft(localFailureDraft(failedPrompt, error));
       setPhase("complete");
-    }, FALLBACK_DELAY_MS);
+    }, OFFLINE_PREVIEW_DELAY_MS);
   };
 
   const buildRecommendedPrompt = (nextPrompt) => {
@@ -247,7 +253,7 @@ function App() {
     setDraftPrompt(nextPrompt);
     setPhase("building");
     setActiveScreen("Latest");
-    if (hasApiBase()) showToast("Signal is on it — sourcing your story...");
+    if (hasApiBase()) showToast("Signal is on it. Waking the newsroom and sourcing your story...");
     trackEvent(account?.id, "prompt", { prompt: nextPrompt, topic: "recommended-follow-up" });
     apiPostAfterWake("/articles/write", { prompt: nextPrompt, source: "recommended-follow-up", tag: "prompt", limit: 10, mode: "fast", user_id: account?.id || null })
       .then((article) => {
@@ -372,7 +378,7 @@ function App() {
     setDraftPrompt(article.prompt);
     setPhase("building");
     setActiveScreen("Latest");
-    if (hasApiBase()) showToast("Signal is on it — sourcing your story...");
+    if (hasApiBase()) showToast("Signal is on it. Waking the newsroom and sourcing your story...");
     apiPostAfterWake("/articles/write", { prompt: article.prompt, source: "reader-prompt", tag: "prompt", limit: 10, mode: generationMode, user_id: account?.id || null })
       .then((result) => {
         setExternalDraft(normalizeCommandArticle(result));
@@ -395,7 +401,7 @@ function App() {
     setDraftPrompt(topic);
     setPhase("building");
     setActiveScreen("Latest");
-    if (hasApiBase()) showToast("Signal is on it — sourcing your story...");
+    if (hasApiBase()) showToast("Signal is on it. Waking the newsroom and sourcing your story...");
     trackEvent(account?.id, "prompt", { prompt: topic, section: "globe-trend" });
     apiPostAfterWake("/articles/write", { prompt: topic, source: "globe-trend", tag: "trend", limit: 10, mode: generationMode, user_id: account?.id || null })
       .then((article) => {
@@ -468,7 +474,7 @@ function App() {
               setExternalDraft(null);
               setPhase("building");
               setActiveScreen("Latest");
-              if (hasApiBase()) showToast("Signal is on it — sourcing your story...");
+              if (hasApiBase()) showToast("Signal is on it. Waking the newsroom and sourcing your story...");
               trackEvent(account?.id, "prompt", { prompt: topic, section: activeScreen });
                 apiPostAfterWake("/articles/write", { prompt: topic, source: "reader-prompt", tag: "prompt", limit: 10, mode: generationMode, user_id: account?.id || null })
                 .then((article) => { setExternalDraft(normalizeCommandArticle(article)); setPhase("complete"); })

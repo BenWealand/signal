@@ -147,21 +147,40 @@ def save_story(payload: SaveStoryPayload, x_signal_token: str = Header(default="
 
 
 @router.get("/articles/{article_id}/social")
-def article_social(article_id: str, user_id: int | None = None, session_id: str | None = None):
-    return queries.get_article_social(article_id, user_id=user_id, session_id=session_id)
+def article_social(
+    article_id: str,
+    user_id: int | None = None,
+    session_id: str | None = None,
+    x_signal_token: str = Header(default=""),
+    authorization: str = Header(default=""),
+):
+    auth_user_id = _require_user_route_guard(user_id, x_signal_token=x_signal_token, authorization=authorization) if user_id else None
+    return queries.get_article_social(article_id, user_id=auth_user_id, session_id=session_id)
 
 
 @router.post("/articles/{article_id}/likes")
-def like_article(article_id: str, payload: ArticleLikePayload):
-    return queries.like_article(article_id, payload.user_id, payload.session_id, payload.actor_name)
+def like_article(
+    article_id: str,
+    payload: ArticleLikePayload,
+    x_signal_token: str = Header(default=""),
+    authorization: str = Header(default=""),
+):
+    auth_user_id = _require_user_route_guard(payload.user_id, x_signal_token=x_signal_token, authorization=authorization) if payload.user_id else None
+    return queries.like_article(article_id, auth_user_id, payload.session_id, payload.actor_name)
 
 
 @router.post("/articles/{article_id}/comments")
-def add_comment(article_id: str, payload: ArticleCommentPayload):
+def add_comment(
+    article_id: str,
+    payload: ArticleCommentPayload,
+    x_signal_token: str = Header(default=""),
+    authorization: str = Header(default=""),
+):
+    auth_user_id = _require_user_route_guard(payload.user_id, x_signal_token=x_signal_token, authorization=authorization) if payload.user_id else None
     return queries.add_article_comment(
         article_id,
         payload.body,
-        payload.user_id,
+        auth_user_id,
         payload.session_id,
         payload.author_name,
         payload.parent_comment_id,
@@ -169,8 +188,14 @@ def add_comment(article_id: str, payload: ArticleCommentPayload):
 
 
 @router.post("/comments/{comment_id}/likes")
-def like_comment(comment_id: int, payload: CommentLikePayload):
-    return queries.like_comment(comment_id, payload.user_id, payload.session_id, payload.actor_name)
+def like_comment(
+    comment_id: int,
+    payload: CommentLikePayload,
+    x_signal_token: str = Header(default=""),
+    authorization: str = Header(default=""),
+):
+    auth_user_id = _require_user_route_guard(payload.user_id, x_signal_token=x_signal_token, authorization=authorization) if payload.user_id else None
+    return queries.like_comment(comment_id, auth_user_id, payload.session_id, payload.actor_name)
 
 
 @router.get("/users/{user_id}/notifications")

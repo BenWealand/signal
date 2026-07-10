@@ -664,6 +664,13 @@ def delete_generated_article(article_id: str) -> int:
             return int(cur.rowcount or 0)
 
 
+def _delete_generated_article_cur(cur: Any, article_id: str) -> int:
+    cur.execute("DELETE FROM saved_stories WHERE story_id = %s", (article_id,))
+    cur.execute("DELETE FROM user_history WHERE article_id = %s", (article_id,))
+    cur.execute("DELETE FROM generated_articles WHERE id = %s", (article_id,))
+    return int(cur.rowcount or 0)
+
+
 def purge_blacklisted_generated_articles(limit: int = 1000) -> dict[str, Any]:
     deleted: list[str] = []
     scanned = 0
@@ -682,10 +689,43 @@ def purge_blacklisted_generated_articles(limit: int = 1000) -> dict[str, Any]:
             for article in articles:
                 if article and article_is_blocked(article).blocked:
                     article_id = str(article["id"])
-                    cur.execute("DELETE FROM saved_stories WHERE story_id = %s", (article_id,))
-                    cur.execute("DELETE FROM user_history WHERE article_id = %s", (article_id,))
-                    cur.execute("DELETE FROM generated_articles WHERE id = %s", (article_id,))
+                    _delete_generated_article_cur(cur, article_id)
                     deleted.append(article_id)
+    return {"scanned": scanned, "deleted": len(deleted), "articleIds": deleted}
+
+
+def purge_legacy_generated_articles(limit: int = 1000) -> dict[str, Any]:
+    """
+    Remove generated articles that obviously predate the Gemini-only policy.
+
+    Older rows did not store a writer-provider field, so this intentionally
+    purges only clear legacy/noncompliant rows instead of guessing.
+    """
+    deleted: list[str] = []
+    scanned = 0
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT *
+                FROM generated_articles
+                WHERE COALESCE(fallback_reason, '') <> ''
+                   OR COALESCE(generation_mode, '') NOT IN ('fast', 'thorough')
+                   OR COALESCE(used_live_sources, FALSE) = FALSE
+                   OR COALESCE(body, '[]') IN ('', '[]', 'null')
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            articles = [_decode_generated_article(row) for row in cur.fetchall()]
+            scanned = len(articles)
+            for article in articles:
+                if not article:
+                    continue
+                article_id = str(article["id"])
+                _delete_generated_article_cur(cur, article_id)
+                deleted.append(article_id)
     return {"scanned": scanned, "deleted": len(deleted), "articleIds": deleted}
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import time
 import uuid
+import logging
 from collections import defaultdict, deque
 from secrets import compare_digest
 from urllib.parse import urlencode
@@ -17,6 +18,7 @@ from app.processing.article_writer import GeminiArticleUnavailable, write_articl
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 MAX_PROMPT_CHARS = 2_000
 MAX_SNIPPET_CHARS = 1_000
@@ -149,9 +151,31 @@ def _reject_blocked_prompt(prompt: str) -> None:
 
 
 def _write_gemini_article(prompt: str, *, limit: int, mode: str, build_id: str) -> dict:
+    started = time.monotonic()
     try:
-        return write_article_from_prompt(prompt, limit=limit, mode=mode, build_id=build_id)
+        article = write_article_from_prompt(prompt, limit=limit, mode=mode, build_id=build_id)
+        logger.info(
+            "Gemini article generated",
+            extra={
+                "build_id": build_id,
+                "mode": mode,
+                "duration_ms": int((time.monotonic() - started) * 1000),
+                "source_count": article.get("sourceCount", 0),
+                "prompt_length": len(prompt or ""),
+            },
+        )
+        return article
     except GeminiArticleUnavailable as exc:
+        logger.warning(
+            "Gemini article unavailable",
+            extra={
+                "build_id": build_id,
+                "mode": mode,
+                "duration_ms": int((time.monotonic() - started) * 1000),
+                "prompt_length": len(prompt or ""),
+                "reason": str(exc),
+            },
+        )
         raise HTTPException(
             status_code=503,
             detail={
@@ -326,6 +350,16 @@ def purge_blocked_generated_articles(
 ):
     _require_signal_agent_token(x_signal_token=x_signal_token, authorization=authorization)
     return queries.purge_blacklisted_generated_articles(limit=min(max(limit, 1), 5000))
+
+
+@router.post("/generated-articles/purge-legacy")
+def purge_legacy_generated_articles(
+    limit: int = 1000,
+    x_signal_token: str = Header(default=""),
+    authorization: str = Header(default=""),
+):
+    _require_signal_agent_token(x_signal_token=x_signal_token, authorization=authorization)
+    return queries.purge_legacy_generated_articles(limit=min(max(limit, 1), 5000))
 
 
 @router.post("/articles/generate-from-trend")
