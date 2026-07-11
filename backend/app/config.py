@@ -64,6 +64,16 @@ class Settings:
     thorough_enrich_limit: int = int(os.getenv("SIGNAL_THOROUGH_ENRICH_LIMIT", "6"))
     thorough_enrich_timeout_seconds: int = int(os.getenv("SIGNAL_THOROUGH_ENRICH_TIMEOUT", "5"))
     thorough_max_candidates: int = int(os.getenv("SIGNAL_THOROUGH_MAX_CANDIDATES", "10"))
+    # X / Twitter workflow — credentials are optional until you implement app/x/client.py
+    x_api_bearer_token: str = os.getenv("X_API_BEARER_TOKEN", "")
+    x_api_key: str = os.getenv("X_API_KEY", "")
+    x_api_secret: str = os.getenv("X_API_SECRET", "")
+    x_access_token: str = os.getenv("X_ACCESS_TOKEN", "")
+    x_access_token_secret: str = os.getenv("X_ACCESS_TOKEN_SECRET", "")
+    x_trends_woeid: int = int(os.getenv("X_TRENDS_WOEID", "1"))
+    # Keep dry-run on until post_tweet() is implemented and verified.
+    x_dry_run: bool = os.getenv("SIGNAL_X_DRY_RUN", "true").lower() != "false"
+    x_auto_post: bool = os.getenv("SIGNAL_X_AUTO_POST", "false").lower() == "true"
     app_name: str = "Signal News Intelligence API"
 
 

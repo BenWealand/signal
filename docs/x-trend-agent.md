@@ -1,5 +1,8 @@
 # X Trend Article Agent Workflow
 
+> Full product runbook (automation, env, `/agents/x/run`, plugging in the X API):
+> see [`x-usage.md`](./x-usage.md).
+
 This document tells an agent how to turn an X/Twitter post snippet or trending topic into a sourced Signal article, then reply with the already-written article link.
 
 ## Goal

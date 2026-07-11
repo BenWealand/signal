@@ -10,6 +10,7 @@ from starlette.middleware.gzip import GZipMiddleware
 
 from app.api.middleware import FeedCacheHeadersMiddleware
 from app.api.routes_articles import router as article_router
+from app.api.routes_x import router as x_router
 from app.api.routes_feeds import router as feeds_router
 from app.api.routes_news import router as news_router
 from app.api.routes_news import SECTION_SLUGS, _generate_fast_section_articles
@@ -54,6 +55,7 @@ app.add_middleware(FeedCacheHeadersMiddleware)
 
 app.include_router(story_router)
 app.include_router(article_router)
+app.include_router(x_router)
 app.include_router(feeds_router)
 app.include_router(search_router)
 app.include_router(user_router)

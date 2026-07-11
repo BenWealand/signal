@@ -7,7 +7,6 @@ import logging
 import threading
 from collections import defaultdict, deque
 from secrets import compare_digest
-from urllib.parse import urlencode
 
 from pydantic import BaseModel, validator
 from fastapi import APIRouter, Header, HTTPException, Query, Request
@@ -21,6 +20,11 @@ from app.processing.article_writer import (
     get_build_progress,
     set_build_progress,
 )
+
+
+from app.x.models import XCandidate
+from app.x.pipeline import maybe_share_package, write_article_for_candidate
+from app.x.reply import article_public_url, x_reply_text
 
 
 router = APIRouter()
@@ -90,10 +94,13 @@ class XTrendArticleRequest(BaseModel):
     snippet: str = ""
     trending_topic: str = ""
     trend_url: str = ""
+    post_id: str = ""
     source: str = "x-agent"
     tag: str = "x-trend"
     limit: int = 12
     mode: str = "fast"
+    auto_post: bool | None = None
+    dry_run: bool | None = None
 
     @validator("prompt", "trending_topic")
     def short_text_size(cls, value: str) -> str:
@@ -112,6 +119,13 @@ class XTrendArticleRequest(BaseModel):
         if value < 1 or value > MAX_LIMIT:
             raise ValueError(f"limit must be between 1 and {MAX_LIMIT}")
         return value
+
+    @validator("mode")
+    def mode_value(cls, value: str) -> str:
+        cleaned = (value or "fast").strip().lower()
+        if cleaned not in {"fast", "thorough"}:
+            raise ValueError("mode must be fast or thorough")
+        return cleaned
 
 
 def _client_rate_key(request: Request, endpoint: str) -> str:
@@ -144,11 +158,6 @@ def _require_signal_agent_token(x_signal_token: str = "", authorization: str = "
     supplied = (x_signal_token or _extract_bearer_token(authorization)).strip()
     if not supplied or not compare_digest(supplied, expected):
         raise HTTPException(status_code=401, detail="Invalid Signal agent token")
-
-
-def _clean_social_text(text: str, max_chars: int = 420) -> str:
-    compact = re.sub(r"\s+", " ", text or "").strip()
-    return compact[:max_chars].rstrip()
 
 
 def _reject_blocked_prompt(prompt: str) -> None:
@@ -213,35 +222,16 @@ def _resolve_optional_owner_user_id(user_id: int | None, authorization: str = ""
 
 
 def _prompt_from_x_payload(payload: XTrendArticleRequest) -> str:
-    prompt = _clean_social_text(payload.prompt, 240)
-    topic = _clean_social_text(payload.trending_topic, 120)
-    snippet = _clean_social_text(payload.snippet, 280)
-    parts = []
-    if prompt:
-        parts.append(prompt)
-    if topic and topic.lower() not in prompt.lower():
-        parts.append(f"Trending topic: {topic}")
-    if snippet and snippet.lower() not in " ".join(parts).lower():
-        parts.append(f"Social post snippet: {snippet}")
-    combined = ". ".join(parts).strip(". ")
-    if not combined:
-        raise HTTPException(status_code=422, detail="Provide prompt, trending_topic, or snippet")
-    return combined
+    from app.x.reply import build_prompt
+
+    try:
+        return build_prompt(payload.trending_topic, payload.snippet, payload.prompt)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-def article_public_url(article_id: str) -> str:
-    base = settings.public_article_base_url.strip().rstrip("/")
-    query = urlencode({"article": article_id})
-    return f"{base}/?{query}" if base else f"/?{query}"
-
-
-def x_reply_text(article: dict, article_url: str) -> str:
-    headline = _clean_social_text(article.get("headline", "Signal article"), 180)
-    suffix = f"Read the sourced Signal write-up: {article_url}"
-    text = f"{headline}\n\n{suffix}"
-    if len(text) <= 260:
-        return text
-    return f"{headline[: max(40, 256 - len(suffix))].rstrip()}...\n\n{suffix}"
+# article_public_url and x_reply_text are imported from app.x.reply above
+# and re-exported for tests / callers that historically used routes_articles.
 
 
 _FOLLOW_UP_STOPWORDS = frozenset({
@@ -419,23 +409,50 @@ def generate_x_article_reply(
 ):
     _require_signal_agent_token(x_signal_token=x_signal_token, authorization=authorization)
     _check_article_rate_limit(_client_rate_key(request, "x-article-reply"))
-    prompt = _prompt_from_x_payload(payload)
-    _reject_blocked_prompt(prompt)
-    build_id = f"build-{uuid.uuid4().hex}"
-    article = _write_gemini_article(prompt, limit=payload.limit, mode=payload.mode, build_id=build_id)
-    article["buildId"] = build_id
-    article["source"] = payload.source
-    article["trendUrl"] = payload.trend_url
-    article["tag"] = payload.tag
-    article["ownerUserId"] = None
-    queries.save_generated_article(article)
-    article_url = article_public_url(str(article["id"]))
+    candidate = XCandidate(
+        topic=payload.trending_topic or payload.prompt,
+        snippet=payload.snippet,
+        prompt=payload.prompt,
+        trend_url=payload.trend_url,
+        post_id=payload.post_id,
+        source=payload.source,
+        tag=payload.tag,
+        provider="manual",
+    )
+
+    def _writer(prompt: str, limit: int, mode: str, build_id: str) -> dict:
+        return _write_gemini_article(prompt, limit=limit, mode=mode, build_id=build_id)
+
+    package = write_article_for_candidate(
+        candidate,
+        mode=payload.mode,
+        limit=payload.limit,
+        write_fn=_writer,
+    )
+    if package.status == "ready_to_post":
+        package = maybe_share_package(
+            package,
+            dry_run=payload.dry_run,
+            auto_post=bool(payload.auto_post) if payload.auto_post is not None else False,
+        )
+    body = package.to_dict()
+    if body.get("status") in {"blocked", "skipped", "error"} and not body.get("article"):
+        code = 422 if body.get("status") in {"blocked", "skipped"} else 503
+        raise HTTPException(
+            status_code=code,
+            detail={
+                "code": body.get("status"),
+                "message": body.get("error") or "X article reply failed",
+            },
+        )
     return {
-        "status": "ready_to_post",
-        "article": article,
-        "articleUrl": article_url,
-        "replyText": x_reply_text(article, article_url),
-        "trendUrl": payload.trend_url,
+        "status": body.get("status") or "ready_to_post",
+        "article": body.get("article") or {},
+        "articleUrl": body.get("article_url") or "",
+        "replyText": body.get("reply_text") or "",
+        "trendUrl": body.get("trend_url") or payload.trend_url,
+        "share": body.get("share") or {},
+        "candidate": body.get("candidate") or {},
     }
 
 

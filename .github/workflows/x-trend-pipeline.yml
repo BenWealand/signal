@@ -1,0 +1,52 @@
+name: X trend pipeline
+
+on:
+  schedule:
+    # Every 4 hours — keep max_articles low while dry-running
+    - cron: "20 */4 * * *"
+  workflow_dispatch:
+
+jobs:
+  x-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Discover trends, write articles, dry-run share packages
+        env:
+          SIGNAL_API_URL: ${{ secrets.SIGNAL_API_URL }}
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          RENDER_BACKEND_URL: ${{ secrets.RENDER_BACKEND_URL }}
+          SIGNAL_API_TOKEN: ${{ secrets.SIGNAL_API_TOKEN }}
+        run: |
+          TARGET_URL="${SIGNAL_API_URL:-${BACKEND_URL:-${RENDER_BACKEND_URL:-}}}"
+          if [ -z "$TARGET_URL" ]; then
+            echo "Set SIGNAL_API_URL (or BACKEND_URL / RENDER_BACKEND_URL)."
+            exit 1
+          fi
+          if [ -z "$SIGNAL_API_TOKEN" ]; then
+            echo "Set SIGNAL_API_TOKEN."
+            exit 1
+          fi
+          if ! echo "$TARGET_URL" | grep -Eq '^https?://'; then
+            echo "Backend URL must include https:// or http://"
+            exit 1
+          fi
+
+          BASE_URL="${TARGET_URL%/}"
+          echo "Waking backend: $BASE_URL/awake"
+          curl -L -sS -o /tmp/wake.json -w "%{http_code}" --connect-timeout 10 --max-time 40 "$BASE_URL/awake" || true
+          echo
+
+          echo "Running X pipeline (dry-run)"
+          http_code=$(curl -L -sS -o /tmp/x-run.json -w "%{http_code}" \
+            --connect-timeout 10 --max-time 300 \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $SIGNAL_API_TOKEN" \
+            -d '{"max_articles":1,"discover_limit":8,"mode":"fast","dry_run":true,"auto_post":false}' \
+            "$BASE_URL/agents/x/run")
+          echo "X pipeline HTTP $http_code"
+          cat /tmp/x-run.json || true
+          echo
+          if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
+            exit 1
+          fi
