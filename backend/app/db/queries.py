@@ -402,20 +402,38 @@ def list_consensus(story_id: int) -> list[dict[str, Any]]:
     return items
 
 
-def search(q: str) -> list[dict[str, Any]]:
+def search(q: str, *, days: int | None = None, limit: int = 25) -> list[dict[str, Any]]:
+    """
+    Search ingested articles. When `days` is set, prefer coverage from the
+    recent window so Fast mode can draft from today's desk cache first.
+    """
     term = f"%{q}%"
+    safe_limit = min(max(limit, 1), 50)
     with get_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT id, source_name, title, url, published_at, clean_text
-                FROM articles
-                WHERE title ILIKE %s OR clean_text ILIKE %s
-                ORDER BY published_at DESC
-                LIMIT 25
-                """,
-                (term, term),
-            )
+            if days and days > 0:
+                cur.execute(
+                    """
+                    SELECT id, source_name, title, url, published_at, clean_text, raw_text, description, topic
+                    FROM articles
+                    WHERE (title ILIKE %s OR clean_text ILIKE %s OR description ILIKE %s OR raw_text ILIKE %s)
+                      AND COALESCE(published_at, created_at) > NOW() - (%s || ' days')::interval
+                    ORDER BY COALESCE(published_at, created_at) DESC
+                    LIMIT %s
+                    """,
+                    (term, term, term, term, str(int(days)), safe_limit),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT id, source_name, title, url, published_at, clean_text, raw_text, description, topic
+                    FROM articles
+                    WHERE title ILIKE %s OR clean_text ILIKE %s OR description ILIKE %s OR raw_text ILIKE %s
+                    ORDER BY COALESCE(published_at, created_at) DESC
+                    LIMIT %s
+                    """,
+                    (term, term, term, term, safe_limit),
+                )
             return [row_to_dict(row) for row in cur.fetchall()]
 
 

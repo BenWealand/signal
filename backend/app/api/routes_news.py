@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import re
 
-from fastapi import APIRouter, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, Header
 
 from app import cache
 from app.config import settings
@@ -136,6 +136,40 @@ def ingest_all_rss(background_tasks: BackgroundTasks):
     """Trigger a full RSS refresh across all sections (runs in background)."""
     background_tasks.add_task(_run_full_rss_ingest)
     return {"ok": True, "feeds": len(__import__("app.ingest.rss_ingest", fromlist=["ALL_FEEDS"]).ALL_FEEDS), "status": "fetching"}
+
+
+@router.post("/ingest/daily")
+def ingest_daily(
+    background_tasks: BackgroundTasks,
+    x_signal_token: str = Header(default="", alias="X-Signal-Token"),
+    authorization: str = Header(default=""),
+):
+    """
+    Daily desk refresh: pull fresh RSS into Postgres so Fast mode can
+    answer from cache. Protected by SIGNAL_API_TOKEN.
+    """
+    from secrets import compare_digest
+    from fastapi import HTTPException
+
+    expected = (settings.signal_api_token or "").strip()
+    if not expected:
+        raise HTTPException(status_code=503, detail="Signal agent access is not configured")
+    supplied = (x_signal_token or "").strip()
+    if authorization.lower().startswith("bearer "):
+        supplied = supplied or authorization[7:].strip()
+    if not supplied or not compare_digest(supplied, expected):
+        raise HTTPException(status_code=401, detail="Invalid Signal agent token")
+
+    def _job() -> None:
+        try:
+            from app.main import run_daily_source_refresh
+            run_daily_source_refresh(synthesize_sections=True)
+        except Exception:
+            log_event(logger, "daily_ingest_endpoint_failed", level=logging.ERROR)
+            logger.exception("Daily ingest endpoint failed")
+
+    background_tasks.add_task(_job)
+    return {"ok": True, "status": "fetching", "mode": "daily"}
 
 
 @router.post("/ingest/rss/{section}")

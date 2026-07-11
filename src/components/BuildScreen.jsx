@@ -10,9 +10,11 @@ const STAGE_COLORS = {
   consensus:  "#6a2a7a",
   writing:    "#1a6a3a",
   idle:       "#555a50",
+  done:       "#1a6a3a",
+  error:      "#8a3030",
 };
 
-export function BuildScreen({ draft, wakeState }) {
+export function BuildScreen({ draft, buildId = "", progress: externalProgress = null, wakeState }) {
   const WINDOW = 15;
   const tickRef = useRef(WINDOW);
 
@@ -31,7 +33,15 @@ export function BuildScreen({ draft, wakeState }) {
     sources_enriched: 0,
     claims_extracted: 0,
     elapsed_s: 0,
+    draft_text: "",
+    draft_headline: "",
   });
+
+  useEffect(() => {
+    if (externalProgress && typeof externalProgress === "object") {
+      setProgress((prev) => ({ ...prev, ...externalProgress }));
+    }
+  }, [externalProgress]);
 
   useEffect(() => {
     tickRef.current = WINDOW - 1;
@@ -46,20 +56,20 @@ export function BuildScreen({ draft, wakeState }) {
     }, 70);
 
     const pollInterval = window.setInterval(async () => {
-      if (!hasApiBase()) return;
+      if (!hasApiBase() || externalProgress) return;
       try {
-        const data = await getArticleProgress();
+        const data = await getArticleProgress(buildId);
         if (data.active || data.stage !== "idle") setProgress(data);
       } catch {
         // Offline progress remains visible when no backend progress is available.
       }
-    }, 1500);
+    }, 900);
 
     return () => {
       window.clearInterval(logInterval);
       window.clearInterval(pollInterval);
     };
-  }, [draft.logs.length]);
+  }, [draft.logs.length, buildId, externalProgress]);
 
   const stageColor = STAGE_COLORS[progress.stage] || STAGE_COLORS.idle;
   const elapsedLabel = progress.elapsed_s > 0 ? `${progress.elapsed_s}s` : "";
@@ -70,6 +80,8 @@ export function BuildScreen({ draft, wakeState }) {
     : isStuck
       ? "Still working - thorough sourcing can take a little longer..."
       : progress.stage_label;
+  const draftPreview = String(progress.draft_text || "").trim();
+  const draftHeadline = String(progress.draft_headline || "").trim();
 
   return (
     <section className="writing-screen is-building">
@@ -77,10 +89,10 @@ export function BuildScreen({ draft, wakeState }) {
         <div className="build-progress-stages">
           {["fetching","enriching","processing","consensus","writing"].map((s) => {
             const stages = ["fetching","enriching","processing","consensus","writing"];
-            const current = stages.indexOf(progress.stage);
+            const current = stages.indexOf(progress.stage === "done" ? "writing" : progress.stage);
             const idx = stages.indexOf(s);
-            const done = idx < current;
-            const active = idx === current;
+            const done = idx < current || progress.stage === "done";
+            const active = idx === current && progress.stage !== "done";
             return (
               <div key={s} className={`build-stage-pip ${done ? "done" : ""} ${active ? "active" : ""}`}>
                 <span className="pip-dot" />
@@ -110,6 +122,13 @@ export function BuildScreen({ draft, wakeState }) {
           </div>
         </div>
       </div>
+
+      {draftPreview ? (
+        <div className="build-draft-preview" aria-live="polite">
+          {draftHeadline ? <strong>{draftHeadline}</strong> : <span>Live draft</span>}
+          <p>{draftPreview.slice(0, 700)}{draftPreview.length > 700 ? "…" : ""}</p>
+        </div>
+      ) : null}
 
       <div className="build-stage">
         <div className="terminal-card build-terminal">

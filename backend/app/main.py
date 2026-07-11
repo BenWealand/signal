@@ -117,6 +117,46 @@ def _periodic_rss_refresh(interval_seconds: int = 900) -> None:
             logger.exception("Periodic section fast generation failed")
 
 
+def run_daily_source_refresh(*, synthesize_sections: bool = True) -> dict:
+    """
+    Pull a fresh day of RSS coverage into Postgres so Fast mode can draft
+    from cache before hitting live providers.
+    """
+    started = time.monotonic()
+    articles = fetch_all_rss_fast(max_per_section=14)
+    _ingest_and_enrich(articles)
+    section_count = 0
+    if synthesize_sections:
+        for section in SECTION_SLUGS:
+            try:
+                _generate_fast_section_articles(section)
+                section_count += 1
+            except Exception:
+                log_event(logger, "daily_section_synthesis_failed", level=logging.ERROR, section=section)
+                logger.exception("Daily section fast generation failed", extra={"section": section})
+    return {
+        "ok": True,
+        "ingested": len(articles),
+        "sections": section_count,
+        "duration_ms": int((time.monotonic() - started) * 1000),
+    }
+
+
+def _daily_ingest_loop(interval_seconds: int = 86400) -> None:
+    """Daemon: refresh the desk cache about once per day."""
+    # Run soon after boot so the first Fast drafts can use warm coverage,
+    # then settle into the daily cadence.
+    time.sleep(20)
+    while True:
+        try:
+            result = run_daily_source_refresh(synthesize_sections=True)
+            log_event(logger, "daily_source_refresh_complete", **result)
+        except Exception:
+            log_event(logger, "daily_source_refresh_failed", level=logging.ERROR)
+            logger.exception("Daily source refresh failed")
+        time.sleep(max(3600, interval_seconds))
+
+
 def _startup_pipeline() -> None:
     """
     Background thread: fast RSS fetch → insert snippets → enrich full text
@@ -161,6 +201,15 @@ def startup() -> None:
         threading.Thread(target=_startup_pipeline, daemon=True).start()
     if settings.periodic_rss:
         threading.Thread(target=_periodic_rss_refresh, args=(900,), daemon=True).start()
+    if settings.daily_ingest_enabled and not settings.periodic_rss and not settings.auto_ingest_on_startup:
+        # When the heavier periodic ingest is off (typical free-tier), still
+        # refresh the source desk about once per day for cache-first Fast writes.
+        threading.Thread(
+            target=_daily_ingest_loop,
+            args=(settings.daily_ingest_interval_seconds,),
+            daemon=True,
+            name="daily-source-refresh",
+        ).start()
 
 
 @app.on_event("shutdown")

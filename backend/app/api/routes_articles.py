@@ -4,6 +4,7 @@ import re
 import time
 import uuid
 import logging
+import threading
 from collections import defaultdict, deque
 from secrets import compare_digest
 from urllib.parse import urlencode
@@ -14,7 +15,12 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request
 from app.db import queries
 from app.config import settings
 from app.policy.prompt_filter import prompt_is_blocked
-from app.processing.article_writer import GeminiArticleUnavailable, write_article_from_prompt, get_build_progress
+from app.processing.article_writer import (
+    GeminiArticleUnavailable,
+    write_article_from_prompt,
+    get_build_progress,
+    set_build_progress,
+)
 
 
 router = APIRouter()
@@ -36,6 +42,7 @@ class TrendArticleRequest(BaseModel):
     limit: int = 12
     mode: str = "fast"
     user_id: int | None = None
+    async_mode: bool = False
 
     @validator("prompt")
     def prompt_size(cls, value: str) -> str:
@@ -51,6 +58,13 @@ class TrendArticleRequest(BaseModel):
         if value < 1 or value > MAX_LIMIT:
             raise ValueError(f"limit must be between 1 and {MAX_LIMIT}")
         return value
+
+    @validator("mode")
+    def mode_value(cls, value: str) -> str:
+        cleaned = (value or "fast").strip().lower()
+        if cleaned not in {"fast", "thorough"}:
+            raise ValueError("mode must be fast or thorough")
+        return cleaned
 
 
 class FollowUpRequest(BaseModel):
@@ -430,8 +444,73 @@ def write_article(request: Request, payload: TrendArticleRequest, authorization:
     _check_article_rate_limit(_client_rate_key(request, "write"))
     _reject_blocked_prompt(payload.prompt)
     build_id = f"build-{uuid.uuid4().hex}"
-    article = _write_gemini_article(payload.prompt, limit=payload.limit, mode=payload.mode, build_id=build_id)
-    article["buildId"] = build_id
-    article["ownerUserId"] = _resolve_optional_owner_user_id(payload.user_id, authorization)
-    queries.save_generated_article(article)
-    return article
+    owner_user_id = _resolve_optional_owner_user_id(payload.user_id, authorization)
+
+    if not payload.async_mode:
+        article = _write_gemini_article(payload.prompt, limit=payload.limit, mode=payload.mode, build_id=build_id)
+        article["buildId"] = build_id
+        article["ownerUserId"] = owner_user_id
+        queries.save_generated_article(article)
+        return article
+
+    set_build_progress(
+        build_id,
+        active=True,
+        prompt=payload.prompt,
+        stage="fetching",
+        stage_label="Queued for sourcing...",
+        sources_found=0,
+        sources_enriched=0,
+        claims_extracted=0,
+        draft_text="",
+        draft_headline="",
+        article=None,
+        error=None,
+        started_at=time.time(),
+    )
+
+    def _job() -> None:
+        try:
+            article = _write_gemini_article(
+                payload.prompt,
+                limit=payload.limit,
+                mode=payload.mode,
+                build_id=build_id,
+            )
+            article["buildId"] = build_id
+            article["ownerUserId"] = owner_user_id
+            queries.save_generated_article(article)
+            set_build_progress(
+                build_id,
+                active=False,
+                stage="done",
+                stage_label="Done",
+                article=article,
+                draft_text="\n\n".join(article.get("body") or []),
+                draft_headline=article.get("headline") or "",
+                error=None,
+            )
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, dict) else {"message": str(exc.detail)}
+            message = str(detail.get("message") or detail)
+            set_build_progress(
+                build_id,
+                active=False,
+                stage="error",
+                stage_label="Write failed",
+                error=message,
+                article=None,
+            )
+        except Exception as exc:
+            logger.exception("Async article write failed", extra={"build_id": build_id})
+            set_build_progress(
+                build_id,
+                active=False,
+                stage="error",
+                stage_label="Write failed",
+                error=str(exc) or "Article write failed",
+                article=None,
+            )
+
+    threading.Thread(target=_job, daemon=True, name=f"article-write-{build_id[:10]}").start()
+    return {"buildId": build_id, "status": "building", "active": True}

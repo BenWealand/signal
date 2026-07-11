@@ -27,6 +27,10 @@ _default_progress: dict = {
     "claims_extracted": 0,
     "started_at": 0.0,
     "elapsed_s": 0,
+    "draft_text": "",
+    "draft_headline": "",
+    "article": None,
+    "error": None,
 }
 _progress: dict = dict(_default_progress)
 _progress_by_build: dict[str, dict] = {}
@@ -60,12 +64,16 @@ def _set_progress(build_id: str | None = None, **kwargs: object) -> None:
             target["started_at"] = time.time()
         _progress.update(target)
 
+
+set_build_progress = _set_progress
+
 from app.db import queries
 from app.ingest.article_reader import fetch_readable_article_text
 from app.ingest.gdelt_ingest import fetch_gdelt_articles
-from app.ingest.rss_ingest import fetch_articles_for_query
+from app.ingest.rss_ingest import fetch_articles_for_query, fetch_articles_for_query_fast
 from app.ingest.source_registry import domain_from_url, is_blocked_domain
 from app.ingest.source_ranker import SourceGate, evaluate_source_quality, rank_sources
+from app.config import settings
 from app.llm.consensus import detect_consensus
 from app.llm.trend_article import title_case
 from app.nlp.ner import extract_entities
@@ -253,10 +261,11 @@ def _cached_articles_for_prompt(prompt: str, limit: int) -> list[dict]:
     """
     Search the DB for articles relevant to this prompt.
 
-    Search order (most specific → most broad):
-    1. Full phrase match  e.g. "supply chain hack"
-    2. Longest meaningful sub-phrases (pairs of adjacent keywords)
-    3. Individual keywords that are ≥6 chars (less noise than short words)
+    Prefer the last 2 days of desk coverage first, then broaden. Search order:
+    1. Full phrase match in recent window
+    2. Full phrase match overall
+    3. Longest meaningful sub-phrases (pairs of adjacent keywords)
+    4. Individual keywords that are ≥6 chars (less noise than short words)
 
     Every candidate is passed through _is_relevant before being added,
     so unrelated articles that happen to contain a common word are dropped.
@@ -268,27 +277,50 @@ def _cached_articles_for_prompt(prompt: str, limit: int) -> list[dict]:
         for result in result_list:
             if len(found) >= limit * 3:
                 return
-            a = queries.get_article(int(result["id"]))
-            if a and _is_relevant(a, prompt, prompt_kw):
-                found[int(a["id"])] = a
+            article_id = int(result["id"])
+            if article_id in found:
+                continue
+            # search() already returns enough fields for Fast mode; avoid a
+            # second round-trip when the row already has usable text.
+            if result.get("raw_text") or result.get("clean_text") or result.get("description"):
+                candidate = result
+            else:
+                candidate = queries.get_article(article_id)
+            if candidate and _is_relevant(candidate, prompt, prompt_kw):
+                if not candidate.get("raw_text"):
+                    candidate = {
+                        **candidate,
+                        "raw_text": candidate.get("clean_text") or candidate.get("description") or "",
+                    }
+                found[article_id] = candidate
 
-    # 1. Full phrase
-    _add(queries.search(prompt))
+    # 1. Recent desk cache (daily ingest window)
+    _add(queries.search(prompt, days=2, limit=max(limit * 2, 12)))
+
+    # 2. Full phrase across all ages
+    if len(found) < limit:
+        _add(queries.search(prompt, limit=max(limit * 2, 12)))
 
     if len(found) < limit:
         words = [w for w in prompt.split() if len(w) >= 4 and w.lower() not in _STOPWORDS]
 
-        # 2. Adjacent-word bigrams  ("supply chain", "chain hack")
+        # 3. Adjacent-word bigrams  ("supply chain", "chain hack")
         for i in range(len(words) - 1):
             bigram = f"{words[i]} {words[i+1]}"
-            _add(queries.search(bigram))
+            _add(queries.search(bigram, days=2, limit=10))
+            if len(found) >= limit:
+                break
+            _add(queries.search(bigram, limit=10))
             if len(found) >= limit:
                 break
 
-        # 3. Long individual keywords only (≥6 chars reduces noise)
+        # 4. Long individual keywords only (≥6 chars reduces noise)
         if len(found) < limit:
             for term in [w for w in words if len(w) >= 6][:3]:
-                _add(queries.search(term))
+                _add(queries.search(term, days=2, limit=8))
+                if len(found) >= limit:
+                    break
+                _add(queries.search(term, limit=8))
 
     return list(found.values())[:limit]
 
@@ -507,22 +539,50 @@ def _article_body(
     unique_claims: list[dict],
     use_gemini: bool = True,
     require_gemini: bool = False,
-) -> list[str]:
+    *,
+    generation_mode: str = "thorough",
+    build_id: str | None = None,
+) -> tuple[list[str], dict[str, str] | None]:
     """
-    Try Gemini first for a polished, grammar-correct article.
+    Try Gemini first for a polished, grammar-correct article package.
+    Returns (body_paragraphs, optional_header_package).
     When Gemini is required, fail without saving a generated article.
     """
-    from app.llm.gemini_writer import write_article_with_gemini
+    from app.llm.gemini_writer import write_article_package_with_gemini
+
+    def _on_chunk(partial: dict) -> None:
+        if not build_id:
+            return
+        _set_progress(
+            build_id,
+            stage="writing",
+            stage_label="Gemini is drafting your article...",
+            draft_text=str(partial.get("draft_text") or "")[:4000],
+            draft_headline=str(partial.get("headline") or ""),
+        )
 
     # ── Gemini path ───────────────────────────────────────────────────────────
-    gemini_text = write_article_with_gemini(prompt, source_articles) if use_gemini else None
-    if gemini_text:
-        # Try double-newline first; fall back to single-newline splitting
+    package = (
+        write_article_package_with_gemini(
+            prompt,
+            source_articles,
+            mode=generation_mode,
+            on_chunk=_on_chunk if generation_mode == "fast" else None,
+        )
+        if use_gemini
+        else None
+    )
+    if package and package.get("body"):
+        gemini_text = package["body"]
         paragraphs = [p.strip() for p in gemini_text.split("\n\n") if p.strip()]
         if len(paragraphs) < 2:
             paragraphs = [p.strip() for p in gemini_text.split("\n") if len(p.strip()) > 60]
         if len(paragraphs) >= 2:
-            return paragraphs
+            header = {
+                "headline": str(package.get("headline") or "").strip(),
+                "dek": str(package.get("dek") or "").strip(),
+            }
+            return paragraphs, header if header["headline"] and header["dek"] else None
 
     if require_gemini:
         raise GeminiArticleUnavailable("Gemini did not return a usable article draft")
@@ -570,7 +630,7 @@ def _article_body(
             "from public sources."
         )
 
-    return [p for p in body if p.strip()]
+    return [p for p in body if p.strip()], None
 
 
 def _facts_from_consensus(
@@ -640,6 +700,7 @@ def _article_from_consensus(
     used_live_sources: bool = True,
     fallback_reason: str | None = None,
     require_gemini: bool = False,
+    build_id: str | None = None,
 ) -> dict:
     supported = [c for c in consensus if c["status"] == "supported"]
     unique = [c for c in consensus if c["status"] in ("unique", "uncertain")]
@@ -654,26 +715,21 @@ def _article_from_consensus(
         headline if headline.endswith("— Signal Coverage") is False
         else f"Signal tracked {source_count} public sources for: {prompt}."
     )
-    body = _article_body(
+    body, gemini_header = _article_body(
         prompt,
         source_articles,
         supported,
         unique,
         use_gemini=use_gemini or require_gemini,
         require_gemini=require_gemini,
+        generation_mode=generation_mode,
+        build_id=build_id,
     )
-    if use_gemini and body:
-        try:
-            from app.llm.gemini_writer import write_article_header_with_gemini
-            gemini_header = write_article_header_with_gemini(prompt, body, source_articles)
-        except Exception:
-            logger.exception("Gemini article header generation failed", extra={"prompt": prompt})
-            gemini_header = None
-        if gemini_header:
-            headline = gemini_header["headline"]
-            dek = gemini_header["dek"]
-            if not supported:
-                summary = dek or headline
+    if gemini_header:
+        headline = gemini_header["headline"]
+        dek = gemini_header["dek"]
+        if not supported:
+            summary = dek or headline
     facts = _facts_from_consensus(source_articles, supported, unique)
     terms = list(dict.fromkeys(re.findall(r"[a-z]{4,}", prompt.lower())))[:5]
     source_quality = source_quality or evaluate_source_quality(source_articles, prompt, gate=THOROUGH_SOURCE_GATE)
@@ -768,48 +824,78 @@ def _fast_consensus_from_sources(prompt: str, candidates: list[dict]) -> list[di
 def _fast_article_from_prompt(prompt: str, limit: int = 8, use_gemini: bool = True, build_id: str | None = None) -> dict:
     build_id = build_id or f"build-{uuid.uuid4().hex}"
     fast_limit = max(4, min(limit, 12))
+    min_cache = max(2, min(settings.fast_cache_min_sources, fast_limit))
     _set_progress(
         build_id,
         active=True, prompt=prompt,
         stage="fetching",
-        stage_label="Fast draft: scanning live source snippets...",
+        stage_label="Scanning today's desk cache...",
         sources_found=0, sources_enriched=0, claims_extracted=0,
+        draft_text="", draft_headline="", article=None, error=None,
         started_at=time.time(),
     )
 
-    rss_candidates: list[dict] = []
-    gdelt_candidates: list[dict] = []
-    pool = ThreadPoolExecutor(max_workers=2)
+    # 1) Prefer freshly ingested desk coverage first.
+    cached: list[dict] = []
     try:
-        futures = {
-            pool.submit(fetch_articles_for_query, prompt, False, fast_limit, 4): "rss",
-            pool.submit(fetch_gdelt_articles, prompt, fast_limit, 0.15): "gdelt",
-        }
-        try:
-            for future in as_completed(futures, timeout=8):
-                try:
-                    if futures[future] == "rss":
-                        rss_candidates = future.result()
-                    else:
-                        gdelt_candidates = future.result()
-                except Exception:
-                    logger.exception("Fast article source fetch failed", extra={"source": futures[future], "build_id": build_id})
-        except TimeoutError:
-            logger.warning("Fast article source fetch timed out", extra={"build_id": build_id, "prompt": prompt})
-    finally:
-        pool.shutdown(wait=False, cancel_futures=True)
+        cached = _cached_articles_for_prompt(prompt, fast_limit)
+    except Exception:
+        logger.exception("Cached article lookup failed during fast article generation", extra={"build_id": build_id, "prompt": prompt})
+        cached = []
 
-    candidates = _merge_candidates(rss_candidates, gdelt_candidates, fast_limit, prompt)
-    if len(candidates) < 4:
+    candidates = _merge_candidates(cached, [], fast_limit, prompt)
+    used_live_sources = False
+
+    # 2) Only hit live providers when the daily cache is thin.
+    if len(candidates) < min_cache:
+        _set_progress(
+            build_id,
+            stage="fetching",
+            stage_label="Cache thin — racing Bing, Guardian, and GDELT...",
+            sources_found=len(candidates),
+        )
+        rss_candidates: list[dict] = []
+        gdelt_candidates: list[dict] = []
+        pool = ThreadPoolExecutor(max_workers=2)
         try:
-            cached = _cached_articles_for_prompt(prompt, fast_limit)
-        except Exception:
-            logger.exception("Cached article lookup failed during fast article generation", extra={"build_id": build_id, "prompt": prompt})
-            cached = []
-        candidates = _merge_candidates(candidates, cached, fast_limit, prompt)
+            futures = {
+                pool.submit(fetch_articles_for_query_fast, prompt, fast_limit, min_cache, 5.0): "rss",
+                pool.submit(fetch_gdelt_articles, prompt, fast_limit, 0.15): "gdelt",
+            }
+            try:
+                for future in as_completed(futures, timeout=6):
+                    try:
+                        if futures[future] == "rss":
+                            rss_candidates = future.result() or []
+                        else:
+                            gdelt_candidates = future.result() or []
+                    except Exception:
+                        logger.exception(
+                            "Fast article source fetch failed",
+                            extra={"source": futures[future], "build_id": build_id},
+                        )
+                    merged_live = _merge_candidates(candidates, rss_candidates + gdelt_candidates, fast_limit, prompt)
+                    if len(merged_live) >= min_cache:
+                        candidates = merged_live
+                        used_live_sources = bool(rss_candidates or gdelt_candidates)
+                        break
+            except TimeoutError:
+                logger.warning("Fast article source fetch timed out", extra={"build_id": build_id, "prompt": prompt})
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
+
+        candidates = _merge_candidates(candidates, rss_candidates + gdelt_candidates, fast_limit, prompt)
+        used_live_sources = used_live_sources or bool(rss_candidates or gdelt_candidates)
+    else:
+        _set_progress(
+            build_id,
+            stage="fetching",
+            stage_label=f"Using {len(candidates)} fresh desk sources...",
+            sources_found=len(candidates),
+        )
 
     if not candidates:
-        _set_progress(build_id, active=False, stage="idle", stage_label="No sources found")
+        _set_progress(build_id, active=False, stage="error", stage_label="No sources found", error="No accessible sources were found for a Gemini draft")
         raise GeminiArticleUnavailable("No accessible sources were found for a Gemini draft")
 
     candidates.sort(key=lambda a: len(a.get("raw_text", "") or a.get("description", "")), reverse=True)
@@ -834,14 +920,24 @@ def _fast_article_from_prompt(prompt: str, limit: int = 8, use_gemini: bool = Tr
         use_gemini=True,
         generation_mode="fast",
         source_quality=source_quality,
-        used_live_sources=bool(rss_candidates or gdelt_candidates),
+        used_live_sources=used_live_sources,
         require_gemini=True,
+        build_id=build_id,
     )
     article["buildId"] = build_id
     article["tag"] = "fast-draft"
     article["summary"] = article["summary"].replace("Signal tracked", "Fast draft from")
     queries.save_generated_article(article)
-    _set_progress(build_id, active=False, stage="idle", stage_label="Done")
+    _set_progress(
+        build_id,
+        active=False,
+        stage="done",
+        stage_label="Done",
+        article=article,
+        draft_text="\n\n".join(article.get("body") or []),
+        draft_headline=article.get("headline") or "",
+        error=None,
+    )
     return article
 
 
@@ -872,20 +968,21 @@ def write_article_from_prompt(prompt: str, limit: int = 50, use_gemini: bool = T
         stage="fetching",
         stage_label="Scanning Bing, Guardian, NewsAPI, Currents, GNews, AP, Reuters…",
         sources_found=0, sources_enriched=0, claims_extracted=0,
+        draft_text="", draft_headline="", article=None, error=None,
         started_at=time.time(),
     )
 
     # ── Step 1: fetch from all live sources in parallel ───────────────────────
     with ThreadPoolExecutor(max_workers=2) as pool:
-        f_rss   = pool.submit(fetch_articles_for_query, prompt, True, 40, 16)
-        f_gdelt = pool.submit(fetch_gdelt_articles, prompt, min(limit, 50))
+        f_rss   = pool.submit(fetch_articles_for_query, prompt, True, min(limit, 24), 12)
+        f_gdelt = pool.submit(fetch_gdelt_articles, prompt, min(limit, 30))
         try:
-            rss_candidates = f_rss.result(timeout=35)
+            rss_candidates = f_rss.result(timeout=22)
         except Exception:
             logger.exception("RSS article fetch failed during article generation", extra={"build_id": build_id, "prompt": prompt})
             rss_candidates = []
         try:
-            gdelt_candidates = f_gdelt.result(timeout=25)
+            gdelt_candidates = f_gdelt.result(timeout=16)
         except Exception:
             logger.exception("GDELT article fetch failed during article generation", extra={"build_id": build_id, "prompt": prompt})
             gdelt_candidates = []
@@ -927,7 +1024,7 @@ def write_article_from_prompt(prompt: str, limit: int = 50, use_gemini: bool = T
     )
 
     if not all_candidates:
-        _set_progress(build_id, active=False, stage="idle", stage_label="No sources found")
+        _set_progress(build_id, active=False, stage="error", stage_label="No sources found", error="No accessible sources were found for a Gemini draft")
         raise GeminiArticleUnavailable("No accessible sources were found for a Gemini draft")
 
     # Step 3: quality gate - require enough usable, diverse, fresh source text.
@@ -938,7 +1035,7 @@ def write_article_from_prompt(prompt: str, limit: int = 50, use_gemini: bool = T
         if max(len(c.get("clean_text", "") or ""), len(c.get("raw_text", "") or "")) >= THOROUGH_SOURCE_GATE.min_text_chars
     ]
     if source_quality["failed_gates"]:
-        _set_progress(build_id, active=False, stage="idle", stage_label="Too few sources found")
+        _set_progress(build_id, active=False, stage="error", stage_label="Too few sources found", error="Source coverage did not meet the quality gate for a Gemini article")
         raise GeminiArticleUnavailable("Source coverage did not meet the quality gate for a Gemini article")
     _set_progress(
         build_id,
@@ -955,7 +1052,7 @@ def write_article_from_prompt(prompt: str, limit: int = 50, use_gemini: bool = T
         processed = [a for a in processed if a]
 
     if not processed:
-        _set_progress(build_id, active=False, stage="idle", stage_label="Processing failed")
+        _set_progress(build_id, active=False, stage="error", stage_label="Processing failed", error="Source processing failed before Gemini could write an article")
         raise GeminiArticleUnavailable("Source processing failed before Gemini could write an article")
 
     # ── Step 4: cluster → consensus → synthesise ─────────────────────────────
@@ -988,9 +1085,19 @@ def write_article_from_prompt(prompt: str, limit: int = 50, use_gemini: bool = T
         source_quality=source_quality,
         used_live_sources=bool(rss_candidates or gdelt_candidates),
         require_gemini=True,
+        build_id=build_id,
     )
     article["buildId"] = build_id
     queries.save_generated_article(article)
 
-    _set_progress(build_id, active=False, stage="idle", stage_label="Done")
+    _set_progress(
+        build_id,
+        active=False,
+        stage="done",
+        stage_label="Done",
+        article=article,
+        draft_text="\n\n".join(article.get("body") or []),
+        draft_headline=article.get("headline") or "",
+        error=None,
+    )
     return article

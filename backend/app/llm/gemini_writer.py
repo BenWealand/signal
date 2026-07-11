@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import collections
 import json
+import re
 import sys
 import threading
 import time
@@ -17,6 +18,8 @@ _API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 # so Gemini can respond within the free-tier latency window.
 _MAX_SOURCE_CHARS = 9_000
 _MAX_PER_ARTICLE  = 1_300   # chars per source article fed to Gemini
+_FAST_MAX_SOURCE_CHARS = 5_500
+_FAST_MAX_PER_ARTICLE = 900
 
 # ── Rate limiter ───────────────────────────────────────────────────────────────
 # Free tier: 15 RPM. We cap at 10/min locally to leave headroom, AND track
@@ -48,18 +51,27 @@ _RETIRED_MODELS = frozenset({
     "gemini-2.0-flash-lite-001",
 })
 _MODEL_ALIAS_FALLBACK = "gemini-flash-latest"       # always points at the current flash model
-_MODEL_LITE_FALLBACK  = "gemini-flash-lite-latest"  # separate quota bucket for 429 retries
+_MODEL_LITE_FALLBACK  = "gemini-flash-lite-latest"  # separate quota bucket for 429 retries / fast mode
 
 
-def _active_model() -> str:
-    model = (settings.gemini_model or "").strip() or _MODEL_ALIAS_FALLBACK
+def _active_model(mode: str = "thorough") -> str:
+    if mode == "fast":
+        model = (settings.gemini_fast_model or "").strip() or _MODEL_LITE_FALLBACK
+    else:
+        model = (settings.gemini_model or "").strip() or _MODEL_ALIAS_FALLBACK
     if model in _RETIRED_MODELS:
         print(
             f"[Gemini] Model {model} has been retired by Google - using {_MODEL_ALIAS_FALLBACK} instead.",
             file=sys.stderr,
         )
-        return _MODEL_ALIAS_FALLBACK
+        return _MODEL_ALIAS_FALLBACK if mode != "fast" else _MODEL_LITE_FALLBACK
     return model
+
+
+def _source_budgets(mode: str) -> tuple[int, int]:
+    if mode == "fast":
+        return _FAST_MAX_SOURCE_CHARS, _FAST_MAX_PER_ARTICLE
+    return _MAX_SOURCE_CHARS, _MAX_PER_ARTICLE
 
 
 def _set_last_error(**error: object) -> None:
@@ -112,11 +124,12 @@ def _record_429() -> None:
         _last_429_at = time.monotonic()
 
 
-def _build_source_block(articles: list[dict]) -> tuple[str, int]:
+def _build_source_block(articles: list[dict], mode: str = "thorough") -> tuple[str, int]:
     """
     Select the richest articles (most body text) and format them for the
     Gemini prompt.  Returns (formatted_block, article_count_used).
     """
+    max_source_chars, max_per_article = _source_budgets(mode)
     ordered = sorted(
         articles,
         key=lambda a: len(a.get("clean_text", "") or a.get("raw_text", "")),
@@ -134,28 +147,178 @@ def _build_source_block(articles: list[dict]) -> tuple[str, int]:
         if not title and not body:
             continue
 
-        text = body[:_MAX_PER_ARTICLE] if body else ""
+        text = body[:max_per_article] if body else ""
         block = f"[{source}]\nTitle: {title}\n{text}".strip()
         blocks.append(block)
         total += len(block)
-        if total >= _MAX_SOURCE_CHARS:
+        if total >= max_source_chars:
             break
 
     return "\n---\n".join(blocks), len(blocks)
 
 
-def write_article_with_gemini(
+def _parse_package_text(text: str) -> dict[str, str] | None:
+    """Parse the HEADLINE/DEK/BODY package format from a Gemini response."""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return None
+    if cleaned.startswith("```"):
+        cleaned = cleaned.strip("`")
+        if cleaned.lower().startswith("json"):
+            cleaned = cleaned[4:].strip()
+    # Prefer tagged package format.
+    headline_match = re.search(r"<<<HEADLINE>>>\s*(.+)", cleaned)
+    dek_match = re.search(r"<<<DEK>>>\s*(.+)", cleaned)
+    body_match = re.search(r"<<<BODY>>>\s*([\s\S]+)", cleaned)
+    if headline_match and dek_match and body_match:
+        headline = headline_match.group(1).strip().strip('"')
+        dek = dek_match.group(1).strip().strip('"')
+        body = body_match.group(1).strip()
+        if len(headline.split()) >= 4 and len(dek.split()) >= 5 and len(body) > 100:
+            return {"headline": headline, "dek": dek, "body": body}
+    # JSON fallback.
+    try:
+        parsed = json.loads(cleaned)
+        if isinstance(parsed, dict):
+            headline = str(parsed.get("headline", "")).strip().strip('"')
+            dek = str(parsed.get("dek", "")).strip().strip('"')
+            body = str(parsed.get("body", "")).strip()
+            if len(headline.split()) >= 4 and len(dek.split()) >= 5 and len(body) > 100:
+                return {"headline": headline, "dek": dek, "body": body}
+    except Exception:
+        pass
+    # Body-only fallback for legacy callers / partial stream.
+    if len(cleaned) > 100 and "<<<HEADLINE>>>" not in cleaned:
+        return {"headline": "", "dek": "", "body": cleaned}
+    return None
+
+
+def _package_prompt(query: str, source_block: str, n_sources: int, mode: str) -> str:
+    paragraph_rule = "4-6 substantive paragraphs" if mode == "fast" else "6-8 substantive paragraphs"
+    return f"""You are a journalist at Signal, a news-transparency platform that shows readers how multiple outlets cover the same story.
+
+Topic: {query}
+
+SOURCE MATERIAL ({n_sources} sources):
+---
+{source_block}
+---
+
+Write a factual news article based ONLY on the source material above. Follow these rules exactly:
+
+1. {paragraph_rule}, Associated Press style, plain prose only.
+2. Lead paragraph: the single most important confirmed fact.
+3. Middle paragraphs: include the concrete details available in the sources: agencies, places, people, numbers, timing, policy terms, company names, and source-specific caveats when present.
+4. Attribute key details to specific outlets ("AP reported that...", "According to The Guardian,..."). Where 2+ sources confirm the same fact, state it as established. Where only 1 source reports something, attribute it.
+5. Final paragraph: meaningful context or background, not a generic wrap-up.
+6. Do NOT invent any fact, quote, statistic, or name not present in the source material above.
+7. Correct all grammar and spelling. Write at a professional newspaper standard.
+8. Return EXACTLY this format and nothing else:
+
+<<<HEADLINE>>>
+A specific factual news headline, 8-14 words, no clickbait, do not mention Signal
+<<<DEK>>>
+A one-sentence summary under 24 words
+<<<BODY>>>
+paragraph 1
+
+paragraph 2
+
+..."""
+
+
+def _emit_stream_progress(accumulated: str, on_chunk) -> None:
+    if not on_chunk:
+        return
+    package = _parse_package_text(accumulated) or {}
+    body = package.get("body") or ""
+    if "<<<BODY>>>" in accumulated and not body:
+        body = accumulated.split("<<<BODY>>>", 1)[-1].strip()
+    on_chunk({
+        "draft_text": body or accumulated[-1200:],
+        "headline": package.get("headline") or "",
+        "dek": package.get("dek") or "",
+    })
+
+
+def _call_gemini_package(
+    *,
+    model: str,
+    payload: bytes,
+    key: str,
+    timeout: int = 30,
+    stream: bool = False,
+    on_chunk=None,
+) -> str | None:
+    if stream:
+        url = f"{_API_BASE}/{urllib.parse.quote(model, safe='')}:streamGenerateContent?alt=sse"
+    else:
+        url = f"{_API_BASE}/{urllib.parse.quote(model, safe='')}:generateContent"
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "x-goog-api-key": key,
+        },
+        method="POST",
+    )
+    if not stream:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", errors="ignore")
+        data = json.loads(raw)
+        if "error" in data:
+            _set_last_error(kind="api", model=model, error=data["error"])
+            print(f"[Gemini] API error: {data['error']}", file=sys.stderr)
+            return None
+        candidates = data.get("candidates", [])
+        if not candidates:
+            _set_last_error(kind="response", model=model, message="Gemini returned no candidates")
+            return None
+        parts = candidates[0].get("content", {}).get("parts", [])
+        if not parts:
+            _set_last_error(kind="response", model=model, message="Gemini returned no content parts")
+            return None
+        text = parts[0].get("text", "").strip()
+        return text if len(text) > 100 else None
+
+    accumulated = ""
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        while True:
+            line = resp.readline()
+            if not line:
+                break
+            decoded = line.decode("utf-8", errors="ignore").strip()
+            if not decoded.startswith("data:"):
+                continue
+            data_str = decoded[5:].strip()
+            if not data_str or data_str == "[DONE]":
+                continue
+            try:
+                payload_obj = json.loads(data_str)
+            except Exception:
+                continue
+            parts = payload_obj.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+            delta = parts[0].get("text", "") if parts else ""
+            if not delta:
+                continue
+            accumulated += delta
+            _emit_stream_progress(accumulated, on_chunk)
+    return accumulated if len(accumulated) > 100 else None
+
+
+def write_article_package_with_gemini(
     query: str,
     source_articles: list[dict],
-) -> str | None:
+    *,
+    mode: str = "thorough",
+    on_chunk=None,
+) -> dict[str, str] | None:
     """
-    Call Gemini to synthesize a polished 6-8 paragraph news article from
-    collected source material.
+    One Gemini call that returns headline + dek + body.
 
-    Returns the article body as plain text (paragraphs separated by blank
-    lines), or None if Gemini is unavailable or the call fails.
-
-    Quota: 1 API call per article generation (plus at most one fallback retry).
+    Fast mode uses the lite model, a smaller source budget, and streams
+    partial draft text through `on_chunk` when provided.
     """
     key = settings.gemini_api_key
     if not key:
@@ -167,78 +330,52 @@ def write_article_with_gemini(
         print("[Gemini] Local rate cap reached — skipping to preserve quota.", file=sys.stderr)
         return None
 
-    source_block, n_sources = _build_source_block(source_articles)
+    source_block, n_sources = _build_source_block(source_articles, mode=mode)
     if not source_block:
         _set_last_error(kind="input", message="No source material was available for Gemini")
         return None
 
-    model = _active_model()
+    model = _active_model(mode)
     _clear_last_error()
-
-    prompt = f"""You are a journalist at Signal, a news-transparency platform that shows readers how multiple outlets cover the same story.
-
-Topic: {query}
-
-SOURCE MATERIAL ({n_sources} sources):
----
-{source_block}
----
-
-Write a factual news article based ONLY on the source material above. Follow these rules exactly:
-
-1. 6-8 substantive paragraphs, Associated Press style, plain prose only.
-2. Lead paragraph: the single most important confirmed fact.
-3. Middle paragraphs: include the concrete details available in the sources: agencies, places, people, numbers, timing, policy terms, company names, and source-specific caveats when present.
-4. Attribute key details to specific outlets ("AP reported that...", "According to The Guardian,..."). Where 2+ sources confirm the same fact, state it as established. Where only 1 source reports something, attribute it.
-5. Final paragraph: meaningful context or background, not a generic wrap-up.
-6. Do NOT invent any fact, quote, statistic, or name not present in the source material above.
-7. Do NOT include a headline, byline, or dateline — only the body paragraphs.
-8. Write in plain prose. No bullet points, no headers, no markdown.
-9. Correct all grammar and spelling. Write at a professional newspaper standard."""
-
+    prompt = _package_prompt(query, source_block, n_sources, mode)
     payload = json.dumps({
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
             "temperature": 0.25,
-            "maxOutputTokens": 1536,
+            "maxOutputTokens": 1400 if mode == "fast" else 1800,
             "topP": 0.9,
         },
     }).encode("utf-8")
 
-    url = f"{_API_BASE}/{urllib.parse.quote(model, safe='')}:generateContent"
-    req = urllib.request.Request(
-        url,
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "x-goog-api-key": key,
-        },
-        method="POST",
-    )
-
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            raw = resp.read().decode("utf-8", errors="ignore")
-        data = json.loads(raw)
+        use_stream = mode == "fast" or on_chunk is not None
+        text = _call_gemini_package(
+            model=model,
+            payload=payload,
+            key=key,
+            timeout=22 if mode == "fast" else 30,
+            stream=use_stream,
+            on_chunk=on_chunk if use_stream else None,
+        )
+        package = _parse_package_text(text or "")
+        if package and package.get("body"):
+            return package
 
-        if "error" in data:
-            _set_last_error(kind="api", model=model, error=data["error"])
-            print(f"[Gemini] API error: {data['error']}", file=sys.stderr)
-            return None
+        if use_stream:
+            # Streaming returned nothing usable — one non-stream retry.
+            text = _call_gemini_package(
+                model=model,
+                payload=payload,
+                key=key,
+                timeout=22 if mode == "fast" else 30,
+                stream=False,
+            )
+            package = _parse_package_text(text or "")
+            if package and package.get("body"):
+                return package
 
-        candidates = data.get("candidates", [])
-        if not candidates:
-            _set_last_error(kind="response", model=model, message="Gemini returned no candidates")
-            return None
-        parts = candidates[0].get("content", {}).get("parts", [])
-        if not parts:
-            _set_last_error(kind="response", model=model, message="Gemini returned no content parts")
-            return None
-        text = parts[0].get("text", "").strip()
-        if len(text) <= 100:
-            _set_last_error(kind="response", model=model, message="Gemini returned too little text")
-            return None
-        return text
+        _set_last_error(kind="response", model=model, message="Gemini returned an unusable article package")
+        return None
 
     except urllib.error.HTTPError as exc:
         body: dict[str, object] = {}
@@ -264,36 +401,28 @@ Write a factual news article based ONLY on the source material above. Follow the
             message=message,
         )
         if exc.code in (404, 429):
-            # 404: the configured model id has been retired/renamed by Google.
-            # 429: quota exhausted on the primary model.
-            # Either way, retry once on a maintained alias before giving up.
             fallback_model = _MODEL_ALIAS_FALLBACK if exc.code == 404 else _MODEL_LITE_FALLBACK
             print(f"[Gemini] HTTP {exc.code} detail — status: {status}, message: {str(message)[:200]}", file=sys.stderr)
             if model != fallback_model:
                 print(f"[Gemini] Trying fallback model {fallback_model}…", file=sys.stderr)
-                fallback_url = f"{_API_BASE}/{urllib.parse.quote(fallback_model, safe='')}:generateContent"
-                fallback_req = urllib.request.Request(
-                    fallback_url, data=payload,
-                    headers={
-                        "Content-Type": "application/json",
-                        "x-goog-api-key": key,
-                    },
-                    method="POST",
-                )
                 try:
-                    with urllib.request.urlopen(fallback_req, timeout=30) as resp:
-                        data = json.loads(resp.read().decode("utf-8", errors="ignore"))
-                    parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-                    text = parts[0].get("text", "").strip() if parts else ""
-                    if len(text) > 100:
+                    text = _call_gemini_package(
+                        model=fallback_model,
+                        payload=payload,
+                        key=key,
+                        timeout=30,
+                        stream=False,
+                    )
+                    package = _parse_package_text(text or "")
+                    if package and package.get("body"):
                         print(f"[Gemini] Fallback to {fallback_model} succeeded.", file=sys.stderr)
                         _set_last_error(kind="fallback", model=fallback_model, original_model=model, original_http_status=exc.code)
-                        return text
+                        return package
                 except Exception as fe:
                     print(f"[Gemini] Fallback also failed: {fe}", file=sys.stderr)
             if exc.code == 429:
                 _record_429()
-                print("[Gemini] 65 s cooldown started. Rule-based fallback active.", file=sys.stderr)
+                print("[Gemini] 65 s cooldown started.", file=sys.stderr)
         else:
             print(f"[Gemini] HTTP {exc.code}: {message}", file=sys.stderr)
         return None
@@ -301,6 +430,27 @@ Write a factual news article based ONLY on the source material above. Follow the
         _set_last_error(kind="request", model=model, message=str(exc))
         print(f"[Gemini] Request failed: {exc}", file=sys.stderr)
         return None
+
+
+def write_article_with_gemini(
+    query: str,
+    source_articles: list[dict],
+    *,
+    mode: str = "thorough",
+    on_chunk=None,
+) -> str | None:
+    """
+    Compatibility wrapper: return article body text from the packaged writer.
+    """
+    package = write_article_package_with_gemini(
+        query,
+        source_articles,
+        mode=mode,
+        on_chunk=on_chunk,
+    )
+    if not package:
+        return None
+    return package.get("body") or None
 
 
 def suggest_follow_up_prompts_with_gemini(
@@ -327,7 +477,7 @@ def suggest_follow_up_prompts_with_gemini(
 
     body = "\n\n".join(p.strip() for p in (body_paragraphs or []) if p and p.strip())
     body_block = f"Opening paragraphs:\n{body[:2200]}" if body else ""
-    model = _active_model()
+    model = _active_model("thorough")
     _clear_last_error()
 
     prompt = f"""You are a research editor at Signal, a news exploration platform.
@@ -419,7 +569,7 @@ def write_article_header_with_gemini(
         return None
 
     source_names = sorted({str(a.get("source_name") or "").strip() for a in source_articles if a.get("source_name")})
-    model = _active_model()
+    model = _active_model("thorough")
     _clear_last_error()
 
     prompt = f"""You are a senior news editor at Signal.

@@ -52,6 +52,15 @@ class Settings:
     feed_cache_ttl_seconds: int = int(os.getenv("FEED_CACHE_TTL_SECONDS", "30"))
     section_fast_articles_per_refresh: int = int(os.getenv("SIGNAL_SECTION_FAST_COUNT", "3"))
     section_fast_min_age_minutes: int = int(os.getenv("SIGNAL_SECTION_FAST_MIN_AGE_MINUTES", "45"))
+    # Daily source refresh keeps the article cache warm so Fast mode can
+    # answer from Postgres before hitting live providers.
+    daily_ingest_enabled: bool = os.getenv("SIGNAL_DAILY_INGEST", "false").lower() == "true"
+    daily_ingest_interval_seconds: int = int(os.getenv("SIGNAL_DAILY_INGEST_INTERVAL_SECONDS", "86400"))
+    # Fast writes use the lite model; thorough keeps the primary flash model.
+    gemini_fast_model: str = os.getenv("GEMINI_FAST_MODEL", "gemini-flash-lite-latest")
+    fast_cache_min_sources: int = int(os.getenv("SIGNAL_FAST_CACHE_MIN_SOURCES", "4"))
+    thorough_enrich_limit: int = int(os.getenv("SIGNAL_THOROUGH_ENRICH_LIMIT", "12"))
+    thorough_enrich_timeout_seconds: int = int(os.getenv("SIGNAL_THOROUGH_ENRICH_TIMEOUT", "8"))
     app_name: str = "Signal News Intelligence API"
 
 

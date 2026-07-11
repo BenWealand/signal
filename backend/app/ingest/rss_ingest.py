@@ -4,7 +4,7 @@ import re
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 
 from app.ingest.article_reader import (
     fetch_readable_article_text, extract_text_from_html,
@@ -220,12 +220,12 @@ def _fetch_one_feed(feed_url: str, source_name: str, section: str) -> list[dict]
         return []
 
 
-def _enrich_article(article: dict) -> dict:
+def _enrich_article(article: dict, timeout: int = 14) -> dict:
     """Replace title+description snippet with full article text via trafilatura."""
     url = article.get("url", "")
     if not url:
         return article
-    raw_html = fetch_raw_html(url, timeout=14)
+    raw_html = fetch_raw_html(url, timeout=timeout)
     if not raw_html:
         return article
     full_text = extract_text_from_html(raw_html, fallback=article.get("raw_text", ""))
@@ -326,6 +326,62 @@ def enrich_articles_in_background(articles: list[dict], workers: int = 8) -> lis
 
 
 # ── Query-time search (called per user prompt, not on a schedule) ─────────────
+
+def fetch_articles_for_query_fast(
+    query: str,
+    max_articles: int = 8,
+    min_candidates: int = 4,
+    timeout_s: float = 5.0,
+) -> list[dict]:
+    """
+    Fast-mode live discovery: race Bing News + Guardian only, stop early when
+    enough usable candidates exist. No full-page enrichment.
+    """
+    from app.ingest.guardian_ingest import fetch_guardian_articles
+
+    raw_articles: list[dict] = []
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = {
+            pool.submit(_fetch_bing_news, query): "bing",
+            pool.submit(fetch_guardian_articles, query, min(5, max_articles)): "guardian",
+        }
+        try:
+            for future in as_completed(futures, timeout=timeout_s):
+                try:
+                    raw_articles.extend(future.result() or [])
+                except Exception:
+                    continue
+                usable = [
+                    a for a in raw_articles
+                    if a.get("url") and not is_blocked_domain(a.get("url", ""))
+                    and (
+                        len(a.get("raw_text", "") or "") > 80
+                        or len(a.get("description", "") or "") > 40
+                        or len(a.get("title", "") or "") > 20
+                    )
+                ]
+                if len({a.get("url") for a in usable}) >= min_candidates:
+                    break
+        except TimeoutError:
+            pass
+        finally:
+            for future in futures:
+                future.cancel()
+
+    seen: set[str] = set()
+    unique: list[dict] = []
+    for article in raw_articles:
+        url = article.get("url", "")
+        if not url or url in seen or is_blocked_domain(url):
+            continue
+        seen.add(url)
+        if not article.get("raw_text") and article.get("description"):
+            article = {**article, "raw_text": article["description"]}
+        unique.append(article)
+        if len(unique) >= max_articles:
+            break
+    return unique
+
 
 # Topic-aware supplemental feeds: keyed by keyword → list of (url, source_name)
 # Added alongside the Google News query feed for richer, scrapable content.
@@ -569,13 +625,22 @@ def fetch_articles_for_query(
     # These sources already provide full/partial text via their APIs — no scraping needed.
     _NO_ENRICH = frozenset({"The Guardian", "NewsAPI", "Currents", "GNews"})
 
-    to_enrich    = [a for a in articles if a.get("source_name") not in _NO_ENRICH]
-    pre_enriched = [a for a in articles if a.get("source_name") in _NO_ENRICH]
+    from app.config import settings
+    enrich_cap = max(4, int(settings.thorough_enrich_limit))
+    enrich_timeout = max(4, int(settings.thorough_enrich_timeout_seconds))
+
+    # Prefer already-rich text, then scrape only the top remaining candidates.
+    articles.sort(key=lambda a: len(a.get("raw_text", "") or a.get("description", "")), reverse=True)
+    to_enrich = [a for a in articles if a.get("source_name") not in _NO_ENRICH][:enrich_cap]
+    enrich_ids = {id(a) for a in to_enrich}
+    pre_enriched = [a for a in articles if id(a) not in enrich_ids]
 
     enriched: list[dict] = list(pre_enriched)
     if to_enrich:
         with ThreadPoolExecutor(max_workers=min(enrich_workers, len(to_enrich))) as pool:
-            futures_map = {pool.submit(_enrich_article, a): a for a in to_enrich}
+            futures_map = {
+                pool.submit(_enrich_article, a, enrich_timeout): a for a in to_enrich
+            }
             for future in as_completed(futures_map):
                 orig = futures_map[future]
                 try:
