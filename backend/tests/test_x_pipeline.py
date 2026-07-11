@@ -72,47 +72,89 @@ class XReplyTests(unittest.TestCase):
         self.assertIn("https://signal.example.com/?article=1", text)
 
 
-class XClientStubTests(unittest.TestCase):
+class XClientTests(unittest.TestCase):
     def setUp(self):
         self._client_settings = client_mod.settings
-        import app.x.client as xc
-        xc._client = None
+        client_mod.reset_x_client()
 
     def tearDown(self):
         client_mod.settings = self._client_settings
-        import app.x.client as xc
-        xc._client = None
+        client_mod.reset_x_client()
 
-    def test_fetch_trending_requires_impl(self):
-        client_mod.settings = SimpleNamespace(
-            x_api_bearer_token="bearer",
-            x_api_key="",
-            x_api_secret="",
-            x_access_token="",
-            x_access_token_secret="",
+    def _configured(self, **overrides):
+        base = dict(
+            x_api_bearer_token="bearer-token",
+            x_api_key="api-key",
+            x_api_secret="api-secret",
+            x_access_token="access-token",
+            x_access_token_secret="access-secret",
             x_trends_woeid=1,
             x_dry_run=True,
             x_auto_post=False,
         )
-        client = XClient()
+        base.update(overrides)
+        client_mod.settings = SimpleNamespace(**base)
+        return XClient()
+
+    def test_fetch_trending_disabled(self):
+        client = self._configured()
         with self.assertRaises(XApiNotConfigured):
             client.fetch_trending()
 
     def test_post_tweet_dry_run(self):
-        client_mod.settings = SimpleNamespace(
-            x_api_bearer_token="",
-            x_api_key="",
-            x_api_secret="",
-            x_access_token="",
-            x_access_token_secret="",
-            x_trends_woeid=1,
-            x_dry_run=True,
-            x_auto_post=False,
-        )
-        result = XClient().post_tweet("hello world", dry_run=True)
+        result = self._configured().post_tweet("hello world", dry_run=True)
         self.assertTrue(result.ok)
         self.assertTrue(result.dry_run)
         self.assertFalse(result.posted)
+        self.assertEqual(result.provider, "x-api")
+
+    def test_search_recent_maps_payload(self):
+        client = self._configured()
+        fake = {
+            "data": [
+                {
+                    "id": "111",
+                    "text": "Senate overnight budget vote dispute continues",
+                    "author_id": "9",
+                    "public_metrics": {"like_count": 12, "repost_count": 3, "reply_count": 1},
+                }
+            ],
+            "includes": {"users": [{"id": "9", "username": "wiredesk"}]},
+        }
+        with patch.object(client, "_request", return_value=fake) as req:
+            rows = client.search_recent("budget vote", limit=5)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].post_id, "111")
+        self.assertEqual(rows[0].author_handle, "wiredesk")
+        self.assertIn("status/111", rows[0].trend_url)
+        self.assertEqual(req.call_args.kwargs["auth"], "bearer")
+
+    def test_post_tweet_live(self):
+        client = self._configured(x_dry_run=False)
+        with patch.object(client, "_request", return_value={"data": {"id": "222", "text": "hi"}}) as req:
+            result = client.post_tweet("Hello from Signal", dry_run=False)
+        self.assertTrue(result.ok)
+        self.assertTrue(result.posted)
+        self.assertEqual(result.post_id, "222")
+        self.assertEqual(req.call_args.args[0], "POST")
+        self.assertEqual(req.call_args.kwargs["auth"], "oauth1")
+
+    def test_status_id_from_url(self):
+        self.assertEqual(client_mod._status_id_from_url("https://x.com/foo/status/12345"), "12345")
+        self.assertEqual(client_mod._status_id_from_url("https://twitter.com/i/web/status/99"), "99")
+        self.assertEqual(client_mod._status_id_from_url("https://example.com/x"), "")
+
+    def test_oauth_header_present(self):
+        header = client_mod._oauth1_header(
+            "POST",
+            "https://api.x.com/2/tweets",
+            consumer_key="ck",
+            consumer_secret="cs",
+            access_token="at",
+            access_token_secret="ats",
+        )
+        self.assertTrue(header.startswith("OAuth "))
+        self.assertIn("oauth_signature=", header)
 
 
 class XPipelineTests(unittest.TestCase):

@@ -53,9 +53,12 @@ def discover_candidates(
     prefer_x: bool = True,
 ) -> tuple[list[XCandidate], str]:
     """
-    Discover candidates from X when implemented, else Signal-internal topics.
+    Discover candidates for the X pipeline.
 
-    Returns (candidates, provider_label).
+    Order:
+      1. Explicit query → X recent search
+      2. Signal desk topics → X recent search for each (no trends API)
+      3. Signal desk topics alone
     """
     client = get_x_client()
     if query.strip():
@@ -63,18 +66,35 @@ def discover_candidates(
             hits = client.search_recent(query.strip(), limit=limit)
             if hits:
                 return hits[:limit], "x-api-search"
-        except XApiNotConfigured as exc:
-            logger.info("X search unavailable, falling back: %s", exc)
+        except (XApiNotConfigured, Exception) as exc:
+            logger.info("X search unavailable for query, falling back: %s", exc)
 
-    if prefer_x:
-        try:
-            trends = client.fetch_trending(limit=limit)
-            if trends:
-                return trends[:limit], "x-api-trends"
-        except XApiNotConfigured as exc:
-            logger.info("X trends unavailable, falling back: %s", exc)
+    desk = _candidates_from_signal_topics(limit=max(limit, 5))
+    if prefer_x and desk and client.read_configured():
+        searched: list[XCandidate] = []
+        seen_ids: set[str] = set()
+        for topic in desk[: min(5, len(desk))]:
+            try:
+                hits = client.search_recent(topic.topic, limit=max(2, limit // 2))
+            except Exception as exc:
+                logger.info("X search seed failed for %s: %s", topic.topic, exc)
+                continue
+            for hit in hits:
+                if hit.post_id and hit.post_id in seen_ids:
+                    continue
+                if hit.post_id:
+                    seen_ids.add(hit.post_id)
+                # Keep the desk topic as the article prompt seed when useful.
+                if not hit.prompt:
+                    hit.prompt = topic.topic
+                searched.append(hit)
+                if len(searched) >= limit:
+                    return searched[:limit], "x-api-search-seeded"
+        if searched:
+            return searched[:limit], "x-api-search-seeded"
 
-    return _candidates_from_signal_topics(limit=limit), "signal-internal"
+    # Trends intentionally unused — Signal desk topics are the non-X fallback.
+    return desk[:limit], "signal-internal"
 
 
 def write_article_for_candidate(

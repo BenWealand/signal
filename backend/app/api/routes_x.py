@@ -4,7 +4,8 @@ from __future__ import annotations
 X workflow HTTP surface.
 
 All routes require SIGNAL_API_TOKEN.
-X API bodies live in app/x/client.py for you to implement.
+Search + post/reply are live against the X API. Trends are not used;
+discovery seeds recent search from Signal desk topics.
 """
 
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -20,7 +21,7 @@ from app.api.routes_articles import (
 )
 from app.config import settings
 from app.db import queries
-from app.x.client import XApiNotConfigured, get_x_client
+from app.x.client import XApiError, XApiNotConfigured, get_x_client
 from app.x.filter import filter_candidates
 from app.x.models import XCandidate, XSharePackage
 from app.x.pipeline import discover_candidates, maybe_share_package, run_x_pipeline
@@ -89,6 +90,15 @@ class XSearchRequest(BaseModel):
         return min(max(int(value or 1), 1), 20)
 
 
+class XLookupRequest(BaseModel):
+    url: str = ""
+    post_id: str = ""
+
+    @validator("url", "post_id")
+    def trim(cls, value: str) -> str:
+        return (value or "").strip()
+
+
 @router.get("/agents/x/status")
 def x_status(
     x_signal_token: str = Header(default=""),
@@ -104,14 +114,15 @@ def x_status(
             "status": "GET /agents/x/status",
             "trends": "GET /agents/x/trends",
             "search": "POST /agents/x/search",
+            "lookup": "POST /agents/x/lookup",
             "articleReply": "POST /agents/x/article-reply",
             "run": "POST /agents/x/run",
             "share": "POST /agents/x/share",
         },
         "notes": [
-            "Implement X API methods in backend/app/x/client.py",
-            "Until then, /agents/x/run falls back to Signal-internal trending topics",
-            "Keep SIGNAL_X_DRY_RUN=true until posting is implemented and verified",
+            "Search, lookup, and post/reply call the live X API",
+            "Trends API is not used — discovery seeds recent search from Signal desk topics",
+            "Keep SIGNAL_X_DRY_RUN=true until you intentionally want live posts",
         ],
     }
 
@@ -165,6 +176,34 @@ def x_search(
             "warning": str(exc),
             "candidates": [candidate.to_dict()],
         }
+    except XApiError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/agents/x/lookup")
+def x_lookup(
+    payload: XLookupRequest,
+    x_signal_token: str = Header(default=""),
+    authorization: str = Header(default=""),
+):
+    """Resolve an X post URL or id into a pipeline candidate."""
+    _require_signal_agent_token(x_signal_token=x_signal_token, authorization=authorization)
+    if not payload.url and not payload.post_id:
+        raise HTTPException(status_code=422, detail="Provide url or post_id")
+    client = get_x_client()
+    try:
+        candidate = (
+            client.candidate_from_url(payload.url)
+            if payload.url
+            else client.lookup_post(payload.post_id)
+        )
+    except XApiNotConfigured as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except XApiError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Post not found or URL not recognized")
+    return {"provider": "x-api-lookup", "candidate": candidate.to_dict()}
 
 
 @router.post("/agents/x/run")

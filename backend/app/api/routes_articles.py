@@ -420,6 +420,28 @@ def generate_x_article_reply(
         provider="manual",
     )
 
+    # Enrich from X when a post URL/id is given but snippet/topic is thin.
+    if (payload.trend_url or payload.post_id) and (not candidate.snippet or not candidate.topic):
+        try:
+            from app.x.client import get_x_client
+
+            client = get_x_client()
+            looked = (
+                client.candidate_from_url(payload.trend_url)
+                if payload.trend_url
+                else client.lookup_post(payload.post_id)
+            )
+            if looked:
+                candidate.topic = candidate.topic or looked.topic
+                candidate.snippet = candidate.snippet or looked.snippet
+                candidate.prompt = candidate.prompt or looked.prompt
+                candidate.post_id = candidate.post_id or looked.post_id
+                candidate.trend_url = candidate.trend_url or looked.trend_url
+                candidate.author_handle = looked.author_handle
+                candidate.provider = "x-api-lookup"
+        except Exception:
+            logger.info("X lookup enrichment skipped for article-reply", exc_info=True)
+
     def _writer(prompt: str, limit: int, mode: str, build_id: str) -> dict:
         return _write_gemini_article(prompt, limit=limit, mode=mode, build_id=build_id)
 
