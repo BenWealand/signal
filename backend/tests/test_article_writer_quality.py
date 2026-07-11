@@ -28,18 +28,16 @@ def source(url: str, title: str, text: str, *, name: str = "Outlet") -> dict:
 
 class ArticleWriterQualityTest(unittest.TestCase):
     @patch("app.processing.article_writer.queries.save_generated_article", return_value="saved")
-    @patch("app.llm.gemini_writer.write_article_header_with_gemini", return_value=None)
-    @patch("app.llm.gemini_writer.write_article_with_gemini")
+    @patch("app.llm.gemini_writer.write_article_package_with_gemini")
     @patch("app.processing.article_writer._cached_articles_for_prompt", return_value=[])
     @patch("app.processing.article_writer.fetch_gdelt_articles")
-    @patch("app.processing.article_writer.fetch_articles_for_query")
+    @patch("app.processing.article_writer.fetch_articles_for_query_fast")
     def test_fast_mode_requires_gemini_draft(
         self,
         fetch_rss,
         fetch_gdelt,
         _cached,
         write_gemini,
-        _write_header,
         _save,
     ):
         text = "The Senate passed the budget bill by a 54-46 vote. " * 6
@@ -47,7 +45,11 @@ class ArticleWriterQualityTest(unittest.TestCase):
             "Gemini wrote the first sourced draft paragraph with enough detail to pass validation.\n\n"
             "Gemini wrote the second sourced draft paragraph from the supplied public articles."
         )
-        write_gemini.return_value = gemini_body
+        write_gemini.return_value = {
+            "headline": "Senate Passes Budget Bill By Narrow Margin",
+            "dek": "Lawmakers advanced the measure after a late-night floor vote.",
+            "body": gemini_body,
+        }
         fetch_rss.return_value = [
             source("https://reuters.com/world/us/budget", "Senate passes budget bill by 54-46 vote", text, name="Reuters"),
             source("https://apnews.com/article/budget", "Senate passes budget bill by 54-46 vote", text, name="AP"),
@@ -60,11 +62,47 @@ class ArticleWriterQualityTest(unittest.TestCase):
 
         self.assertEqual(article["generation_mode"], "fast")
         self.assertEqual(article["body"], gemini_body.split("\n\n"))
+        self.assertEqual(article["headline"], "Senate Passes Budget Bill By Narrow Margin")
         self.assertTrue(article["used_live_sources"])
         self.assertIn(article["consensus_level"], {"moderate", "strong"})
         self.assertGreaterEqual(article["source_quality"]["usable_source_count"], 2)
         self.assertTrue(article["consensus"])
         self.assertIn("scoreMetadata", article)
+        write_gemini.assert_called_once()
+        self.assertEqual(write_gemini.call_args.kwargs.get("mode"), "fast")
+
+    @patch("app.processing.article_writer.queries.save_generated_article", return_value="saved")
+    @patch("app.llm.gemini_writer.write_article_package_with_gemini")
+    @patch("app.processing.article_writer.fetch_gdelt_articles")
+    @patch("app.processing.article_writer.fetch_articles_for_query_fast")
+    @patch("app.processing.article_writer._cached_articles_for_prompt")
+    def test_fast_mode_prefers_desk_cache_before_live_fetch(
+        self,
+        cached,
+        fetch_rss,
+        fetch_gdelt,
+        write_gemini,
+        _save,
+    ):
+        text = "Cabinet officials briefed lawmakers on the semiconductor export controls. " * 5
+        cached.return_value = [
+            source("https://reuters.com/tech/chips", "Semiconductor export controls tighten", text, name="Reuters"),
+            source("https://apnews.com/article/chips", "Semiconductor export controls tighten", text, name="AP"),
+            source("https://bbc.com/news/chips", "Semiconductor export controls tighten", text, name="BBC"),
+            source("https://theguardian.com/chips", "Semiconductor export controls tighten", text, name="Guardian"),
+        ]
+        write_gemini.return_value = {
+            "headline": "Export Controls Tighten Around Chip Tools",
+            "dek": "Multiple outlets reported the same cabinet briefing details.",
+            "body": "First paragraph from cache sources.\n\nSecond paragraph confirming the briefing.",
+        }
+
+        article = write_article_from_prompt("semiconductor export controls", mode="fast")
+
+        self.assertEqual(article["generation_mode"], "fast")
+        self.assertFalse(article["used_live_sources"])
+        fetch_rss.assert_not_called()
+        fetch_gdelt.assert_not_called()
         write_gemini.assert_called_once()
 
     @patch("app.processing.article_writer.queries.save_generated_article", return_value="saved")

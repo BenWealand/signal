@@ -1,0 +1,51 @@
+name: Daily source ingest
+
+on:
+  schedule:
+    - cron: "15 12 * * *"
+  workflow_dispatch:
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refresh Signal desk source cache
+        env:
+          SIGNAL_API_URL: ${{ secrets.SIGNAL_API_URL }}
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          RENDER_BACKEND_URL: ${{ secrets.RENDER_BACKEND_URL }}
+          SIGNAL_API_TOKEN: ${{ secrets.SIGNAL_API_TOKEN }}
+        run: |
+          TARGET_URL="${SIGNAL_API_URL:-${BACKEND_URL:-${RENDER_BACKEND_URL:-}}}"
+          if [ -z "$TARGET_URL" ]; then
+            echo "Set SIGNAL_API_URL (or BACKEND_URL / RENDER_BACKEND_URL)."
+            exit 1
+          fi
+          if [ -z "$SIGNAL_API_TOKEN" ]; then
+            echo "Set SIGNAL_API_TOKEN so the daily ingest endpoint can authorize."
+            exit 1
+          fi
+          if ! echo "$TARGET_URL" | grep -Eq '^https?://'; then
+            echo "Backend URL must include https:// or http://"
+            exit 1
+          fi
+
+          BASE_URL="${TARGET_URL%/}"
+          WAKE_URL="$BASE_URL/awake"
+          INGEST_URL="$BASE_URL/ingest/daily"
+          echo "Waking backend: $WAKE_URL"
+          curl -L -sS -o /tmp/wake.json -w "%{http_code}" --connect-timeout 10 --max-time 40 "$WAKE_URL" || true
+          echo
+          echo "Triggering daily ingest: $INGEST_URL"
+          http_code=$(curl -L -sS -o /tmp/ingest.json -w "%{http_code}" \
+            --connect-timeout 10 --max-time 60 \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -H "X-Signal-Token: $SIGNAL_API_TOKEN" \
+            "$INGEST_URL")
+          echo "Daily ingest HTTP $http_code"
+          cat /tmp/ingest.json || true
+          echo
+          if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
+            exit 1
+          fi

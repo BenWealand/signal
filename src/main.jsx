@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { supabase } from "./lib/supabase.js";
-import { apiGet, apiPost, apiPostAfterWake, hasApiBase, isAuthenticated } from "./api/client.js";
+import { apiGet, apiPost, writeArticle, hasApiBase, isAuthenticated } from "./api/client.js";
 import { useInitialSignalData } from "./hooks/useInitialSignalData.js";
 import { useStoredState } from "./hooks/useStoredState.js";
 import { SESSION_ID } from "./lib/session.js";
@@ -70,6 +70,8 @@ function App() {
   const [trendingTopics, setTrendingTopics] = useState([]);
   const [apiStatus, setApiStatus] = useState("offline");
   const [externalDraft, setExternalDraft] = useState(null);
+  const [activeBuildId, setActiveBuildId] = useState("");
+  const [buildProgress, setBuildProgress] = useState(null);
   const [account, setAccount] = useStoredState("signal-account", null);
   const [savedArticles, setSavedArticles] = useStoredState("signal-saved-articles", []);
   const [settings, setSettings] = useStoredState("signal-settings", defaultSettings);
@@ -205,22 +207,54 @@ function App() {
     trackEvent,
   });
 
-  const handleSubmit = (event) => {
-    event.preventDefault();
-    const nextPrompt = prompt.trim() || currentSuggestion || "global public records";
+  const startArticleWrite = (nextPrompt, {
+    source = "reader-prompt",
+    tag = "prompt",
+    mode = generationMode,
+    toastMessage = "Signal is sourcing your story...",
+  } = {}) => {
     setExternalDraft(null);
     setDraftPrompt(nextPrompt);
     setPhase("building");
-    if (hasApiBase()) showToast("Signal is sourcing your story...");
-    trackEvent(account?.id, "prompt", { prompt: nextPrompt });
-    apiPostAfterWake("/articles/write", { prompt: nextPrompt, source: "reader-prompt", tag: "prompt", limit: 10, mode: generationMode, user_id: account?.id || null })
+    setActiveBuildId("");
+    setBuildProgress({ stage: "fetching", stage_label: "Connecting to sources...", draft_text: "" });
+    if (hasApiBase()) showToast(toastMessage);
+    return writeArticle(
+      {
+        prompt: nextPrompt,
+        source,
+        tag,
+        limit: 10,
+        mode,
+        user_id: account?.id || null,
+      },
+      {
+        onProgress: (progress) => {
+          if (progress?.build_id || progress?.buildId) {
+            setActiveBuildId(progress.build_id || progress.buildId);
+          }
+          setBuildProgress(progress);
+        },
+      },
+    )
       .then((article) => {
         setExternalDraft(normalizeCommandArticle(article));
+        setActiveBuildId(article.buildId || "");
+        setBuildProgress(null);
         setPhase("complete");
       })
       .catch((error) => {
+        setActiveBuildId("");
+        setBuildProgress(null);
         handleArticleWriteFailure(nextPrompt, error);
       });
+  };
+
+  const handleSubmit = (event) => {
+    event.preventDefault();
+    const nextPrompt = prompt.trim() || currentSuggestion || "global public records";
+    trackEvent(account?.id, "prompt", { prompt: nextPrompt });
+    startArticleWrite(nextPrompt);
   };
 
   const showToast = (message, durationMs = 2400) => {
@@ -263,20 +297,12 @@ function App() {
   const buildRecommendedPrompt = (nextPrompt) => {
     if (!nextPrompt) return;
     setPrompt(nextPrompt);
-    setExternalDraft(null);
-    setDraftPrompt(nextPrompt);
-    setPhase("building");
     setActiveScreen("Latest");
-    if (hasApiBase()) showToast("Signal is sourcing your story...");
     trackEvent(account?.id, "prompt", { prompt: nextPrompt, topic: "recommended-follow-up" });
-    apiPostAfterWake("/articles/write", { prompt: nextPrompt, source: "recommended-follow-up", tag: "prompt", limit: 10, mode: "fast", user_id: account?.id || null })
-      .then((article) => {
-        setExternalDraft(normalizeCommandArticle(article));
-        setPhase("complete");
-      })
-      .catch((error) => {
-        handleArticleWriteFailure(nextPrompt, error);
-      });
+    startArticleWrite(nextPrompt, {
+      source: "recommended-follow-up",
+      mode: "fast",
+    });
   };
 
   const handleLikeArticle = () => {
@@ -388,19 +414,8 @@ function App() {
 
   const startCommandPrompt = (article) => {
     setPrompt(article.prompt);
-    setExternalDraft(null);
-    setDraftPrompt(article.prompt);
-    setPhase("building");
     setActiveScreen("Latest");
-    if (hasApiBase()) showToast("Signal is sourcing your story...");
-    apiPostAfterWake("/articles/write", { prompt: article.prompt, source: "reader-prompt", tag: "prompt", limit: 10, mode: generationMode, user_id: account?.id || null })
-      .then((result) => {
-        setExternalDraft(normalizeCommandArticle(result));
-        setPhase("complete");
-      })
-      .catch((error) => {
-        handleArticleWriteFailure(article.prompt, error);
-      });
+    startArticleWrite(article.prompt);
   };
 
   const handleGlobeMarkerClick = (marker) => {
@@ -411,20 +426,9 @@ function App() {
     const topic = marker.prompt || marker.headline;
     if (!topic) return;
     setPrompt(topic);
-    setExternalDraft(null);
-    setDraftPrompt(topic);
-    setPhase("building");
     setActiveScreen("Latest");
-    if (hasApiBase()) showToast("Signal is sourcing your story...");
     trackEvent(account?.id, "prompt", { prompt: topic, section: "globe-trend" });
-    apiPostAfterWake("/articles/write", { prompt: topic, source: "globe-trend", tag: "trend", limit: 10, mode: generationMode, user_id: account?.id || null })
-      .then((article) => {
-        setExternalDraft(normalizeCommandArticle(article));
-        setPhase("complete");
-      })
-      .catch((error) => {
-        handleArticleWriteFailure(topic, error);
-      });
+    startArticleWrite(topic, { source: "globe-trend", tag: "trend" });
   };
 
   return (
@@ -484,22 +488,20 @@ function App() {
             onOpenArticle={openCommandArticle}
             onPrompt={(topic) => {
               setPrompt(topic);
-              setDraftPrompt(topic);
-              setExternalDraft(null);
-              setPhase("building");
               setActiveScreen("Latest");
-              if (hasApiBase()) showToast("Signal is sourcing your story...");
               trackEvent(account?.id, "prompt", { prompt: topic, section: activeScreen });
-                apiPostAfterWake("/articles/write", { prompt: topic, source: "reader-prompt", tag: "prompt", limit: 10, mode: generationMode, user_id: account?.id || null })
-                .then((article) => { setExternalDraft(normalizeCommandArticle(article)); setPhase("complete"); })
-                .catch((error) => {
-                  handleArticleWriteFailure(topic, error);
-                });
+              startArticleWrite(topic);
             }}
           />
         )}
 
-        {hasDraft && phase === "building" && <BuildScreen draft={draft} />}
+        {hasDraft && phase === "building" && (
+          <BuildScreen
+            draft={draft}
+            buildId={activeBuildId}
+            progress={buildProgress}
+          />
+        )}
         {hasDraft && phase === "complete" && (
           <ArticleScreen
             draft={draft}

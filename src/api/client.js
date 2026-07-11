@@ -201,8 +201,53 @@ export async function apiPostAfterWake(path, payload) {
   return apiPost(path, payload);
 }
 
-export async function getArticleProgress() {
-  return apiGet("/articles/progress");
+export async function getArticleProgress(buildId = "") {
+  const query = buildId ? `?buildId=${encodeURIComponent(buildId)}` : "";
+  return apiGet(`/articles/progress${query}`);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+/**
+ * Start an async article write and poll progress until the article is ready.
+ * Falls back to the sync response shape when the API returns a finished article.
+ */
+export async function writeArticle(payload, { onProgress, timeoutMs = 180000 } = {}) {
+  const started = await apiPostAfterWake("/articles/write", {
+    ...payload,
+    async_mode: true,
+  });
+  if (started?.headline && Array.isArray(started?.body)) {
+    return started;
+  }
+  const buildId = started?.buildId || started?.build_id;
+  if (!buildId) {
+    throw new Error("Article write did not return a build id.");
+  }
+  if (typeof onProgress === "function") {
+    onProgress({ ...started, buildId, stage: started.stage || "fetching" });
+  }
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const progress = await getArticleProgress(buildId);
+    if (typeof onProgress === "function") onProgress({ ...progress, buildId });
+    if (progress?.article?.headline) {
+      return { ...progress.article, buildId };
+    }
+    if (progress?.stage === "error" || progress?.error) {
+      const error = new Error(progress.error || "Article write failed");
+      error.status = 503;
+      error.detail = progress.error || "Article write failed";
+      throw error;
+    }
+    await sleep(900);
+  }
+  const timeout = new Error("Article write timed out. Try again in a moment.");
+  timeout.status = 504;
+  throw timeout;
 }
 
 async function wakeApi() {

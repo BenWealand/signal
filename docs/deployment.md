@@ -75,13 +75,30 @@ Optional backend environment variables:
 ```env
 DB_POOL_MAX=8
 FEED_CACHE_TTL_SECONDS=60
+GEMINI_FAST_MODEL=gemini-flash-lite-latest
+SIGNAL_FAST_CACHE_MIN_SOURCES=4
+SIGNAL_THOROUGH_ENRICH_LIMIT=12
+SIGNAL_THOROUGH_ENRICH_TIMEOUT=8
+SIGNAL_DAILY_INGEST=false
 ```
 
 What these do:
 
 - `DB_POOL_MAX`: reuses Postgres connections instead of opening a new TLS session per request.
 - `FEED_CACHE_TTL_SECONDS`: memoizes trending rankings and the `/feeds/bootstrap` bundle in memory for all visitors.
+- `GEMINI_FAST_MODEL`: model used for Fast-mode packaged article writes (headline + dek + body in one call).
+- `SIGNAL_FAST_CACHE_MIN_SOURCES`: Fast mode answers from the daily desk cache once this many recent sources match.
+- `SIGNAL_THOROUGH_ENRICH_LIMIT` / `TIMEOUT`: cap how many pages Thorough mode scrapes and how long each scrape may take.
+- `SIGNAL_DAILY_INGEST`: optional in-process daily RSS refresh. Prefer the GitHub Action `daily-source-ingest.yml` on free-tier hosts.
 - List endpoints (`/generated-articles`, `/news/trending`, section pages) return slim card previews; opening an article fetches the full body from `/generated-articles/{id}`.
+
+## Daily desk cache
+
+Fast article writes prefer recently ingested Postgres coverage before live providers.
+
+1. Add repository secrets `SIGNAL_API_URL` and `SIGNAL_API_TOKEN`.
+2. The workflow `.github/workflows/daily-source-ingest.yml` wakes the API and posts `POST /ingest/daily` once per day.
+3. That endpoint refreshes RSS into Postgres and regenerates shared section drafts.
 
 ## Backend On Render
 
