@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.4",
+    "@vercel/analytics": "^2.0.1",
     "@vitejs/plugin-react": "latest",
     "cobe": "latest",
     "motion": "latest",

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { Analytics } from "@vercel/analytics/react";
 import { supabase } from "./lib/supabase.js";
 import { apiGet, apiPost, writeArticle, hasApiBase, isAuthenticated } from "./api/client.js";
 import { useInitialSignalData } from "./hooks/useInitialSignalData.js";
@@ -559,6 +560,7 @@ function App() {
         />
       )}
       {toast && <div className="toast" role="status">{toast}</div>}
+      <Analytics />
     </section>
   );
 }
