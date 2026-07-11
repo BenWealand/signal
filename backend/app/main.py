@@ -17,6 +17,7 @@ from app.api.routes_news import SECTION_SLUGS, _generate_fast_section_articles
 from app.api.routes_search import router as search_router
 from app.api.routes_stories import router as story_router
 from app.api.routes_users import router as user_router
+from app.api.routes_admin import router as admin_router
 from app.config import settings
 from app.db.connection import create_tables, get_connection, close_pool
 from app.db import queries
@@ -59,6 +60,7 @@ app.include_router(x_router)
 app.include_router(feeds_router)
 app.include_router(search_router)
 app.include_router(user_router)
+app.include_router(admin_router)
 app.include_router(news_router)
 
 _database_status: dict[str, str | bool] = {

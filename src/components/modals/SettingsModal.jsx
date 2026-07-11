@@ -1,10 +1,13 @@
 import { useEffect, useState } from "react";
 import { apiGet, apiPost } from "../../api/client.js";
+import { isAdminAccount } from "../../lib/admin.js";
 import { SESSION_ID } from "../../lib/session.js";
 import { Modal } from "./Modal.jsx";
+import { XUsageTerminal } from "./XUsageTerminal.jsx";
 
 export function SettingsModal({ settings, onSettingsChange, onClose, onToast, account }) {
   const [autoPrefs, setAutoPrefs] = useState(null);
+  const isAdmin = isAdminAccount(account);
 
   useEffect(() => {
     if (account?.id) {
@@ -103,6 +106,12 @@ export function SettingsModal({ settings, onSettingsChange, onClose, onToast, ac
           />
         </label>
       </div>
+
+      {isAdmin ? (
+        <div className="modal-section">
+          <XUsageTerminal onToast={onToast} />
+        </div>
+      ) : null}
 
       <div className="modal-action-footer">
         <button className="secondary-action" type="button" onClick={() => onToast("Settings saved locally.")}>

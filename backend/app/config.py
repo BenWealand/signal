@@ -74,7 +74,17 @@ class Settings:
     # Keep dry-run on until post_tweet() is implemented and verified.
     x_dry_run: bool = os.getenv("SIGNAL_X_DRY_RUN", "true").lower() != "false"
     x_auto_post: bool = os.getenv("SIGNAL_X_AUTO_POST", "false").lower() == "true"
+    # Comma-separated admin emails (lowercase). Default: sole admin.
+    admin_emails: str = os.getenv("SIGNAL_ADMIN_EMAILS", "benwealand@gmail.com")
     app_name: str = "Signal News Intelligence API"
 
 
 settings = Settings()
+
+
+def admin_email_set() -> set[str]:
+    return {
+        email.strip().lower()
+        for email in (settings.admin_emails or "").split(",")
+        if email.strip()
+    }
