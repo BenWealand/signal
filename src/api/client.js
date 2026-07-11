@@ -218,8 +218,8 @@ async function wakeApi() {
       attempt,
       attempts,
       message: attempt === 1
-        ? "Waking the backend..."
-        : `Backend is still starting. Retry ${attempt} of ${attempts}...`,
+        ? "Connecting to Signal..."
+        : `Still connecting. Retry ${attempt} of ${attempts}...`,
     });
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
@@ -230,7 +230,7 @@ async function wakeApi() {
       });
       if (response.ok) {
         lastWakeOkAt = Date.now();
-        setWakeState({ status: "ready", attempt, attempts, message: "Backend ready." });
+        setWakeState({ status: "ready", attempt, attempts, message: "" });
         window.setTimeout(() => {
           if (wakeState.status === "ready") setWakeState({ status: "idle", message: "" });
         }, 1800);
@@ -247,7 +247,7 @@ async function wakeApi() {
     }
   }
 
-  const error = new Error("The newsroom is still waking up. Wait a moment and try again.");
+  const error = new Error("Signal could not reach the newsroom. Wait a moment and try again.");
   error.status = lastError?.status || 503;
   error.detail = error.message;
   setWakeState({ status: "failed", message: error.message });

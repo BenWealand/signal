@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { supabase } from "./lib/supabase.js";
-import { apiGet, apiPost, apiPostAfterWake, hasApiBase, isAuthenticated, subscribeWakeState } from "./api/client.js";
+import { apiGet, apiPost, apiPostAfterWake, hasApiBase, isAuthenticated } from "./api/client.js";
 import { useInitialSignalData } from "./hooks/useInitialSignalData.js";
 import { useStoredState } from "./hooks/useStoredState.js";
 import { SESSION_ID } from "./lib/session.js";
@@ -19,7 +19,6 @@ import { LatestScreen } from "./screens/Latest.jsx";
 import { TrendsScreen } from "./screens/Trends.jsx";
 import { SectionScreen } from "./screens/Section.jsx";
 import { SavedScreen } from "./screens/Saved.jsx";
-import { WakeStatus } from "./screens/shared.jsx";
 import "./styles.css";
 
 const OFFLINE_PREVIEW_DELAY_MS = Number(import.meta.env.VITE_SIGNAL_OFFLINE_PREVIEW_DELAY_MS || 7200);
@@ -70,7 +69,6 @@ function App() {
   const [backendStories, setBackendStories] = useState([]);
   const [trendingTopics, setTrendingTopics] = useState([]);
   const [apiStatus, setApiStatus] = useState("offline");
-  const [wakeState, setWakeState] = useState({ status: hasApiBase() ? "idle" : "disabled" });
   const [externalDraft, setExternalDraft] = useState(null);
   const [account, setAccount] = useStoredState("signal-account", null);
   const [savedArticles, setSavedArticles] = useStoredState("signal-saved-articles", []);
@@ -84,7 +82,6 @@ function App() {
   const toastTimerRef = useRef(0);
 
   useEffect(() => {
-    const unsubscribeWake = subscribeWakeState(setWakeState);
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user && !account) {
         const user = session.user;
@@ -107,7 +104,6 @@ function App() {
       if (!session) setAccount(null);
     });
     return () => {
-      unsubscribeWake();
       subscription.unsubscribe();
     };
   }, []);
@@ -215,7 +211,7 @@ function App() {
     setExternalDraft(null);
     setDraftPrompt(nextPrompt);
     setPhase("building");
-    if (hasApiBase()) showToast("Signal is on it. Waking the newsroom and sourcing your story...");
+    if (hasApiBase()) showToast("Signal is sourcing your story...");
     trackEvent(account?.id, "prompt", { prompt: nextPrompt });
     apiPostAfterWake("/articles/write", { prompt: nextPrompt, source: "reader-prompt", tag: "prompt", limit: 10, mode: generationMode, user_id: account?.id || null })
       .then((article) => {
@@ -254,7 +250,7 @@ function App() {
         || rawMessage.toLowerCase().includes("gemini")
         || rawMessage.toLowerCase().includes("source")
         ? "Could not generate from enough reliable sources. Try a more specific prompt."
-        : rawMessage || "The newsroom is still waking up. Wait a moment and try again.";
+        : rawMessage || "Signal could not finish that write. Wait a moment and try again.";
       showToast(message, 6000);
       return;
     }
@@ -271,7 +267,7 @@ function App() {
     setDraftPrompt(nextPrompt);
     setPhase("building");
     setActiveScreen("Latest");
-    if (hasApiBase()) showToast("Signal is on it. Waking the newsroom and sourcing your story...");
+    if (hasApiBase()) showToast("Signal is sourcing your story...");
     trackEvent(account?.id, "prompt", { prompt: nextPrompt, topic: "recommended-follow-up" });
     apiPostAfterWake("/articles/write", { prompt: nextPrompt, source: "recommended-follow-up", tag: "prompt", limit: 10, mode: "fast", user_id: account?.id || null })
       .then((article) => {
@@ -396,7 +392,7 @@ function App() {
     setDraftPrompt(article.prompt);
     setPhase("building");
     setActiveScreen("Latest");
-    if (hasApiBase()) showToast("Signal is on it. Waking the newsroom and sourcing your story...");
+    if (hasApiBase()) showToast("Signal is sourcing your story...");
     apiPostAfterWake("/articles/write", { prompt: article.prompt, source: "reader-prompt", tag: "prompt", limit: 10, mode: generationMode, user_id: account?.id || null })
       .then((result) => {
         setExternalDraft(normalizeCommandArticle(result));
@@ -419,7 +415,7 @@ function App() {
     setDraftPrompt(topic);
     setPhase("building");
     setActiveScreen("Latest");
-    if (hasApiBase()) showToast("Signal is on it. Waking the newsroom and sourcing your story...");
+    if (hasApiBase()) showToast("Signal is sourcing your story...");
     trackEvent(account?.id, "prompt", { prompt: topic, section: "globe-trend" });
     apiPostAfterWake("/articles/write", { prompt: topic, source: "globe-trend", tag: "trend", limit: 10, mode: generationMode, user_id: account?.id || null })
       .then((article) => {
@@ -492,7 +488,7 @@ function App() {
               setExternalDraft(null);
               setPhase("building");
               setActiveScreen("Latest");
-              if (hasApiBase()) showToast("Signal is on it. Waking the newsroom and sourcing your story...");
+              if (hasApiBase()) showToast("Signal is sourcing your story...");
               trackEvent(account?.id, "prompt", { prompt: topic, section: activeScreen });
                 apiPostAfterWake("/articles/write", { prompt: topic, source: "reader-prompt", tag: "prompt", limit: 10, mode: generationMode, user_id: account?.id || null })
                 .then((article) => { setExternalDraft(normalizeCommandArticle(article)); setPhase("complete"); })
@@ -503,7 +499,7 @@ function App() {
           />
         )}
 
-        {hasDraft && phase === "building" && <BuildScreen draft={draft} wakeState={wakeState} />}
+        {hasDraft && phase === "building" && <BuildScreen draft={draft} />}
         {hasDraft && phase === "complete" && (
           <ArticleScreen
             draft={draft}
@@ -563,7 +559,6 @@ function App() {
         />
       )}
       {toast && <div className="toast" role="status">{toast}</div>}
-      <WakeStatus state={wakeState} />
     </section>
   );
 }
