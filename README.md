@@ -214,6 +214,7 @@ uvicorn app.main:app --reload --port 8000
 - [Demo script](docs/demo-script.md)
 - [Project rundown](docs/project-rundown.md)
 - [X trend agent](docs/x-trend-agent.md)
+- [X usage / automation runbook](docs/x-usage.md)
 
 ## Troubleshooting
 

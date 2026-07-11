@@ -11,14 +11,17 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.api import routes_articles
 from app.api.routes_articles import XTrendArticleRequest
+from app.x import reply as reply_mod
 
 
 class AgentAccessTest(unittest.TestCase):
     def setUp(self):
         self._settings = routes_articles.settings
+        self._reply_settings = reply_mod.settings
 
     def tearDown(self):
         routes_articles.settings = self._settings
+        reply_mod.settings = self._reply_settings
 
     def test_agent_token_fails_closed_when_unconfigured(self):
         routes_articles.settings = SimpleNamespace(signal_api_token="", public_article_base_url="")
@@ -44,7 +47,7 @@ class AgentAccessTest(unittest.TestCase):
         self.assertIn("Social post snippet:", prompt)
 
     def test_article_public_url_uses_configured_base(self):
-        routes_articles.settings = SimpleNamespace(
+        reply_mod.settings = SimpleNamespace(
             signal_api_token="secret",
             public_article_base_url="https://signal.example.com/",
         )

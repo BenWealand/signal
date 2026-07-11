@@ -100,6 +100,19 @@ Fast article writes prefer recently ingested Postgres coverage before live provi
 2. The workflow `.github/workflows/daily-source-ingest.yml` wakes the API and posts `POST /ingest/daily` once per day.
 3. That endpoint refreshes RSS into Postgres and regenerates shared section drafts.
 
+## X trend → article → share pipeline
+
+Signal can automate “find a topic → write a sourced article → keep a frontend link →
+prepare an X reply” without the X API. Live trends/search/posting are stubs in
+`backend/app/x/client.py` for you to fill in.
+
+1. Set `SIGNAL_API_TOKEN` and `PUBLIC_ARTICLE_BASE_URL` on the backend.
+2. Optional X credentials: `X_API_BEARER_TOKEN`, `X_API_KEY`, `X_API_SECRET`,
+   `X_ACCESS_TOKEN`, `X_ACCESS_TOKEN_SECRET`, `X_TRENDS_WOEID`.
+3. Keep `SIGNAL_X_DRY_RUN=true` and `SIGNAL_X_AUTO_POST=false` until posting works.
+4. Call `POST /agents/x/run` (or enable `.github/workflows/x-trend-pipeline.yml`).
+5. Full runbook: `docs/x-usage.md`.
+
 ## Backend On Render
 
 Example settings:
@@ -118,6 +131,16 @@ DATABASE_URL=postgresql://...
 GEMINI_API_KEY=...
 PUBLIC_ARTICLE_BASE_URL=https://your-frontend.vercel.app
 CORS_ORIGINS=https://your-frontend.vercel.app
+SIGNAL_API_TOKEN=long-random-secret
+SIGNAL_X_DRY_RUN=true
+SIGNAL_X_AUTO_POST=false
+# Optional until you implement backend/app/x/client.py
+# X_API_BEARER_TOKEN=
+# X_API_KEY=
+# X_API_SECRET=
+# X_ACCESS_TOKEN=
+# X_ACCESS_TOKEN_SECRET=
+# X_TRENDS_WOEID=1
 GEMINI_MODEL=gemini-flash-latest
 USE_LLM_CLAIMS=false
 SIGNAL_AUTO_INGEST_ON_STARTUP=false
