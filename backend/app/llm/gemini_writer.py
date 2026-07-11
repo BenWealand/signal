@@ -317,8 +317,8 @@ def write_article_package_with_gemini(
     """
     One Gemini call that returns headline + dek + body.
 
-    Fast mode uses the lite model, a smaller source budget, and streams
-    partial draft text through `on_chunk` when provided.
+    Fast mode uses the lite model and a smaller source budget. Responses are
+    non-streaming so the UI can show a stable finished article.
     """
     key = settings.gemini_api_key
     if not key:
@@ -342,37 +342,23 @@ def write_article_package_with_gemini(
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
             "temperature": 0.25,
-            "maxOutputTokens": 1400 if mode == "fast" else 1800,
+            "maxOutputTokens": 1400 if mode == "fast" else 1600,
             "topP": 0.9,
         },
     }).encode("utf-8")
 
     try:
-        use_stream = mode == "fast" or on_chunk is not None
         text = _call_gemini_package(
             model=model,
             payload=payload,
             key=key,
-            timeout=22 if mode == "fast" else 30,
-            stream=use_stream,
-            on_chunk=on_chunk if use_stream else None,
+            timeout=20 if mode == "fast" else 24,
+            stream=False,
+            on_chunk=None,
         )
         package = _parse_package_text(text or "")
         if package and package.get("body"):
             return package
-
-        if use_stream:
-            # Streaming returned nothing usable — one non-stream retry.
-            text = _call_gemini_package(
-                model=model,
-                payload=payload,
-                key=key,
-                timeout=22 if mode == "fast" else 30,
-                stream=False,
-            )
-            package = _parse_package_text(text or "")
-            if package and package.get("body"):
-                return package
 
         _set_last_error(kind="response", model=model, message="Gemini returned an unusable article package")
         return None

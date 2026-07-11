@@ -70,7 +70,7 @@ set_build_progress = _set_progress
 from app.db import queries
 from app.ingest.article_reader import fetch_readable_article_text
 from app.ingest.gdelt_ingest import fetch_gdelt_articles
-from app.ingest.rss_ingest import fetch_articles_for_query, fetch_articles_for_query_fast
+from app.ingest.rss_ingest import fetch_articles_for_query_fast
 from app.ingest.source_registry import domain_from_url, is_blocked_domain
 from app.ingest.source_ranker import SourceGate, evaluate_source_quality, rank_sources
 from app.config import settings
@@ -81,7 +81,7 @@ from app.processing.clean_text import clean_article_text
 from app.llm.claim_extractor import extract_claims
 
 
-THOROUGH_SOURCE_GATE = SourceGate(min_sources=4, min_domains=3, min_text_chars=300, max_current_age_days=14)
+THOROUGH_SOURCE_GATE = SourceGate(min_sources=3, min_domains=2, min_text_chars=180, max_current_age_days=14)
 
 
 class GeminiArticleUnavailable(RuntimeError):
@@ -550,24 +550,12 @@ def _article_body(
     """
     from app.llm.gemini_writer import write_article_package_with_gemini
 
-    def _on_chunk(partial: dict) -> None:
-        if not build_id:
-            return
-        _set_progress(
-            build_id,
-            stage="writing",
-            stage_label="Gemini is drafting your article...",
-            draft_text=str(partial.get("draft_text") or "")[:4000],
-            draft_headline=str(partial.get("headline") or ""),
-        )
-
     # ── Gemini path ───────────────────────────────────────────────────────────
     package = (
         write_article_package_with_gemini(
             prompt,
             source_articles,
             mode=generation_mode,
-            on_chunk=_on_chunk if generation_mode == "fast" else None,
         )
         if use_gemini
         else None
@@ -934,8 +922,8 @@ def _fast_article_from_prompt(prompt: str, limit: int = 8, use_gemini: bool = Tr
         stage="done",
         stage_label="Done",
         article=article,
-        draft_text="\n\n".join(article.get("body") or []),
-        draft_headline=article.get("headline") or "",
+        draft_text="",
+        draft_headline="",
         error=None,
     )
     return article
@@ -943,83 +931,123 @@ def _fast_article_from_prompt(prompt: str, limit: int = 8, use_gemini: bool = Tr
 
 def write_article_from_prompt(prompt: str, limit: int = 50, use_gemini: bool = True, mode: str = "thorough", build_id: str | None = None) -> dict:
     """
-    Full pipeline for a user-submitted prompt:
+    Full pipeline for a user-submitted prompt.
 
-    1. PARALLEL FETCH from multiple live sources:
-       - The Guardian Open API   (free, full article text)
-       - Topic-specific RSS      (ESPN/CBS Sports for sports; Ars Technica/Wired for tech; etc.)
-       - Google News RSS         (current headlines — title + link only)
-       - GDELT Doc API           (broader coverage, snippets)
-       Google News URLs are NOT enriched via trafilatura (they resolve to a JS shell).
-    2. PARALLEL ENRICH — follow non-Google URLs with trafilatura to get full text.
-    3. PARALLEL PROCESS — extract entities + claims.
-    4. Detect consensus, synthesise final article.
-
-    The DB cache supplements if live sources are sparse.
+    Thorough mode is cache-first and latency-bounded:
+    1. Prefer recent desk coverage from Postgres.
+    2. Live-fetch only when the cache is thin (Bing/Guardian/GDELT race + capped enrich).
+    3. Process a small top-N set of articles, Jaccard consensus, Gemini package write.
     """
     build_id = build_id or f"build-{uuid.uuid4().hex}"
     use_gemini = True
     if mode == "fast":
         return _fast_article_from_prompt(prompt, limit=limit, use_gemini=use_gemini, build_id=build_id)
 
+    thorough_limit = max(4, min(limit, settings.thorough_max_candidates))
+    min_cache = max(3, min(settings.thorough_cache_min_sources, thorough_limit))
     _set_progress(
         build_id,
         active=True, prompt=prompt,
         stage="fetching",
-        stage_label="Scanning Bing, Guardian, NewsAPI, Currents, GNews, AP, Reuters…",
+        stage_label="Scanning desk cache for thorough coverage...",
         sources_found=0, sources_enriched=0, claims_extracted=0,
         draft_text="", draft_headline="", article=None, error=None,
         started_at=time.time(),
     )
 
-    # ── Step 1: fetch from all live sources in parallel ───────────────────────
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        f_rss   = pool.submit(fetch_articles_for_query, prompt, True, min(limit, 24), 12)
-        f_gdelt = pool.submit(fetch_gdelt_articles, prompt, min(limit, 30))
+    # 1) Cache first — same daily desk coverage Fast uses.
+    cached: list[dict] = []
+    try:
+        cached = _cached_articles_for_prompt(prompt, thorough_limit)
+    except Exception:
+        logger.exception("Cached article lookup failed during thorough generation", extra={"build_id": build_id, "prompt": prompt})
+        cached = []
+
+    live_candidates = _merge_candidates(cached, [], thorough_limit, prompt)
+    used_live_sources = False
+    rss_candidates: list[dict] = []
+    gdelt_candidates: list[dict] = []
+
+    # 2) Live race only when cache is thin — same early-exit race Fast uses,
+    # then a capped enrich pass for the thinnest candidates.
+    if len(live_candidates) < min_cache:
+        _set_progress(
+            build_id,
+            stage="fetching",
+            stage_label="Racing Bing, Guardian, and GDELT for deeper coverage...",
+            sources_found=len(live_candidates),
+        )
+        pool = ThreadPoolExecutor(max_workers=2)
         try:
-            rss_candidates = f_rss.result(timeout=22)
-        except Exception:
-            logger.exception("RSS article fetch failed during article generation", extra={"build_id": build_id, "prompt": prompt})
-            rss_candidates = []
-        try:
-            gdelt_candidates = f_gdelt.result(timeout=16)
-        except Exception:
-            logger.exception("GDELT article fetch failed during article generation", extra={"build_id": build_id, "prompt": prompt})
-            gdelt_candidates = []
+            futures = {
+                pool.submit(fetch_articles_for_query_fast, prompt, thorough_limit, min_cache, 6.0): "rss",
+                pool.submit(fetch_gdelt_articles, prompt, thorough_limit, 0.15): "gdelt",
+            }
+            try:
+                for future in as_completed(futures, timeout=8):
+                    try:
+                        if futures[future] == "rss":
+                            rss_candidates = future.result() or []
+                        else:
+                            gdelt_candidates = future.result() or []
+                    except Exception:
+                        logger.exception(
+                            "Thorough article source fetch failed",
+                            extra={"source": futures[future], "build_id": build_id, "prompt": prompt},
+                        )
+                    merged_live = _merge_candidates(
+                        live_candidates, rss_candidates + gdelt_candidates, thorough_limit, prompt
+                    )
+                    if len(merged_live) >= min_cache:
+                        live_candidates = merged_live
+                        used_live_sources = bool(rss_candidates or gdelt_candidates)
+                        break
+            except TimeoutError:
+                logger.warning("Thorough article source fetch timed out", extra={"build_id": build_id, "prompt": prompt})
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
 
-    live_candidates, live_source_meta = rank_sources(
-        [
-            c for c in rss_candidates + gdelt_candidates
-            if _is_mostly_latin(c.get("title", "")) and not is_blocked_domain(c.get("url", ""))
-        ],
-        prompt,
-        limit=limit,
-        min_text_chars=60,
-        min_relevance=0.16,
-        allow_fallback=True,
-    )
+        live_candidates = _merge_candidates(live_candidates, rss_candidates + gdelt_candidates, thorough_limit, prompt)
+        used_live_sources = used_live_sources or bool(rss_candidates or gdelt_candidates)
 
-    _set_progress(
-        build_id,
-        stage="enriching",
-        stage_label=f"Fetched {len(live_candidates)} candidates — reading full article text…",
-        sources_found=len(live_candidates),
-    )
-
-    # ── Step 2: DB cache supplement (only if live sources came up short) ──────
-    if len(live_candidates) < 5:
-        cached = _cached_articles_for_prompt(prompt, 20)
-        cached_urls = {c.get("url", "") for c in live_candidates}
-        for a in cached:
-            if a.get("url") not in cached_urls:
-                live_candidates.append(a)
+        thin = [
+            c for c in live_candidates
+            if len(c.get("raw_text") or c.get("description") or "") < 300
+        ][: max(2, settings.thorough_enrich_limit)]
+        if thin:
+            _set_progress(
+                build_id,
+                stage="enriching",
+                stage_label=f"Reading full text from {len(thin)} sources...",
+                sources_found=len(live_candidates),
+            )
+            enrich_timeout = max(3, int(settings.thorough_enrich_timeout_seconds))
+            enriched_by_url = {}
+            with ThreadPoolExecutor(max_workers=min(4, len(thin))) as enrich_pool:
+                future_map = {
+                    enrich_pool.submit(_enrich_candidate, c): c.get("url", "")
+                    for c in thin
+                }
+                try:
+                    for future in as_completed(future_map, timeout=enrich_timeout + 1):
+                        url = future_map[future]
+                        try:
+                            enriched_by_url[url] = future.result(timeout=enrich_timeout)
+                        except Exception:
+                            continue
+                except TimeoutError:
+                    logger.warning("Thorough enrich timed out", extra={"build_id": build_id})
+            if enriched_by_url:
+                live_candidates = [
+                    enriched_by_url.get(c.get("url", ""), c) for c in live_candidates
+                ]
 
     all_candidates, ranked_source_meta = rank_sources(
         live_candidates,
         prompt,
-        limit=limit,
-        min_text_chars=60,
-        min_relevance=0.14,
+        limit=thorough_limit,
+        min_text_chars=80,
+        min_relevance=0.12,
         allow_fallback=True,
     )
 
@@ -1027,20 +1055,27 @@ def write_article_from_prompt(prompt: str, limit: int = 50, use_gemini: bool = T
         _set_progress(build_id, active=False, stage="error", stage_label="No sources found", error="No accessible sources were found for a Gemini draft")
         raise GeminiArticleUnavailable("No accessible sources were found for a Gemini draft")
 
-    # Step 3: quality gate - require enough usable, diverse, fresh source text.
     source_quality = evaluate_source_quality(all_candidates, prompt, gate=THOROUGH_SOURCE_GATE)
     source_quality["ranking"] = ranked_source_meta
     with_text = [
         c for c in all_candidates
         if max(len(c.get("clean_text", "") or ""), len(c.get("raw_text", "") or "")) >= THOROUGH_SOURCE_GATE.min_text_chars
     ]
-    if source_quality["failed_gates"]:
+    if source_quality["failed_gates"] and len(with_text) < 3:
         _set_progress(build_id, active=False, stage="error", stage_label="Too few sources found", error="Source coverage did not meet the quality gate for a Gemini article")
         raise GeminiArticleUnavailable("Source coverage did not meet the quality gate for a Gemini article")
+
+    # Keep processing bounded — richest text first.
+    all_candidates = sorted(
+        all_candidates,
+        key=lambda a: max(len(a.get("clean_text", "") or ""), len(a.get("raw_text", "") or "")),
+        reverse=True,
+    )[:thorough_limit]
+
     _set_progress(
         build_id,
         stage="processing",
-        stage_label=f"Extracting claims from {len(with_text)} articles across {len({c.get('source_name','') for c in all_candidates})} sources…",
+        stage_label=f"Extracting claims from {len(all_candidates)} ranked sources…",
         sources_enriched=len(with_text),
         sources_found=len(all_candidates),
     )
@@ -1055,18 +1090,18 @@ def write_article_from_prompt(prompt: str, limit: int = 50, use_gemini: bool = T
         _set_progress(build_id, active=False, stage="error", stage_label="Processing failed", error="Source processing failed before Gemini could write an article")
         raise GeminiArticleUnavailable("Source processing failed before Gemini could write an article")
 
-    # ── Step 4: cluster → consensus → synthesise ─────────────────────────────
     cluster_id = queries.create_cluster(prompt, [int(a["id"]) for a in processed])
     cluster_claims = queries.get_cluster_claims(cluster_id)
 
     _set_progress(
         build_id,
         stage="consensus",
-        stage_label=f"Running semantic similarity across {len(cluster_claims)} claims from {len(processed)} articles…",
+        stage_label=f"Comparing claims across {len(processed)} articles…",
         claims_extracted=len(cluster_claims),
     )
 
-    consensus = detect_consensus(cluster_claims)
+    # Jaccard-only consensus avoids embedding model load time on the request path.
+    consensus = detect_consensus(cluster_claims, use_semantic=False)
     supported = [c for c in consensus if c["status"] == "supported"]
 
     _set_progress(
@@ -1083,7 +1118,7 @@ def write_article_from_prompt(prompt: str, limit: int = 50, use_gemini: bool = T
         use_gemini=use_gemini,
         generation_mode="thorough",
         source_quality=source_quality,
-        used_live_sources=bool(rss_candidates or gdelt_candidates),
+        used_live_sources=used_live_sources,
         require_gemini=True,
         build_id=build_id,
     )
@@ -1096,8 +1131,8 @@ def write_article_from_prompt(prompt: str, limit: int = 50, use_gemini: bool = T
         stage="done",
         stage_label="Done",
         article=article,
-        draft_text="\n\n".join(article.get("body") or []),
-        draft_headline=article.get("headline") or "",
+        draft_text="",
+        draft_headline="",
         error=None,
     )
     return article

@@ -810,33 +810,6 @@ a {
   font-weight: 900;
 }
 
-.build-draft-preview {
-  margin: 0 clamp(1rem, 3vw, 2rem) 0.85rem;
-  padding: 0.9rem 1rem;
-  border: 1px solid #d7d9cf;
-  background: rgba(255, 255, 255, 0.92);
-  color: #222;
-}
-
-.build-draft-preview strong,
-.build-draft-preview > span {
-  display: block;
-  margin-bottom: 0.45rem;
-  color: #0b5a40;
-  font-size: 0.78rem;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.build-draft-preview p {
-  margin: 0;
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 0.98rem;
-  line-height: 1.45;
-  white-space: pre-wrap;
-}
-
 .elapsed {
   margin-left: auto;
   font-variant-numeric: tabular-nums;

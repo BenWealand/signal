@@ -56,11 +56,14 @@ class Settings:
     # answer from Postgres before hitting live providers.
     daily_ingest_enabled: bool = os.getenv("SIGNAL_DAILY_INGEST", "false").lower() == "true"
     daily_ingest_interval_seconds: int = int(os.getenv("SIGNAL_DAILY_INGEST_INTERVAL_SECONDS", "86400"))
-    # Fast writes use the lite model; thorough keeps the primary flash model.
+    # Fast writes use the lite model; thorough keeps the primary flash model
+    # but with tighter enrich caps so it still returns quickly.
     gemini_fast_model: str = os.getenv("GEMINI_FAST_MODEL", "gemini-flash-lite-latest")
     fast_cache_min_sources: int = int(os.getenv("SIGNAL_FAST_CACHE_MIN_SOURCES", "4"))
-    thorough_enrich_limit: int = int(os.getenv("SIGNAL_THOROUGH_ENRICH_LIMIT", "12"))
-    thorough_enrich_timeout_seconds: int = int(os.getenv("SIGNAL_THOROUGH_ENRICH_TIMEOUT", "8"))
+    thorough_cache_min_sources: int = int(os.getenv("SIGNAL_THOROUGH_CACHE_MIN_SOURCES", "5"))
+    thorough_enrich_limit: int = int(os.getenv("SIGNAL_THOROUGH_ENRICH_LIMIT", "6"))
+    thorough_enrich_timeout_seconds: int = int(os.getenv("SIGNAL_THOROUGH_ENRICH_TIMEOUT", "5"))
+    thorough_max_candidates: int = int(os.getenv("SIGNAL_THOROUGH_MAX_CANDIDATES", "10"))
     app_name: str = "Signal News Intelligence API"
 
 

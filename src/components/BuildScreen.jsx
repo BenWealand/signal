@@ -33,8 +33,6 @@ export function BuildScreen({ draft, buildId = "", progress: externalProgress = 
     sources_enriched: 0,
     claims_extracted: 0,
     elapsed_s: 0,
-    draft_text: "",
-    draft_headline: "",
   });
 
   useEffect(() => {
@@ -47,7 +45,6 @@ export function BuildScreen({ draft, buildId = "", progress: externalProgress = 
     tickRef.current = WINDOW - 1;
     setLines(makeLines(WINDOW - 1, draft.logs));
 
-    // Scroll terminal
     const logInterval = window.setInterval(() => {
       tickRef.current += 1;
       const t = tickRef.current;
@@ -77,8 +74,6 @@ export function BuildScreen({ draft, buildId = "", progress: externalProgress = 
   const stageLabel = isStuck
     ? "Still working - thorough sourcing can take a little longer..."
     : progress.stage_label;
-  const draftPreview = String(progress.draft_text || "").trim();
-  const draftHeadline = String(progress.draft_headline || "").trim();
 
   return (
     <section className="writing-screen is-building">
@@ -119,13 +114,6 @@ export function BuildScreen({ draft, buildId = "", progress: externalProgress = 
           </div>
         </div>
       </div>
-
-      {draftPreview ? (
-        <div className="build-draft-preview" aria-live="polite">
-          {draftHeadline ? <strong>{draftHeadline}</strong> : <span>Live draft</span>}
-          <p>{draftPreview.slice(0, 700)}{draftPreview.length > 700 ? "…" : ""}</p>
-        </div>
-      ) : null}
 
       <div className="build-stage">
         <div className="terminal-card build-terminal">

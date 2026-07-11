@@ -211,20 +211,18 @@ function App() {
     source = "reader-prompt",
     tag = "prompt",
     mode = generationMode,
-    toastMessage = "Signal is sourcing your story...",
   } = {}) => {
     setExternalDraft(null);
     setDraftPrompt(nextPrompt);
     setPhase("building");
     setActiveBuildId("");
-    setBuildProgress({ stage: "fetching", stage_label: "Connecting to sources...", draft_text: "" });
-    if (hasApiBase()) showToast(toastMessage);
+    setBuildProgress({ stage: "fetching", stage_label: "Connecting to sources..." });
     return writeArticle(
       {
         prompt: nextPrompt,
         source,
         tag,
-        limit: 10,
+        limit: mode === "thorough" ? 8 : 10,
         mode,
         user_id: account?.id || null,
       },
