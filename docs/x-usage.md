@@ -11,18 +11,17 @@ Canonical agent playbook for a single post: [`x-trend-agent.md`](./x-trend-agent
 
 ## What Signal does vs what you add
 
-| Step | Signal (built) | You (X API in backend) |
-|------|----------------|------------------------|
-| Find what's trending | `GET /agents/x/trends` — tries X client, else Signal desk topics | Implement `XClient.fetch_trending()` |
-| Search a query | `POST /agents/x/search` — soft-falls back to the query itself | Implement `XClient.search_recent()` |
-| Decide if it's worth covering | `app/x/filter.py` actionable filter + prompt blacklist | Optional: tighten filter rules |
-| Write a sourced article | Gemini + news providers (not the tweet body) | — |
-| Keep it on a frontend link | Postgres + `/?article=<id>` deep link | Set `PUBLIC_ARTICLE_BASE_URL` |
+| Step | Signal (built) | You (config) |
+|------|----------------|--------------|
+| Find posts | Recent search + desk-topic seeding (`POST /agents/x/search`, `/run`) | Set `X_API_BEARER_TOKEN` |
+| Resolve a post URL | `POST /agents/x/lookup` | Bearer token |
+| Decide if it's worth covering | `app/x/filter.py` + prompt blacklist | Optional: tighten filter |
+| Write a sourced article | Gemini + news providers (not the tweet body) | `GEMINI_API_KEY` |
+| Keep it on a frontend link | Postgres + `/?article=<id>` | `PUBLIC_ARTICLE_BASE_URL` |
 | Build reply / share text | `replyText` + `intentUrl` | — |
-| Post / reply on X | Dry-run stub returns success without sending | Implement `XClient.post_tweet()` |
+| Post / reply on X | Live OAuth 1.0a `post_tweet` (dry-run by default) | Write tokens + `SIGNAL_X_DRY_RUN` |
 
-X/Twitter URLs are **never scraped as article sources** (`x.com` / `twitter.com` are blocked).
-The post is a *topic trigger*; journalism comes from Bing / Guardian / GDELT / RSS / desk cache.
+Trends API is **not** used. X/Twitter URLs are never scraped as article sources.
 
 ---
 
@@ -260,26 +259,32 @@ Respect the write rate limit (**5 / minute / IP**).
 
 ## Plugging in the X API
 
-Edit **only** `backend/app/x/client.py`:
+Search, lookup, and post/reply are **implemented** in `backend/app/x/client.py`.
 
-1. `fetch_trending()` — map trends → `XCandidate(topic=..., snippet=..., provider="x-api")`
-2. `search_recent(query)` — map tweets → candidates with `post_id`, `trend_url`, `snippet`
-3. `post_tweet(text, in_reply_to_id=...)` — create tweet/reply; return `XPostResult`
+Trends (`fetch_trending`) are intentionally **not** used. Discovery instead:
 
-Then:
+1. Uses your `query` with X recent search, or
+2. Takes Signal desk topics and runs X recent search for each, or
+3. Falls back to desk topics alone if X search is unavailable
+
+### Env on Render
 
 ```env
-SIGNAL_X_DRY_RUN=false   # after post_tweet works
-SIGNAL_X_AUTO_POST=true  # only if you want /run to publish automatically
+X_API_BEARER_TOKEN=...          # search / lookup
+X_API_KEY=...                   # consumer key
+X_API_SECRET=...                # consumer secret
+X_ACCESS_TOKEN=...
+X_ACCESS_TOKEN_SECRET=...
+SIGNAL_X_DRY_RUN=true           # keep true until you want live posts
+SIGNAL_X_AUTO_POST=false
 ```
 
-Flip `XClient.status()["implemented"]` to `True` when bodies are real so `/agents/x/status` reflects it.
+To publish for real:
 
-Suggested X endpoints (for your implementation notes):
-
-- Trends: `GET /1.1/trends/place.json?id={woeid}` (bearer)
-- Search: `GET /2/tweets/search/recent` (bearer)
-- Post: `POST /2/tweets` (OAuth 1.0a user context)
+```env
+SIGNAL_X_DRY_RUN=false
+SIGNAL_X_AUTO_POST=true   # only if /run should post automatically
+```
 
 ---
 
