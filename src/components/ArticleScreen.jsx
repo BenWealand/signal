@@ -54,11 +54,6 @@ export function ArticleScreen({
   const [commentBody, setCommentBody] = useState("");
   const [followUps, setFollowUps] = useState(() => localFollowUps(draft));
   const [followUpsLoading, setFollowUpsLoading] = useState(false);
-  const state = draft.articleState || {
-    kind: "offline_preview",
-    label: "Offline preview",
-    detail: "A local preview for offline development. Backend-configured builds use Gemini-sourced articles.",
-  };
   const facts = draft.facts || [
     {
       text: draft.terms.slice(0, 3).join(" "),
@@ -163,10 +158,6 @@ export function ArticleScreen({
       </div>
 
       <article className="article-reader">
-        <div className={`article-state article-state-${state.kind}`}>
-          <strong>{state.label}</strong>
-          <span>{state.detail}</span>
-        </div>
         <span>{draft.source ? `Filed from ${draft.source}` : "Signal analysis"}</span>
         <h1>{draft.headline}</h1>
         <p className="dek">{draft.dek}</p>
