@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { supabase } from "./lib/supabase.js";
-import { apiGet, apiPost, writeArticle, hasApiBase, isAuthenticated, subscribeWakeState } from "./api/client.js";
+import { apiGet, apiPost, writeArticle, hasApiBase, isAuthenticated } from "./api/client.js";
 import { useInitialSignalData } from "./hooks/useInitialSignalData.js";
 import { useStoredState } from "./hooks/useStoredState.js";
 import { SESSION_ID } from "./lib/session.js";
@@ -19,7 +19,6 @@ import { LatestScreen } from "./screens/Latest.jsx";
 import { TrendsScreen } from "./screens/Trends.jsx";
 import { SectionScreen } from "./screens/Section.jsx";
 import { SavedScreen } from "./screens/Saved.jsx";
-import { WakeStatus } from "./screens/shared.jsx";
 import "./styles.css";
 
 const OFFLINE_PREVIEW_DELAY_MS = Number(import.meta.env.VITE_SIGNAL_OFFLINE_PREVIEW_DELAY_MS || 7200);
@@ -70,7 +69,6 @@ function App() {
   const [backendStories, setBackendStories] = useState([]);
   const [trendingTopics, setTrendingTopics] = useState([]);
   const [apiStatus, setApiStatus] = useState("offline");
-  const [wakeState, setWakeState] = useState({ status: hasApiBase() ? "idle" : "disabled" });
   const [externalDraft, setExternalDraft] = useState(null);
   const [activeBuildId, setActiveBuildId] = useState("");
   const [buildProgress, setBuildProgress] = useState(null);
@@ -86,7 +84,6 @@ function App() {
   const toastTimerRef = useRef(0);
 
   useEffect(() => {
-    const unsubscribeWake = subscribeWakeState(setWakeState);
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user && !account) {
         const user = session.user;
@@ -109,7 +106,6 @@ function App() {
       if (!session) setAccount(null);
     });
     return () => {
-      unsubscribeWake();
       subscription.unsubscribe();
     };
   }, []);
@@ -288,7 +284,7 @@ function App() {
         || rawMessage.toLowerCase().includes("gemini")
         || rawMessage.toLowerCase().includes("source")
         ? "Could not generate from enough reliable sources. Try a more specific prompt."
-        : rawMessage || "The newsroom is still waking up. Wait a moment and try again.";
+        : rawMessage || "Signal could not finish that write. Wait a moment and try again.";
       showToast(message, 6000);
       return;
     }
@@ -504,7 +500,6 @@ function App() {
             draft={draft}
             buildId={activeBuildId}
             progress={buildProgress}
-            wakeState={wakeState}
           />
         )}
         {hasDraft && phase === "complete" && (
@@ -566,7 +561,6 @@ function App() {
         />
       )}
       {toast && <div className="toast" role="status">{toast}</div>}
-      <WakeStatus state={wakeState} />
     </section>
   );
 }

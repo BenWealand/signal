@@ -14,7 +14,7 @@ const STAGE_COLORS = {
   error:      "#8a3030",
 };
 
-export function BuildScreen({ draft, buildId = "", progress: externalProgress = null, wakeState }) {
+export function BuildScreen({ draft, buildId = "", progress: externalProgress = null }) {
   const WINDOW = 15;
   const tickRef = useRef(WINDOW);
 
@@ -74,12 +74,9 @@ export function BuildScreen({ draft, buildId = "", progress: externalProgress = 
   const stageColor = STAGE_COLORS[progress.stage] || STAGE_COLORS.idle;
   const elapsedLabel = progress.elapsed_s > 0 ? `${progress.elapsed_s}s` : "";
   const isStuck = progress.elapsed_s > 45;
-  const isWaking = ["waking", "retrying"].includes(wakeState?.status);
-  const stageLabel = isWaking
-    ? wakeState.message || "Waking the backend before sourcing..."
-    : isStuck
-      ? "Still working - thorough sourcing can take a little longer..."
-      : progress.stage_label;
+  const stageLabel = isStuck
+    ? "Still working - thorough sourcing can take a little longer..."
+    : progress.stage_label;
   const draftPreview = String(progress.draft_text || "").trim();
   const draftHeadline = String(progress.draft_headline || "").trim();
 
