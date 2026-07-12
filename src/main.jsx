@@ -1,12 +1,22 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Analytics } from "@vercel/analytics/react";
+import {
+  BrowserRouter,
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+  useParams,
+} from "react-router-dom";
 import { supabase } from "./lib/supabase.js";
 import { apiGet, apiPost, writeArticle, hasApiBase, isAuthenticated } from "./api/client.js";
 import { useInitialSignalData } from "./hooks/useInitialSignalData.js";
 import { useStoredState } from "./hooks/useStoredState.js";
 import { SESSION_ID } from "./lib/session.js";
 import { defaultSettings, SECTION_NAMES, SECTION_QUERIES, starterStories, trendPromptPreviews } from "./lib/constants.js";
+import { articlePath, articleUrl as buildArticleUrl, screenFromPathname, sectionSlug } from "./lib/routes.js";
 import { buildDraft, dedupeStories, normalizeCommandArticle, storyTitle } from "./utils/articleNormalize.js";
 import { isUsefulTrendTopic, makeGlobeMarkers, normalizeTrendingTopic } from "./utils/globeMarkers.js";
 import { Header } from "./components/Header.jsx";
@@ -21,6 +31,7 @@ import { TrendsScreen } from "./screens/Trends.jsx";
 import { SectionScreen } from "./screens/Section.jsx";
 import { SavedScreen } from "./screens/Saved.jsx";
 import { syncAccountWithBackend } from "./lib/auth.js";
+import { fetchSharedArticle, readArticleSessionCache, writeArticleSessionCache } from "./lib/articles.js";
 import "./styles.css";
 
 const OFFLINE_PREVIEW_DELAY_MS = Number(import.meta.env.VITE_SIGNAL_OFFLINE_PREVIEW_DELAY_MS || 7200);
@@ -37,15 +48,6 @@ function localFailureDraft(prompt, error) {
   });
 }
 
-function articleUrl(article) {
-  if (!article?.id) return window.location.href;
-  const url = new URL(window.location.href);
-  url.search = "";
-  url.hash = "";
-  url.searchParams.set("article", article.id);
-  return url.toString();
-}
-
 function trackEvent(userId, actionType, fields = {}) {
   isAuthenticated().then((authed) => {
     apiPost("/history", {
@@ -57,12 +59,22 @@ function trackEvent(userId, actionType, fields = {}) {
   });
 }
 
+function LegacyArticleRedirect() {
+  const params = new URLSearchParams(useLocation().search);
+  const articleId = params.get("article");
+  if (!articleId) return <Navigate to="/" replace />;
+  return <Navigate to={articlePath(articleId)} replace />;
+}
+
 function App() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const activeScreen = screenFromPathname(location.pathname);
+  const activeSection = SECTION_NAMES.includes(activeScreen) ? activeScreen : "World";
+
   const [prompt, setPrompt] = useState("");
   const [draftPrompt, setDraftPrompt] = useState("");
   const [phase, setPhase] = useState("idle");
-  const [activeScreen, setActiveScreen] = useState("Home");
-  const [activeSection, setActiveSection] = useState("World");
   const [accountOpen, setAccountOpen] = useState(false);
   const [accountMode, setAccountMode] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -130,7 +142,27 @@ function App() {
     };
   }, []);
 
-  const hasDraft = draftPrompt.length > 0;
+  // Support legacy share links: /?article=<id> → /article/<id>
+  useEffect(() => {
+    const legacyId = new URLSearchParams(location.search).get("article");
+    if (legacyId && (location.pathname === "/" || location.pathname === "")) {
+      navigate(articlePath(legacyId), { replace: true });
+    }
+  }, [location.pathname, location.search, navigate]);
+
+  // Leaving article/write views via nav should clear the overlay draft.
+  useEffect(() => {
+    if (activeScreen === "Article" || phase === "building") return;
+    if (draftPrompt || externalDraft || phase !== "idle") {
+      setDraftPrompt("");
+      setExternalDraft(null);
+      setPhase("idle");
+      setActiveBuildId("");
+      setBuildProgress(null);
+    }
+  }, [location.pathname]);
+
+  const hasDraft = draftPrompt.length > 0 || phase === "building" || activeScreen === "Article";
   const draft = useMemo(() => externalDraft || buildDraft(draftPrompt || prompt), [draftPrompt, prompt, externalDraft]);
   const trendSuggestions = useMemo(() => {
     const liveTopicPrompts = trendingTopics
@@ -219,13 +251,15 @@ function App() {
     setBackendStories,
     setCommandArticles,
     setTrendingTopics,
-    setPrompt,
-    setDraftPrompt,
-    setExternalDraft,
-    setPhase,
-    setActiveScreen,
-    trackEvent,
   });
+
+  const clearDraft = () => {
+    setDraftPrompt("");
+    setExternalDraft(null);
+    setPhase("idle");
+    setActiveBuildId("");
+    setBuildProgress(null);
+  };
 
   const startArticleWrite = (nextPrompt, {
     source = "reader-prompt",
@@ -256,10 +290,15 @@ function App() {
       },
     )
       .then((article) => {
-        setExternalDraft(normalizeCommandArticle(article));
+        const normalized = normalizeCommandArticle(article);
+        setExternalDraft(normalized);
         setActiveBuildId(article.buildId || "");
         setBuildProgress(null);
         setPhase("complete");
+        writeArticleSessionCache(normalized);
+        if (normalized.id) {
+          navigate(articlePath(normalized.id));
+        }
       })
       .catch((error) => {
         setActiveBuildId("");
@@ -277,26 +316,18 @@ function App() {
 
   const showToast = (message, durationMs = 2400) => {
     setToast(message);
-    // Cancel the previous toast timer so an earlier short-lived toast cannot
-    // dismiss a later message (e.g. a write-failure explanation) early.
     window.clearTimeout(toastTimerRef.current);
     toastTimerRef.current = window.setTimeout(() => setToast(""), durationMs);
   };
 
   const handleArticleWriteFailure = (failedPrompt, error) => {
     if (error?.status === 422 && String(error.detail || error.message || "").toLowerCase().includes("blocked")) {
-      // Clear the draft along with the phase; leaving draftPrompt set while
-      // phase is "idle" matches no screen and renders an empty page.
-      setExternalDraft(null);
-      setDraftPrompt("");
-      setPhase("idle");
+      clearDraft();
       showToast("That prompt is blocked by the Signal prompt filter.", 6000);
       return;
     }
     if (hasApiBase()) {
-      setExternalDraft(null);
-      setDraftPrompt("");
-      setPhase("idle");
+      clearDraft();
       const rawMessage = String(error?.detail || error?.message || "");
       const message = rawMessage.includes("gemini_article_unavailable")
         || rawMessage.toLowerCase().includes("gemini")
@@ -307,15 +338,16 @@ function App() {
       return;
     }
     window.setTimeout(() => {
-      setExternalDraft(localFailureDraft(failedPrompt, error));
+      const offline = localFailureDraft(failedPrompt, error);
+      setExternalDraft(offline);
       setPhase("complete");
+      if (offline.id) navigate(articlePath(offline.id));
     }, OFFLINE_PREVIEW_DELAY_MS);
   };
 
   const buildRecommendedPrompt = (nextPrompt) => {
     if (!nextPrompt) return;
     setPrompt(nextPrompt);
-    setActiveScreen("Latest");
     trackEvent(account?.id, "prompt", { prompt: nextPrompt, topic: "recommended-follow-up" });
     startArticleWrite(nextPrompt, {
       source: "recommended-follow-up",
@@ -371,6 +403,7 @@ function App() {
       prompt: draftPrompt,
       sourceCount: draft.sourceCount,
       savedAt: new Date().toLocaleString(),
+      articleId: draft.id || "",
     };
     setSavedArticles((current) => [item, ...current.filter((saved) => saved.title !== item.title)].slice(0, 12));
     apiPost("/saved-stories", {
@@ -385,7 +418,7 @@ function App() {
 
   const handleShareArticle = async () => {
     const shareText = `${draft.headline} - Signal Dispatch`;
-    const url = articleUrl(draft);
+    const url = buildArticleUrl(draft);
     if (navigator.share) {
       await navigator.share({ title: draft.headline, text: shareText, url });
       return;
@@ -395,13 +428,13 @@ function App() {
   };
 
   const handleCopyLink = async () => {
-    await navigator.clipboard.writeText(articleUrl(draft));
+    await navigator.clipboard.writeText(buildArticleUrl(draft));
     showToast("Article link copied.");
   };
 
   const handleShareX = () => {
     const text = encodeURIComponent(`${draft.headline} - Signal Dispatch`);
-    const url = encodeURIComponent(articleUrl(draft));
+    const url = encodeURIComponent(buildArticleUrl(draft));
     window.open(`https://x.com/intent/tweet?text=${text}&url=${url}`, "_blank", "noopener,noreferrer");
   };
 
@@ -412,28 +445,23 @@ function App() {
       setDraftPrompt(normalized.prompt);
       setExternalDraft(normalized);
       setPhase("complete");
-      setActiveScreen("Latest");
-      if (normalized.id) window.history.replaceState(null, "", `?article=${encodeURIComponent(normalized.id)}`);
+      writeArticleSessionCache(normalized);
+      if (normalized.id) {
+        navigate(articlePath(normalized.id));
+      }
       window.scrollTo({ top: 0, behavior: "smooth" });
       trackEvent(account?.id, "view", { prompt: normalized.prompt, article_id: String(normalized.id) });
     };
 
-    const needsFullArticle = hasApiBase()
-      && article?.id
+    const needsFullArticle = Boolean(article?.id)
       && (!Array.isArray(article.body) || !article.body.length || article.preview);
     if (needsFullArticle) {
-      apiGet(`/generated-articles/${encodeURIComponent(article.id)}`)
-        .then(finalize)
+      fetchSharedArticle(article.id, { preferCache: true })
+        .then(({ article: full }) => finalize(full))
         .catch(() => finalize(article));
       return;
     }
     finalize(article);
-  };
-
-  const startCommandPrompt = (article) => {
-    setPrompt(article.prompt);
-    setActiveScreen("Latest");
-    startArticleWrite(article.prompt);
   };
 
   const handleGlobeMarkerClick = (marker) => {
@@ -444,23 +472,18 @@ function App() {
     const topic = marker.prompt || marker.headline;
     if (!topic) return;
     setPrompt(topic);
-    setActiveScreen("Latest");
     trackEvent(account?.id, "prompt", { prompt: topic, section: "globe-trend" });
     startArticleWrite(topic, { source: "globe-trend", tag: "trend" });
   };
+
+  const showBuild = phase === "building";
+  const showArticle = activeScreen === "Article" && phase === "complete" && Boolean(externalDraft);
 
   return (
     <section className="hero-shell">
       <Header
         activeScreen={activeScreen}
-        onScreenChange={(screen) => {
-          setActiveScreen(screen);
-          setDraftPrompt("");
-          setExternalDraft(null);
-          setPhase("idle");
-          window.scrollTo({ top: 0, behavior: "smooth" });
-        }}
-        onSectionChange={setActiveSection}
+        onNavigateAway={clearDraft}
         onOpenAccount={() => setAccountOpen(true)}
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenNotifications={openNotifications}
@@ -469,83 +492,125 @@ function App() {
       />
 
       <main className="hero-main">
-        {!hasDraft && activeScreen === "Home" && (
-          <HomeScreen
-            globeMarkers={globeMarkers}
-            onGlobeMarkerClick={handleGlobeMarkerClick}
-            onSubmit={handleSubmit}
-            prompt={prompt}
-            onPromptChange={setPrompt}
-            generationMode={generationMode}
-            onGenerationModeChange={setGenerationMode}
-            typedSuggestion={typedSuggestion}
-          />
-        )}
-
-        {!hasDraft && activeScreen === "Latest" && (
-          <LatestScreen
-            commandArticles={[...commandArticles, ...backendStories]}
-            onOpenArticle={openCommandArticle}
-            loading={feedsLoading}
-            account={account}
-          />
-        )}
-
-        {!hasDraft && activeScreen === "Trending" && (
-          <TrendsScreen commandArticles={[...commandArticles, ...backendStories]} onOpenArticle={openCommandArticle} />
-        )}
-
-        {!hasDraft && activeScreen === "Saved" && (
-          <SavedScreen savedArticles={savedArticles} account={account} onOpenAccount={() => setAccountOpen(true)} />
-        )}
-
-        {!hasDraft && SECTION_NAMES.includes(activeScreen) && (
-          <SectionScreen
-            section={activeScreen}
-            account={account}
-            onOpenArticle={openCommandArticle}
-            onPrompt={(topic) => {
-              setPrompt(topic);
-              setActiveScreen("Latest");
-              trackEvent(account?.id, "prompt", { prompt: topic, section: activeScreen });
-              startArticleWrite(topic);
-            }}
-          />
-        )}
-
-        {hasDraft && phase === "building" && (
+        {showBuild ? (
           <BuildScreen
             draft={draft}
             buildId={activeBuildId}
             progress={buildProgress}
           />
-        )}
-        {hasDraft && phase === "complete" && (
-          <ArticleScreen
-            draft={draft}
-            prompt={prompt}
-            setPrompt={setPrompt}
-            onSubmit={handleSubmit}
-            generationMode={generationMode}
-            onGenerationModeChange={setGenerationMode}
-            onSave={handleSaveArticle}
-            onShare={handleShareArticle}
-            onCopyLink={handleCopyLink}
-            onShareX={handleShareX}
-            onRecommendedPrompt={buildRecommendedPrompt}
-            social={articleSocial}
-            onLikeArticle={handleLikeArticle}
-            onCommentArticle={handleCommentArticle}
-            onLikeComment={handleLikeComment}
+        ) : null}
+
+        <Routes>
+          <Route
+            index
+            element={(
+              showBuild || showArticle ? null : (
+                <HomeScreen
+                  globeMarkers={globeMarkers}
+                  onGlobeMarkerClick={handleGlobeMarkerClick}
+                  onSubmit={handleSubmit}
+                  prompt={prompt}
+                  onPromptChange={setPrompt}
+                  generationMode={generationMode}
+                  onGenerationModeChange={setGenerationMode}
+                  typedSuggestion={typedSuggestion}
+                />
+              )
+            )}
           />
-        )}
+          <Route
+            path="latest"
+            element={(
+              showBuild || showArticle ? null : (
+                <LatestScreen
+                  commandArticles={[...commandArticles, ...backendStories]}
+                  onOpenArticle={openCommandArticle}
+                  loading={feedsLoading}
+                  account={account}
+                />
+              )
+            )}
+          />
+          <Route
+            path="trending"
+            element={(
+              showBuild || showArticle ? null : (
+                <TrendsScreen commandArticles={[...commandArticles, ...backendStories]} onOpenArticle={openCommandArticle} />
+              )
+            )}
+          />
+          <Route
+            path="saved"
+            element={(
+              showBuild || showArticle ? null : (
+                <SavedScreen
+                  savedArticles={savedArticles}
+                  account={account}
+                  onOpenAccount={() => setAccountOpen(true)}
+                  onOpenArticle={openCommandArticle}
+                />
+              )
+            )}
+          />
+          {SECTION_NAMES.map((section) => (
+            <Route
+              key={section}
+              path={sectionSlug(section)}
+              element={(
+                showBuild || showArticle ? null : (
+                  <SectionScreen
+                    section={section}
+                    account={account}
+                    onOpenArticle={openCommandArticle}
+                    onPrompt={(topic) => {
+                      setPrompt(topic);
+                      trackEvent(account?.id, "prompt", { prompt: topic, section });
+                      startArticleWrite(topic);
+                    }}
+                  />
+                )
+              )}
+            />
+          ))}
+          <Route
+            path="article/:articleId"
+            element={(
+              <ArticleRoute
+                externalDraft={externalDraft}
+                setExternalDraft={setExternalDraft}
+                setDraftPrompt={setDraftPrompt}
+                setPrompt={setPrompt}
+                setPhase={setPhase}
+                phase={phase}
+                showBuild={showBuild}
+                draft={draft}
+                prompt={prompt}
+                generationMode={generationMode}
+                setGenerationMode={setGenerationMode}
+                handleSubmit={handleSubmit}
+                handleSaveArticle={handleSaveArticle}
+                handleShareArticle={handleShareArticle}
+                handleCopyLink={handleCopyLink}
+                handleShareX={handleShareX}
+                buildRecommendedPrompt={buildRecommendedPrompt}
+                articleSocial={articleSocial}
+                handleLikeArticle={handleLikeArticle}
+                handleCommentArticle={handleCommentArticle}
+                handleLikeComment={handleLikeComment}
+                account={account}
+                trackEvent={trackEvent}
+                showToast={showToast}
+              />
+            )}
+          />
+          <Route path="*" element={<LegacyOrHome />} />
+        </Routes>
       </main>
 
       {accountOpen && (
         <AccountModal
           account={account}
           savedArticles={savedArticles}
-          newsletterEmail={newsletterEmail}
           onNewsletterChange={setNewsletterEmail}
           initialMode={accountMode}
           onClose={() => {
@@ -587,4 +652,113 @@ function App() {
   );
 }
 
-createRoot(document.getElementById("root")).render(<App />);
+function LegacyOrHome() {
+  const location = useLocation();
+  if (new URLSearchParams(location.search).get("article")) {
+    return <LegacyArticleRedirect />;
+  }
+  return <Navigate to="/" replace />;
+}
+
+function ArticleRoute({
+  externalDraft,
+  setExternalDraft,
+  setDraftPrompt,
+  setPrompt,
+  setPhase,
+  phase,
+  showBuild,
+  draft,
+  prompt,
+  generationMode,
+  setGenerationMode,
+  handleSubmit,
+  handleSaveArticle,
+  handleShareArticle,
+  handleCopyLink,
+  handleShareX,
+  buildRecommendedPrompt,
+  articleSocial,
+  handleLikeArticle,
+  handleCommentArticle,
+  handleLikeComment,
+  account,
+  trackEvent,
+  showToast,
+}) {
+  const { articleId } = useParams();
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!articleId) return;
+    if (externalDraft?.id && String(externalDraft.id) === String(articleId) && phase === "complete") {
+      return;
+    }
+    let cancelled = false;
+    setPhase("complete");
+
+    const cached = readArticleSessionCache(articleId);
+    if (cached?.headline) {
+      const normalized = normalizeCommandArticle(cached);
+      setPrompt(normalized.prompt);
+      setDraftPrompt(normalized.prompt);
+      setExternalDraft(normalized);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+
+    fetchSharedArticle(articleId, { preferCache: false })
+      .then(({ article }) => {
+        if (cancelled) return;
+        const normalized = normalizeCommandArticle(article);
+        setPrompt(normalized.prompt);
+        setDraftPrompt(normalized.prompt);
+        setExternalDraft(normalized);
+        setPhase("complete");
+        trackEvent(account?.id, "view", { prompt: normalized.prompt, article_id: String(normalized.id) });
+      })
+      .catch(() => {
+        if (!cancelled && !cached?.headline) showToast("Could not open that article.", 4000);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [articleId]);
+
+  if (showBuild) return null;
+  if (loading && !externalDraft) {
+    return <div className="loading-state">Opening article…</div>;
+  }
+  if (!externalDraft) return null;
+
+  return (
+    <ArticleScreen
+      draft={draft}
+      prompt={prompt}
+      setPrompt={setPrompt}
+      onSubmit={handleSubmit}
+      generationMode={generationMode}
+      onGenerationModeChange={setGenerationMode}
+      onSave={handleSaveArticle}
+      onShare={handleShareArticle}
+      onCopyLink={handleCopyLink}
+      onShareX={handleShareX}
+      onRecommendedPrompt={buildRecommendedPrompt}
+      social={articleSocial}
+      onLikeArticle={handleLikeArticle}
+      onCommentArticle={handleCommentArticle}
+      onLikeComment={handleLikeComment}
+    />
+  );
+}
+
+createRoot(document.getElementById("root")).render(
+  <BrowserRouter>
+    <App />
+  </BrowserRouter>,
+);

@@ -11,8 +11,10 @@ Passwords are **never** stored in Signal’s database.
 |---------|--------|
 | Sign up / sign in | Account modal |
 | Password policy (10+ chars, letter + number) | Enforced in UI |
-| Email confirmation | Supabase + resend in UI |
+| Email confirmation | Disabled (turn Confirm email OFF in Supabase) |
 | Forgot / reset password | Supabase email link → recover mode |
+| Password helper checklist | Shown while creating/changing a password |
+| Autofill | Auth forms stay blank (no assumed email/name) |
 | Change password (signed in) | Account → Security |
 | Update display name | Account → Profile (`PATCH /users/me`) |
 | Session restore / refresh | Supabase PKCE + `onAuthStateChange` |
@@ -44,6 +46,7 @@ CORS_ORIGINS=https://your-frontend.vercel.app
 ```
 
 Apply migration `backend/app/db/migrations/0003_user_roles_auth.sql` (or recreate from `schema.sql`).
+For fast shared article links, also apply `0004_generated_articles_public_read.sql`.
 
 On backend startup, `create_tables()` applies pending migrations automatically.
 To run them manually against `DATABASE_URL`:
@@ -53,7 +56,23 @@ cd backend
 python3 scripts/apply_migrations.py
 ```
 
-## Finish checklist (production)
+## Shared article links (fast path)
+
+Share URLs look like `https://your-app.vercel.app/article/<id>`.
+
+Load order for `/article/:id`:
+
+1. In-memory draft (same tab just wrote/opened it)
+2. Session cache
+3. **Supabase PostgREST** on `generated_articles` (anon key) — skips Render cold start
+4. Render API `GET /generated-articles/:id`
+5. Static `generated-articles.json` fallback
+
+Enable public reads with migration `0004_generated_articles_public_read.sql`
+(or paste `docs/sql/0004_generated_articles_public_read.sql` in the Supabase SQL editor).
+
+Requires `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` on Vercel (same as auth).
+
 
 1. **Postgres** — deploy/restart backend so `0003_user_roles_auth` applies, or run `scripts/apply_migrations.py`
 2. **Render env** — `DATABASE_URL`, `SUPABASE_JWT_SECRET`, `SIGNAL_ADMIN_EMAILS=benwealand@gmail.com`, `CORS_ORIGINS=<vercel url>`
@@ -64,10 +83,10 @@ python3 scripts/apply_migrations.py
 ## Supabase dashboard checklist
 
 1. Authentication → Providers → **Email** enabled
-2. Confirm email (recommended for production)
+2. **Confirm email: OFF** (Signal signs users in immediately after signup)
 3. Site URL = your Vercel URL
 4. Redirect URLs include `https://your-frontend.vercel.app/**`
-5. Password requirements ≥ app policy
+5. Password requirements ≥ app policy (10+ chars, letter + number)
 
 ## Role model
 

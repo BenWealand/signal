@@ -30,8 +30,8 @@ def build_prompt(candidate_topic: str = "", snippet: str = "", prompt: str = "")
 
 def article_public_url(article_id: str) -> str:
     base = settings.public_article_base_url.strip().rstrip("/")
-    query = f"article={article_id}"
-    return f"{base}/?{query}" if base else f"/?{query}"
+    path = f"/article/{article_id}"
+    return f"{base}{path}" if base else path
 
 
 def x_reply_text(article: dict, article_url: str) -> str:

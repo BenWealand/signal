@@ -1,12 +1,13 @@
 export const SECTION_QUERIES = {
   World: "international diplomacy conflict global affairs",
   Politics: "congress senate legislation government policy",
+  Sporks: "sports athletics leagues championships olympic games",
   Markets: "stock market economy financial inflation interest rates",
   Technology: "artificial intelligence semiconductor technology cybersecurity",
   Climate: "climate change environment renewable energy weather",
 };
 
-export const SECTION_NAMES = ["World", "Politics", "Markets", "Technology", "Climate"];
+export const SECTION_NAMES = ["World", "Politics", "Sporks", "Markets", "Technology", "Climate"];
 
 export const starterStories = [
   {

@@ -604,7 +604,7 @@ source_count, denied_for_bias, fairness_score, accuracy_score,
 generation_mode, used_live_sources, fallback_reason, section, status, created_at
 """
 
-FEED_SECTION_SLUGS = ("world", "politics", "markets", "technology", "climate")
+FEED_SECTION_SLUGS = ("world", "politics", "sporks", "markets", "technology", "climate")
 
 
 def _decode_feed_article(row: Any, *, trend_metrics: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -954,6 +954,7 @@ def save_story(user_id: int | None, story_id: str, title: str, source_count: int
 _SECTION_KEYWORDS: dict[str, list[str]] = {
     "world": ["international", "global", "foreign", "diplomacy", "world affairs", "nato", "conflict", "united nations"],
     "politics": ["congress", "senate", "legislation", "election", "government", "policy", "president", "political", "democrat", "republican"],
+    "sporks": ["sport", "sports", "athlete", "league", "championship", "olympic", "nba", "nfl", "mlb", "soccer", "football", "tennis"],
     "markets": ["market", "economy", "financial", "inflation", "trade", "bank", "gdp", "stock", "fed ", "interest rate"],
     "technology": ["technology", "artificial intelligence", " ai ", "semiconductor", "chip", "cybersecurity", "tech", "software", "digital"],
     "climate": ["climate", "weather", "flood", "hurricane", "renewable", "carbon", "environment", "energy", "wildfire"],

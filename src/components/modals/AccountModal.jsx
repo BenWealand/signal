@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { supabase, isSupabaseConfigured } from "../../lib/supabase.js";
 import {
   authRedirectUrl,
+  passwordChecklist,
   permissionLabels,
   syncAccountWithBackend,
   updateAccountProfile,
@@ -19,10 +20,24 @@ const MODES = {
   security: "Security",
 };
 
+function PasswordHints({ password, confirmPassword = null }) {
+  const checks = passwordChecklist(password, confirmPassword);
+  if (!password && confirmPassword === null) return null;
+  return (
+    <ul className="password-hints" aria-live="polite">
+      {checks.map((item) => (
+        <li key={item.id} data-ok={item.ok ? "true" : "false"}>
+          <strong>{item.ok ? "✓" : "○"}</strong>
+          <span>{item.label}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function AccountModal({
   account,
   savedArticles,
-  newsletterEmail,
   onNewsletterChange,
   onClose,
   onSignIn,
@@ -32,8 +47,8 @@ export function AccountModal({
   initialMode = "",
 }) {
   const [mode, setMode] = useState(initialMode || (account ? "security" : "signin"));
-  const [name, setName] = useState(account?.name || "");
-  const [email, setEmail] = useState(account?.email || newsletterEmail || "");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -44,18 +59,27 @@ export function AccountModal({
     if (initialMode) setMode(initialMode);
   }, [initialMode]);
 
+  useEffect(() => {
+    // Profile editor can start from the signed-in name; auth forms stay blank.
+    if (account && mode !== "recover") {
+      setName(account.name || "");
+    }
+  }, [account, mode]);
+
   const switchMode = (next) => {
     setMode(next);
     setAuthError("");
     setInfo("");
     setPassword("");
     setConfirmPassword("");
+    setName("");
+    setEmail("");
   };
 
   const finishSignedIn = async (user, { toastMessage } = {}) => {
     const nextAccount = await syncAccountWithBackend(user, { name: name.trim() });
     onSignIn(nextAccount);
-    onNewsletterChange(nextAccount.email || user.email || "");
+    onNewsletterChange?.(nextAccount.email || user.email || "");
     if (toastMessage) onToast(toastMessage);
   };
 
@@ -66,7 +90,7 @@ export function AccountModal({
     });
     if (error) throw error;
     if (!data.session?.user) {
-      throw new Error("Sign-in succeeded but no session was created. Confirm your email, then try again.");
+      throw new Error("Sign-in succeeded but no session was created. Try again.");
     }
     await finishSignedIn(data.session.user, { toastMessage: "Signed in." });
   };
@@ -74,6 +98,7 @@ export function AccountModal({
   const submitSignUp = async () => {
     const passwordError = validatePassword(password);
     if (passwordError) throw new Error(passwordError);
+    if (password !== confirmPassword) throw new Error("Passwords do not match.");
     if (!name.trim()) throw new Error("Name is required to create an account.");
     const { data, error } = await supabase.auth.signUp({
       email: email.trim(),
@@ -88,9 +113,17 @@ export function AccountModal({
       await finishSignedIn(data.session.user, { toastMessage: "Account created and signed in." });
       return;
     }
-    setInfo("Account created. Check your email to confirm, then sign in.");
-    onToast("Account created — confirm your email before signing in.");
-    switchMode("signin");
+    // If the project still has email confirmation enabled in Supabase, try password sign-in once.
+    const signedIn = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    });
+    if (signedIn.error || !signedIn.data.session?.user) {
+      throw new Error(
+        "Account created, but sign-in needs a live session. In Supabase Auth, turn off “Confirm email”, then sign in.",
+      );
+    }
+    await finishSignedIn(signedIn.data.session.user, { toastMessage: "Account created and signed in." });
   };
 
   const submitForgot = async () => {
@@ -112,6 +145,8 @@ export function AccountModal({
     if (data.user) {
       await finishSignedIn(data.user, { toastMessage: "Password updated. You are signed in." });
       setMode("security");
+      setPassword("");
+      setConfirmPassword("");
     }
   };
 
@@ -125,29 +160,6 @@ export function AccountModal({
     setConfirmPassword("");
     setInfo("Password updated.");
     onToast("Password updated.");
-  };
-
-  const resendConfirmation = async () => {
-    if (!email.trim()) {
-      onToast("Enter your email first.");
-      return;
-    }
-    setLoading(true);
-    setAuthError("");
-    try {
-      const { error } = await supabase.auth.resend({
-        type: "signup",
-        email: email.trim(),
-        options: { emailRedirectTo: authRedirectUrl("/") },
-      });
-      if (error) throw error;
-      setInfo("Confirmation email resent.");
-      onToast("Confirmation email resent.");
-    } catch (err) {
-      setAuthError(err.message || "Could not resend confirmation email.");
-    } finally {
-      setLoading(false);
-    }
   };
 
   const saveProfileName = async () => {
@@ -194,11 +206,7 @@ export function AccountModal({
         await submitChangePassword();
       }
     } catch (err) {
-      const message = err?.message || "Authentication failed.";
-      setAuthError(message);
-      if (/confirm|verified|confirmation/i.test(message)) {
-        setInfo("If your account needs email confirmation, use Resend confirmation below.");
-      }
+      setAuthError(err?.message || "Authentication failed.");
     } finally {
       setLoading(false);
     }
@@ -236,7 +244,7 @@ export function AccountModal({
             <input
               value={name}
               onChange={(event) => setName(event.target.value)}
-              autoComplete="name"
+              autoComplete="off"
               placeholder="Your name"
             />
           </label>
@@ -280,9 +288,8 @@ export function AccountModal({
           <h3>Security</h3>
           <p className="modal-empty-copy">
             Passwords are stored by Supabase Auth (hashed). Signal never stores raw passwords.
-            Minimum {PASSWORD_MIN_LENGTH} characters with letters and numbers.
           </p>
-          <form className="modal-form" onSubmit={submit}>
+          <form className="modal-form" onSubmit={submit} autoComplete="off">
             <label>
               New password
               <input
@@ -293,6 +300,7 @@ export function AccountModal({
                 placeholder={`At least ${PASSWORD_MIN_LENGTH} characters`}
               />
             </label>
+            <PasswordHints password={password} confirmPassword={confirmPassword} />
             <label>
               Confirm new password
               <input
@@ -325,15 +333,16 @@ export function AccountModal({
       {!isSupabaseConfigured && (
         <p className="form-error">Authentication is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.</p>
       )}
-      <form className="modal-form" onSubmit={submit}>
+      <form className="modal-form" onSubmit={submit} autoComplete="off">
         {mode === "signup" && (
           <label>
             Name
             <input
               value={name}
               onChange={(event) => setName(event.target.value)}
-              placeholder="Reader name"
-              autoComplete="name"
+              placeholder="Your name"
+              autoComplete="off"
+              name="signal-signup-name"
             />
           </label>
         )}
@@ -346,7 +355,8 @@ export function AccountModal({
               onChange={(event) => setEmail(event.target.value)}
               placeholder="you@example.com"
               type="email"
-              autoComplete="email"
+              autoComplete="off"
+              name="signal-auth-email"
             />
           </label>
         )}
@@ -360,28 +370,29 @@ export function AccountModal({
               placeholder={mode === "signin" ? "Your password" : `At least ${PASSWORD_MIN_LENGTH} characters`}
               type="password"
               autoComplete={mode === "signin" ? "current-password" : "new-password"}
+              name="signal-auth-password"
             />
           </label>
         )}
 
-        {mode === "recover" && (
-          <label>
-            Confirm password
-            <input
-              value={confirmPassword}
-              onChange={(event) => setConfirmPassword(event.target.value)}
-              placeholder="Repeat new password"
-              type="password"
-              autoComplete="new-password"
+        {(mode === "signup" || mode === "recover") && (
+          <>
+            <PasswordHints
+              password={password}
+              confirmPassword={mode === "signup" || mode === "recover" ? confirmPassword : null}
             />
-          </label>
-        )}
-
-        {mode === "signup" && (
-          <p className="form-hint">
-            Use a strong password ({PASSWORD_MIN_LENGTH}+ characters, letters and numbers).
-            You may need to confirm your email before the first sign-in.
-          </p>
+            <label>
+              Confirm password
+              <input
+                value={confirmPassword}
+                onChange={(event) => setConfirmPassword(event.target.value)}
+                placeholder="Repeat password"
+                type="password"
+                autoComplete="new-password"
+                name="signal-auth-password-confirm"
+              />
+            </label>
+          </>
         )}
 
         {authError && <p className="form-error">{authError}</p>}
@@ -403,9 +414,6 @@ export function AccountModal({
           <>
             <button className="secondary-action" type="button" onClick={() => switchMode("forgot")}>
               Forgot password?
-            </button>
-            <button className="secondary-action" type="button" onClick={resendConfirmation} disabled={loading}>
-              Resend confirmation email
             </button>
             <button className="secondary-action" type="button" onClick={() => switchMode("signup")}>
               No account? Create one

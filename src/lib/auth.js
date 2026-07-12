@@ -32,6 +32,23 @@ export function validatePassword(password) {
   return "";
 }
 
+export function passwordChecklist(password, confirmPassword = null) {
+  const value = String(password || "");
+  const checks = [
+    { id: "length", label: `At least ${PASSWORD_MIN_LENGTH} characters`, ok: value.length >= PASSWORD_MIN_LENGTH },
+    { id: "letter", label: "Includes a letter", ok: /[A-Za-z]/.test(value) },
+    { id: "number", label: "Includes a number", ok: /[0-9]/.test(value) },
+  ];
+  if (confirmPassword !== null) {
+    checks.push({
+      id: "match",
+      label: "Passwords match",
+      ok: value.length > 0 && value === String(confirmPassword || ""),
+    });
+  }
+  return checks;
+}
+
 export function authRedirectUrl(path = "/") {
   if (typeof window === "undefined") return path;
   const url = new URL(window.location.href);

@@ -63,13 +63,13 @@ class XReplyTests(unittest.TestCase):
         reply_mod.settings = SimpleNamespace(public_article_base_url="https://signal.example.com/")
         self.assertEqual(
             article_public_url("write-123"),
-            "https://signal.example.com/?article=write-123",
+            "https://signal.example.com/article/write-123",
         )
 
     def test_reply_text_includes_link(self):
-        text = x_reply_text({"headline": "Budget Fight Intensifies"}, "https://signal.example.com/?article=1")
+        text = x_reply_text({"headline": "Budget Fight Intensifies"}, "https://signal.example.com/article/1")
         self.assertIn("Budget Fight Intensifies", text)
-        self.assertIn("https://signal.example.com/?article=1", text)
+        self.assertIn("https://signal.example.com/article/1", text)
 
 
 class XClientTests(unittest.TestCase):
@@ -198,7 +198,7 @@ class XPipelineTests(unittest.TestCase):
             reply_mod.settings = pipeline_mod.settings
             package = write_article_for_candidate(candidate, write_fn=fake_write)
             self.assertEqual(package.status, "ready_to_post")
-            self.assertTrue(package.article_url.endswith("?article=write-1"))
+            self.assertTrue(package.article_url.endswith("/article/write-1"))
             self.assertIn("Senate Budget Vote", package.reply_text)
 
     def test_run_pipeline_with_manual_candidates(self):
@@ -259,8 +259,8 @@ class XPipelineTests(unittest.TestCase):
 
         package = XSharePackage(
             status="ready_to_post",
-            article_url="https://signal.example.com/?article=1",
-            reply_text="Hello\n\nRead the sourced Signal write-up: https://signal.example.com/?article=1",
+            article_url="https://signal.example.com/article/1",
+            reply_text="Hello\n\nRead the sourced Signal write-up: https://signal.example.com/article/1",
         )
         out = maybe_share_package(package, dry_run=True, auto_post=False)
         self.assertEqual(out.status, "ready_to_post")

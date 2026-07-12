@@ -53,7 +53,7 @@ class AgentAccessTest(unittest.TestCase):
         )
         self.assertEqual(
             routes_articles.article_public_url("write-123"),
-            "https://signal.example.com/?article=write-123",
+            "https://signal.example.com/article/write-123",
         )
 
 
