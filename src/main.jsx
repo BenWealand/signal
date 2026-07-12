@@ -572,6 +572,7 @@ function App() {
               )}
             />
           ))}
+          <Route path="sporks" element={<Navigate to="/sports" replace />} />
           <Route
             path="article/:articleId"
             element={(

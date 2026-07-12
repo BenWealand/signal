@@ -1,12 +1,24 @@
 import { useEffect, useState } from "react";
 import { apiGetCached, apiGetFresh } from "../api/client.js";
-import { starterStories } from "../lib/constants.js";
+import { SECTION_NAMES, starterStories } from "../lib/constants.js";
 import { dedupeStories } from "../utils/articleNormalize.js";
 import { LoadingState, ScreenShell } from "./shared.jsx";
+
+function articleMatchesSection(article, filter) {
+  if (filter === "All") return true;
+  const wanted = filter.toLowerCase();
+  const aliases = wanted === "sports" ? new Set(["sports", "sporks"]) : new Set([wanted]);
+  const section = String(article.section || "").toLowerCase();
+  if (section) return aliases.has(section);
+  const label = `${article.tag || ""} ${article.source || ""} ${article.prompt || ""}`.toLowerCase();
+  return [...aliases].some((alias) => label.includes(alias));
+}
 
 export function TrendsScreen({ commandArticles, onOpenArticle }) {
   const [rankedTrends, setRankedTrends] = useState([]);
   const [topicStatus, setTopicStatus] = useState("loading");
+  const [filter, setFilter] = useState("All");
+  const sections = ["All", ...SECTION_NAMES];
 
   useEffect(() => {
     setTopicStatus("loading");
@@ -42,10 +54,13 @@ export function TrendsScreen({ commandArticles, onOpenArticle }) {
           headline: s.title,
           summary: s.dek,
           source: s.section,
+          section: s.section,
           sourceCount: s.sourceCount,
           fairnessScore: 86,
           accuracyScore: 88,
         }));
+
+  const filtered = trends.filter((trend) => articleMatchesSection(trend, filter));
 
   if (topicStatus === "loading" && !trends.length) {
     return (
@@ -58,8 +73,20 @@ export function TrendsScreen({ commandArticles, onOpenArticle }) {
   return (
     <ScreenShell eyebrow="Trending" title="Trending">
       <p className="screen-caption">Ranked by views, likes, comments, relevance, and recency</p>
+      <div className="feed-filter-bar">
+        {sections.map((s) => (
+          <button
+            key={s}
+            type="button"
+            className={filter === s ? "is-active" : ""}
+            onClick={() => setFilter(s)}
+          >
+            {s}
+          </button>
+        ))}
+      </div>
       <div className="section-grid">
-        {trends.map((trend, index) => {
+        {filtered.map((trend, index) => {
           const previewRaw = trend.dek || trend.summary || trend.body?.[0] || "";
           const preview = previewRaw.length > 150 ? `${previewRaw.slice(0, 150)}...` : previewRaw;
           const metrics = trend.trendMetrics || {};
@@ -91,6 +118,9 @@ export function TrendsScreen({ commandArticles, onOpenArticle }) {
           );
         })}
       </div>
+      {!filtered.length ? (
+        <p className="modal-empty-copy">No trending stories yet for this filter.</p>
+      ) : null}
     </ScreenShell>
   );
 }

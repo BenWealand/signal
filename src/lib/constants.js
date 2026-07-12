@@ -1,13 +1,13 @@
 export const SECTION_QUERIES = {
   World: "international diplomacy conflict global affairs",
   Politics: "congress senate legislation government policy",
-  Sporks: "sports athletics leagues championships olympic games",
+  Sports: "sports athletics leagues championships olympic games",
   Markets: "stock market economy financial inflation interest rates",
   Technology: "artificial intelligence semiconductor technology cybersecurity",
   Climate: "climate change environment renewable energy weather",
 };
 
-export const SECTION_NAMES = ["World", "Politics", "Sporks", "Markets", "Technology", "Climate"];
+export const SECTION_NAMES = ["World", "Politics", "Sports", "Markets", "Technology", "Climate"];
 
 export const starterStories = [
   {
@@ -16,6 +16,13 @@ export const starterStories = [
     title: "Diplomatic cables point to a slower ceasefire timetable",
     dek: "Signal is tracking public statements, local accounts, and agency copy for overlap.",
     sourceCount: 18,
+  },
+  {
+    id: "sports-brief",
+    section: "Sports",
+    title: "League standings tighten as playoff races enter the final stretch",
+    dek: "Box scores, injury reports, and postgame interviews are being compared across desks.",
+    sourceCount: 19,
   },
   {
     id: "markets-brief",

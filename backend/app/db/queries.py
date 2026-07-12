@@ -604,7 +604,7 @@ source_count, denied_for_bias, fairness_score, accuracy_score,
 generation_mode, used_live_sources, fallback_reason, section, status, created_at
 """
 
-FEED_SECTION_SLUGS = ("world", "politics", "sporks", "markets", "technology", "climate")
+FEED_SECTION_SLUGS = ("world", "politics", "sports", "markets", "technology", "climate")
 
 
 def _decode_feed_article(row: Any, *, trend_metrics: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -954,7 +954,7 @@ def save_story(user_id: int | None, story_id: str, title: str, source_count: int
 _SECTION_KEYWORDS: dict[str, list[str]] = {
     "world": ["international", "global", "foreign", "diplomacy", "world affairs", "nato", "conflict", "united nations"],
     "politics": ["congress", "senate", "legislation", "election", "government", "policy", "president", "political", "democrat", "republican"],
-    "sporks": ["sport", "sports", "athlete", "league", "championship", "olympic", "nba", "nfl", "mlb", "soccer", "football", "tennis"],
+    "sports": ["sport", "sports", "athlete", "league", "championship", "olympic", "nba", "nfl", "mlb", "soccer", "football", "tennis"],
     "markets": ["market", "economy", "financial", "inflation", "trade", "bank", "gdp", "stock", "fed ", "interest rate"],
     "technology": ["technology", "artificial intelligence", " ai ", "semiconductor", "chip", "cybersecurity", "tech", "software", "digital"],
     "climate": ["climate", "weather", "flood", "hurricane", "renewable", "carbon", "environment", "energy", "wildfire"],
@@ -999,18 +999,26 @@ def _list_generated_articles_by_section_cur(cur: Any, section: str, limit: int =
     matched by section keywords so nothing disappears from topic pages.
     """
     slug = section.lower()
+    if slug == "sporks":
+        slug = "sports"
     keywords = _SECTION_KEYWORDS.get(slug, [])
     if not keywords:
         return list_generated_articles(limit=limit)
     keyword_conditions = " OR ".join(["prompt ILIKE %s OR headline ILIKE %s"] * len(keywords))
     keyword_params = [val for kw in keywords for val in (f"%{kw}%", f"%{kw}%")]
+    if slug == "sports":
+        section_match = "section IN ('sports', 'sporks')"
+        section_params: list[Any] = []
+    else:
+        section_match = "section = %s"
+        section_params = [slug]
     cur.execute(
         f"""
         SELECT {_GENERATED_FEED_COLUMNS}
         FROM generated_articles
         WHERE created_at > NOW() - INTERVAL '14 days'
           AND (
-            section = %s
+            {section_match}
             OR (COALESCE(section, '') = '' AND ({keyword_conditions}))
           )
         ORDER BY
@@ -1022,7 +1030,7 @@ def _list_generated_articles_by_section_cur(cur: Any, section: str, limit: int =
           created_at DESC
         LIMIT %s
         """,
-        [slug, *keyword_params, max(limit * 3, limit)],
+        [*section_params, *keyword_params, max(limit * 3, limit)],
     )
     items = [_decode_feed_article(row) for row in cur.fetchall()]
     return _filter_feed_articles(items, limit)
@@ -1030,6 +1038,8 @@ def _list_generated_articles_by_section_cur(cur: Any, section: str, limit: int =
 
 def list_generated_articles_by_section(section: str, limit: int = 20) -> list[dict[str, Any]]:
     slug = section.lower()
+    if slug == "sporks":
+        slug = "sports"
     keywords = _SECTION_KEYWORDS.get(slug, [])
     if not keywords:
         return list_generated_articles(limit=limit)
@@ -1056,6 +1066,8 @@ def generated_prompt_exists_recent(prompt: str, max_age_minutes: int = 45) -> bo
 
 def list_section_generation_prompts(section: str, limit: int = 9) -> list[str]:
     slug = section.lower()
+    if slug == "sporks":
+        slug = "sports"
     keywords = _SECTION_KEYWORDS.get(slug, [])
     if not keywords:
         return []
@@ -1114,7 +1126,10 @@ def list_section_generation_prompts(section: str, limit: int = 9) -> list[str]:
 
 
 def list_stories_by_section(section: str, limit: int = 20) -> list[dict[str, Any]]:
-    keywords = _SECTION_KEYWORDS.get(section.lower(), [])
+    slug = section.lower()
+    if slug == "sporks":
+        slug = "sports"
+    keywords = _SECTION_KEYWORDS.get(slug, [])
     if not keywords:
         return list_stories()[:limit]
     conditions = " OR ".join(["topic_label ILIKE %s"] * len(keywords))

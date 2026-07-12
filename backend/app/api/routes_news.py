@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 SECTION_PROMPTS: dict[str, str] = {
     "world": "international diplomacy conflict global affairs",
     "politics": "congress senate legislation government policy",
-    "sporks": "sports athletics leagues championships olympic games",
+    "sports": "sports athletics leagues championships olympic games",
     "markets": "stock market economy financial inflation interest rates",
     "technology": "artificial intelligence semiconductor technology cybersecurity",
     "climate": "climate change environment renewable energy weather",
@@ -27,6 +27,13 @@ SECTION_PROMPTS: dict[str, str] = {
 SECTION_SLUGS = tuple(SECTION_PROMPTS)
 
 router = APIRouter()
+
+
+def _normalize_section_slug(section: str) -> str:
+    slug = (section or "").lower().replace(" ", "-")
+    if slug == "sporks":
+        return "sports"
+    return slug
 
 
 def _story_key(item: dict) -> str:
@@ -93,7 +100,7 @@ def section_news(section: str, limit: int = 20):
     1. Generated articles (from write_article_from_prompt) matching section keywords — richest content
     2. Story clusters matching section keywords — fallback when generated articles are sparse
     """
-    slug = section.lower().replace(" ", "-")
+    slug = _normalize_section_slug(section)
 
     generated = _dedupe_stories(queries.list_generated_articles_by_section(slug, limit=limit * 3), limit)
 
@@ -108,9 +115,9 @@ def section_news(section: str, limit: int = 20):
 
 @router.post("/news/refresh/{section}")
 def refresh_section(section: str, background_tasks: BackgroundTasks):
-    slug = section.lower().replace(" ", "-")
+    slug = _normalize_section_slug(section)
     background_tasks.add_task(_generate_fast_section_articles, slug)
-    return {"ok": True, "section": section, "status": "fetching"}
+    return {"ok": True, "section": slug, "status": "fetching"}
 
 
 @router.get("/news/trending-topics")
@@ -229,7 +236,7 @@ def _section_prompts(section: str, count: int) -> list[str]:
 
 def _generate_fast_section_articles(section: str, count: int | None = None) -> None:
     """Generate shared fast-mode section articles and save them to the DB."""
-    slug = section.lower().replace(" ", "-")
+    slug = _normalize_section_slug(section)
     if slug not in SECTION_PROMPTS:
         return
     target_count = max(1, min(count or settings.section_fast_articles_per_refresh, 5))

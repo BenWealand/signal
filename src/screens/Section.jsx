@@ -8,7 +8,7 @@ import { LoadingState } from "./shared.jsx";
 const SECTION_LOADING_MESSAGES = {
   World: "Scanning dispatches from every continent...",
   Politics: "Following the paper trail through the capitol...",
-  Sporks: "Checking the scoreboard across leagues and fields...",
+  Sports: "Checking the scoreboard across leagues and fields...",
   Markets: "Reading the tape on today's markets...",
   Technology: "Compiling the latest from labs and launchpads...",
   Climate: "Checking readings from field stations worldwide...",
