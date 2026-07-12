@@ -12,51 +12,46 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.config import admin_email_set
 from app.api import routes_admin
+from app import auth as auth_mod
 
 
-class AdminAccessTests(unittest.TestCase):
-    def setUp(self):
-        self._settings = routes_admin.settings
-
-    def tearDown(self):
-        routes_admin.settings = self._settings
-
+class AdminAccessTest(unittest.TestCase):
     def test_default_admin_email_includes_ben(self):
         emails = admin_email_set()
         self.assertIn("benwealand@gmail.com", emails)
 
     def test_require_admin_rejects_missing_jwt_secret(self):
-        routes_admin.settings = SimpleNamespace(
+        auth_mod.settings = SimpleNamespace(
             supabase_jwt_secret="",
             admin_emails="benwealand@gmail.com",
+            signal_api_token="",
         )
         with self.assertRaises(HTTPException) as ctx:
             routes_admin._require_admin("")
         self.assertEqual(ctx.exception.status_code, 503)
+        auth_mod.settings = __import__("app.config", fromlist=["settings"]).settings
 
     def test_require_admin_rejects_non_admin_email(self):
-        routes_admin.settings = SimpleNamespace(
-            supabase_jwt_secret="secret",
-            admin_emails="benwealand@gmail.com",
-        )
-        with patch.object(routes_admin, "_user_id_from_supabase_jwt", return_value=7):
-            with patch.object(routes_admin.queries, "get_user", return_value={"id": 7, "email": "other@example.com"}):
-                with self.assertRaises(HTTPException) as ctx:
-                    routes_admin._require_admin("Bearer fake")
+        with patch.object(auth_mod, "decode_supabase_jwt", return_value={"sub": "u", "email": "other@example.com"}):
+            with patch.object(
+                auth_mod,
+                "sync_user_from_claims",
+                return_value={"id": 7, "email": "other@example.com", "role": "reader", "name": "O"},
+            ):
+                with patch("app.auth.admin_email_set", return_value={"benwealand@gmail.com"}):
+                    with self.assertRaises(HTTPException) as ctx:
+                        routes_admin._require_admin("Bearer fake")
         self.assertEqual(ctx.exception.status_code, 403)
 
     def test_require_admin_allows_ben(self):
-        routes_admin.settings = SimpleNamespace(
-            supabase_jwt_secret="secret",
-            admin_emails="benwealand@gmail.com",
-        )
-        with patch.object(routes_admin, "_user_id_from_supabase_jwt", return_value=1):
+        with patch.object(auth_mod, "decode_supabase_jwt", return_value={"sub": "u", "email": "benwealand@gmail.com"}):
             with patch.object(
-                routes_admin.queries,
-                "get_user",
-                return_value={"id": 1, "email": "BenWealand@gmail.com", "name": "Ben"},
+                auth_mod,
+                "sync_user_from_claims",
+                return_value={"id": 1, "email": "benwealand@gmail.com", "role": "admin", "name": "Ben"},
             ):
-                user = routes_admin._require_admin("Bearer fake")
+                with patch("app.auth.admin_email_set", return_value={"benwealand@gmail.com"}):
+                    user = routes_admin._require_admin("Bearer fake")
         self.assertEqual(user["id"], 1)
 
 

@@ -109,7 +109,7 @@ export function SettingsModal({ settings, onSettingsChange, onClose, onToast, ac
 
       {isAdmin ? (
         <div className="modal-section">
-          <XUsageTerminal onToast={onToast} />
+          <XUsageTerminal account={account} onToast={onToast} />
         </div>
       ) : null}
 

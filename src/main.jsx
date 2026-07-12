@@ -20,6 +20,7 @@ import { LatestScreen } from "./screens/Latest.jsx";
 import { TrendsScreen } from "./screens/Trends.jsx";
 import { SectionScreen } from "./screens/Section.jsx";
 import { SavedScreen } from "./screens/Saved.jsx";
+import { syncAccountWithBackend } from "./lib/auth.js";
 import "./styles.css";
 
 const OFFLINE_PREVIEW_DELAY_MS = Number(import.meta.env.VITE_SIGNAL_OFFLINE_PREVIEW_DELAY_MS || 7200);
@@ -63,6 +64,7 @@ function App() {
   const [activeScreen, setActiveScreen] = useState("Home");
   const [activeSection, setActiveSection] = useState("World");
   const [accountOpen, setAccountOpen] = useState(false);
+  const [accountMode, setAccountMode] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [toast, setToast] = useState("");
@@ -85,28 +87,45 @@ function App() {
   const toastTimerRef = useRef(0);
 
   useEffect(() => {
+    let active = true;
+
+    const applySession = async (session, { openRecover = false } = {}) => {
+      if (!active) return;
+      if (!session?.user) {
+        setAccount(null);
+        return;
+      }
+      const next = await syncAccountWithBackend(session.user);
+      if (!active) return;
+      setAccount(next);
+      if (openRecover) {
+        setAccountMode("recover");
+        setAccountOpen(true);
+      }
+    };
+
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user && !account) {
-        const user = session.user;
-        const restoredAccount = {
-          name: user.user_metadata?.name || user.email.split("@")[0],
-          email: user.email,
-          plan: "Reader",
-          supabase_user_id: user.id,
-        };
-        setAccount(restoredAccount);
-        apiPost("/users", restoredAccount).then((saved) => {
-          setAccount((prev) => ({ ...prev, id: saved.id }));
-        }).catch(() => {});
-      } else if (!session && account) {
+      applySession(session);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "PASSWORD_RECOVERY") {
+        applySession(session, { openRecover: true });
+        return;
+      }
+      if (event === "SIGNED_OUT") {
+        setAccount(null);
+        return;
+      }
+      if (session?.user) {
+        applySession(session);
+      } else {
         setAccount(null);
       }
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!session) setAccount(null);
-    });
     return () => {
+      active = false;
       subscription.unsubscribe();
     };
   }, []);
@@ -528,17 +547,20 @@ function App() {
           savedArticles={savedArticles}
           newsletterEmail={newsletterEmail}
           onNewsletterChange={setNewsletterEmail}
-          onClose={() => setAccountOpen(false)}
+          initialMode={accountMode}
+          onClose={() => {
+            setAccountOpen(false);
+            setAccountMode("");
+          }}
           onSignIn={(nextAccount) => {
             setAccount(nextAccount);
-            apiPost("/users", nextAccount)
-              .then((savedUser) => setAccount({ ...nextAccount, id: savedUser.id }))
-              .catch(() => {});
+            setAccountMode("");
           }}
           onSignOut={() => {
-              supabase.auth.signOut().catch(() => {});
-              setAccount(null);
-            }}
+            supabase.auth.signOut().catch(() => {});
+            setAccount(null);
+            setAccountMode("");
+          }}
           onClearSaved={() => setSavedArticles([])}
           onToast={showToast}
         />

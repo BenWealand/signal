@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 
-from app.api.middleware import FeedCacheHeadersMiddleware
+from app.api.middleware import FeedCacheHeadersMiddleware, SecurityHeadersMiddleware
 from app.api.routes_articles import router as article_router
 from app.api.routes_x import router as x_router
 from app.api.routes_feeds import router as feeds_router
@@ -53,6 +53,7 @@ app.add_middleware(
 )
 app.add_middleware(GZipMiddleware, minimum_size=500)
 app.add_middleware(FeedCacheHeadersMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 
 app.include_router(story_router)
 app.include_router(article_router)
@@ -224,11 +225,27 @@ def shutdown() -> None:
 @app.get("/health")
 def health():
     database = dict(_database_status)
+    auth_schema = {"users_role": False, "migrations": []}
     try:
         with get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT 1")
                 cur.fetchone()
+                cur.execute(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'users' AND column_name = 'role'
+                    """
+                )
+                auth_schema["users_role"] = bool(cur.fetchone())
+                try:
+                    cur.execute("SELECT version FROM schema_migrations ORDER BY version")
+                    auth_schema["migrations"] = [
+                        (row["version"] if isinstance(row, dict) else row[0]) for row in cur.fetchall()
+                    ]
+                except Exception:
+                    auth_schema["migrations"] = []
         database = {"ok": True, "type": "postgres", "error": ""}
     except Exception as exc:
         database = {"ok": False, "type": "postgres", "error": str(exc)}
@@ -238,6 +255,10 @@ def health():
     return {
         "ok": bool(database.get("ok")),
         "database": database,
+        "auth": {
+            "jwt_secret_configured": bool((settings.supabase_jwt_secret or "").strip()),
+            "schema": auth_schema,
+        },
         "mode": "llm" if (settings.openai_api_key or settings.gemini_api_key) else "demo",
         "keys_configured": {
             "gemini": bool(settings.gemini_api_key),

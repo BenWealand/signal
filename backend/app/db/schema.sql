@@ -166,8 +166,12 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT NOT NULL,
   email TEXT NOT NULL UNIQUE,
   plan TEXT DEFAULT 'Reader',
+  role TEXT NOT NULL DEFAULT 'reader',
   supabase_user_id UUID UNIQUE,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  email_confirmed SMALLINT NOT NULL DEFAULT 0,
+  last_login_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT users_role_check CHECK (role IN ('reader', 'editor', 'admin'))
 );
 
 CREATE TABLE IF NOT EXISTS user_preferences (

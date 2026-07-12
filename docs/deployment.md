@@ -24,8 +24,11 @@ Do not put backend provider secrets into Vercel frontend variables unless the va
 
 ```bash
 cd backend
-python scripts/create_tables.py
+python3 scripts/apply_migrations.py
+# or: python3 scripts/create_tables.py
 ```
+
+Pending files under `backend/app/db/migrations/` (including auth roles `0003_user_roles_auth`) also apply automatically on API startup.
 
 The schema is in `backend/app/db/schema.sql`. It uses PostgreSQL features and is not SQLite-compatible.
 

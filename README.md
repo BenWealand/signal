@@ -168,14 +168,16 @@ Prefer a virtualenv instead.
 5. Include `sslmode=require` if your connection string/provider requires it.
 6. Run `python scripts/create_tables.py` from `backend/`.
 
-Supabase Auth is optional. For frontend auth forms, set:
+Supabase Auth is the identity provider for accounts (email/password). See [Authentication & accounts](docs/auth.md).
 
 ```env
 VITE_SUPABASE_URL=
 VITE_SUPABASE_ANON_KEY=
+VITE_SIGNAL_ADMIN_EMAILS=benwealand@gmail.com
 ```
 
-Set `SUPABASE_JWT_SECRET` on the backend to enforce Supabase JWT checks for user-specific routes.
+Set `SUPABASE_JWT_SECRET` on the backend to verify sessions and protect user/admin routes.
+Run migration `0003_user_roles_auth.sql` for `role` / `email_confirmed` / `last_login_at`.
 
 ## Provider Behavior
 
@@ -215,6 +217,7 @@ uvicorn app.main:app --reload --port 8000
 - [Project rundown](docs/project-rundown.md)
 - [X trend agent](docs/x-trend-agent.md)
 - [X usage / automation runbook](docs/x-usage.md)
+- [Authentication & accounts](docs/auth.md)
 
 ## Troubleshooting
 

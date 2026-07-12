@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiGet, apiPost, hasApiBase } from "../../api/client.js";
+import { isAdminAccount } from "../../lib/admin.js";
 
 function stamp() {
   return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -11,7 +12,13 @@ function summarizeCandidate(candidate, index) {
   return `#${index + 1} ${handle} — ${String(topic).slice(0, 72)}`;
 }
 
-export function XUsageTerminal({ onToast }) {
+/**
+ * Admin-only X usage board.
+ * Requires a live `/admin/me` success — localStorage role spoofing is not enough.
+ */
+export function XUsageTerminal({ account, onToast }) {
+  const [allowed, setAllowed] = useState(false);
+  const [checking, setChecking] = useState(true);
   const [lines, setLines] = useState([]);
   const [status, setStatus] = useState(null);
   const [query, setQuery] = useState("federal reserve");
@@ -26,6 +33,39 @@ export function XUsageTerminal({ onToast }) {
     const node = scrollerRef.current;
     if (node) node.scrollTop = node.scrollHeight;
   }, [lines]);
+
+  useEffect(() => {
+    let active = true;
+    setChecking(true);
+    setAllowed(false);
+
+    if (!isAdminAccount(account) || !hasApiBase()) {
+      setChecking(false);
+      return () => {
+        active = false;
+      };
+    }
+
+    apiGet("/admin/me")
+      .then((data) => {
+        if (!active) return;
+        if (data?.admin) {
+          setAllowed(true);
+        } else {
+          setAllowed(false);
+        }
+      })
+      .catch(() => {
+        if (active) setAllowed(false);
+      })
+      .finally(() => {
+        if (active) setChecking(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [account]);
 
   const refreshStatus = useCallback(async () => {
     if (!hasApiBase()) {
@@ -44,14 +84,27 @@ export function XUsageTerminal({ onToast }) {
     } catch (error) {
       push(`status failed: ${error?.detail || error?.message || "unknown error"}`, "error");
       onToast?.("Admin X status failed — sign in as the admin account.");
+      setAllowed(false);
     } finally {
       setBusy("");
     }
   }, [onToast, push]);
 
   useEffect(() => {
-    refreshStatus();
-  }, [refreshStatus]);
+    if (allowed) refreshStatus();
+  }, [allowed, refreshStatus]);
+
+  if (checking) {
+    return (
+      <div className="x-admin-terminal x-admin-terminal-locked">
+        <p>Verifying admin access…</p>
+      </div>
+    );
+  }
+
+  if (!allowed) {
+    return null;
+  }
 
   const runSearch = async () => {
     const q = query.trim();

@@ -2422,6 +2422,72 @@ a.source-link-title:hover {
   border-left: 3px solid #c0392b;
 }
 
+.form-info {
+  color: #0b5a40;
+  font-size: 0.82rem;
+  font-weight: 800;
+  margin: 0;
+  padding: 0.5rem 0.7rem;
+  background: #eef7f2;
+  border-left: 3px solid #0b5a40;
+}
+
+.form-hint {
+  margin: 0;
+  color: #697167;
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.auth-security-section {
+  border-top: 1px solid #e1e5dc;
+  padding-top: 0.85rem;
+}
+
+.auth-inline-label {
+  display: grid;
+  gap: 0.35rem;
+  margin-bottom: 0.65rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #3f4a3f;
+}
+
+.auth-inline-label input {
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid #d5dbd0;
+  background: #fff;
+  font: inherit;
+}
+
+.auth-permission-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.auth-permission-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  font-size: 0.82rem;
+}
+
+.auth-permission-list li strong {
+  min-width: 2.2rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #8a4b12;
+}
+
+.auth-permission-list li[data-on="true"] strong {
+  color: #0b5a40;
+}
+
 /* ── Breaking banner ── */
 .breaking-banner {
   grid-column: 1 / -1;
@@ -2809,6 +2875,12 @@ a.source-link-title:hover {
   margin-top: 0.35rem;
   padding-top: 0.85rem;
   border-top: 1px solid #e1e5dc;
+}
+
+.x-admin-terminal-locked {
+  color: #697167;
+  font-size: 0.85rem;
+  font-weight: 700;
 }
 
 .x-admin-terminal-head {

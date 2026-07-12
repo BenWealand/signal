@@ -2,13 +2,16 @@ from __future__ import annotations
 
 from secrets import compare_digest
 
-try:
-    import jwt
-except ImportError:  # pragma: no cover - deploy installs PyJWT from requirements.
-    jwt = None
-from pydantic import BaseModel, EmailStr
-from fastapi import APIRouter, Header, HTTPException
+from pydantic import BaseModel, EmailStr, validator
+from fastapi import APIRouter, Header, HTTPException, Request
 
+from app.auth import (
+    check_auth_rate_limit,
+    decode_supabase_jwt,
+    extract_bearer_token,
+    public_user_view,
+    sync_user_from_claims,
+)
 from app.config import settings
 from app.db import queries
 
@@ -17,10 +20,30 @@ router = APIRouter()
 
 
 class UserPayload(BaseModel):
-    name: str
-    email: EmailStr
+    name: str = ""
+    email: EmailStr | None = None
     plan: str = "Reader"
     supabase_user_id: str | None = None
+
+    @validator("name")
+    def name_size(cls, value: str) -> str:
+        cleaned = (value or "").strip()
+        if len(cleaned) > 120:
+            raise ValueError("name must be 120 characters or fewer")
+        return cleaned
+
+
+class ProfileUpdatePayload(BaseModel):
+    name: str
+
+    @validator("name")
+    def name_required(cls, value: str) -> str:
+        cleaned = (value or "").strip()
+        if len(cleaned) < 2:
+            raise ValueError("name must be at least 2 characters")
+        if len(cleaned) > 120:
+            raise ValueError("name must be 120 characters or fewer")
+        return cleaned
 
 
 class SaveStoryPayload(BaseModel):
@@ -61,40 +84,31 @@ class CommentLikePayload(BaseModel):
 
 
 def _extract_bearer_token(authorization: str) -> str:
-    prefix = "Bearer "
-    if authorization.startswith(prefix):
-        return authorization[len(prefix):].strip()
-    return ""
+    return extract_bearer_token(authorization)
 
 
 def _user_id_from_supabase_jwt(authorization: str) -> int | None:
     secret = getattr(settings, "supabase_jwt_secret", "").strip()
     if not secret:
         return None
-    if jwt is None:
-        raise HTTPException(status_code=503, detail="JWT authentication dependency is not installed")
-    token = _extract_bearer_token(authorization)
-    if not token:
-        raise HTTPException(status_code=401, detail="Missing authentication token")
-    try:
-        payload = jwt.decode(token, secret, algorithms=["HS256"], audience="authenticated")
-    except jwt.InvalidAudienceError:
-        payload = jwt.decode(token, secret, algorithms=["HS256"], options={"verify_aud": False})
-    except jwt.PyJWTError as exc:
-        raise HTTPException(status_code=401, detail="Invalid authentication token") from exc
-    subject = str(payload.get("sub") or "")
-    if not subject:
-        raise HTTPException(status_code=401, detail="Invalid authentication token")
-    user = queries.get_user_by_supabase_id(subject)
+    claims = decode_supabase_jwt(authorization)
+    user = sync_user_from_claims(claims, touch_login=False)
     if not user:
         raise HTTPException(status_code=401, detail="Authenticated user is not registered")
     return int(user["id"])
 
 
 def _require_user_route_guard(user_id: int | None, x_signal_token: str = "", authorization: str = "") -> int | None:
-    jwt_user_id = _user_id_from_supabase_jwt(authorization)
-    if jwt_user_id is not None:
+    if getattr(settings, "supabase_jwt_secret", "").strip() and extract_bearer_token(authorization):
+        jwt_user_id = _user_id_from_supabase_jwt(authorization)
         if user_id is not None and int(user_id) != jwt_user_id:
+            raise HTTPException(status_code=403, detail="Authenticated user does not match requested user")
+        return jwt_user_id
+
+    # Prefer JWT when secret is configured even if token missing — force auth for user-scoped ids.
+    if getattr(settings, "supabase_jwt_secret", "").strip() and user_id is not None:
+        jwt_user_id = _user_id_from_supabase_jwt(authorization)
+        if int(user_id) != jwt_user_id:
             raise HTTPException(status_code=403, detail="Authenticated user does not match requested user")
         return jwt_user_id
 
@@ -110,8 +124,40 @@ def _require_user_route_guard(user_id: int | None, x_signal_token: str = "", aut
 
 
 @router.post("/users")
-def upsert_user(payload: UserPayload):
-    return queries.upsert_user(payload.name, payload.email, payload.plan, payload.supabase_user_id)
+def upsert_user(
+    request: Request,
+    payload: UserPayload,
+    authorization: str = Header(default=""),
+):
+    """
+    Secure session sync: requires a valid Supabase JWT.
+    Email / supabase_user_id are taken from the token, not the client body.
+    """
+    check_auth_rate_limit(f"users-upsert:{request.client.host if request.client else 'unknown'}", limit=30)
+    claims = decode_supabase_jwt(authorization)
+    token_sub = str(claims.get("sub") or "")
+    if payload.supabase_user_id and payload.supabase_user_id != token_sub:
+        raise HTTPException(status_code=403, detail="supabase_user_id does not match authenticated user")
+    user = sync_user_from_claims(
+        claims,
+        name_override=payload.name or None,
+        touch_login=True,
+    )
+    return public_user_view(user)
+
+
+@router.get("/users/me")
+def current_user(authorization: str = Header(default="")):
+    claims = decode_supabase_jwt(authorization)
+    user = sync_user_from_claims(claims, touch_login=False)
+    return public_user_view(user)
+
+
+@router.patch("/users/me")
+def update_current_user(payload: ProfileUpdatePayload, authorization: str = Header(default="")):
+    claims = decode_supabase_jwt(authorization)
+    user = sync_user_from_claims(claims, name_override=payload.name, touch_login=False)
+    return public_user_view(user)
 
 
 @router.get("/users/{user_id}/saved")

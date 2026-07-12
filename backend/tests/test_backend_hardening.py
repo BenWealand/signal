@@ -108,7 +108,7 @@ class BackendHardeningTest(unittest.TestCase):
             )
 
         self.assertIn("supabase_user_id", cursor.sql)
-        self.assertEqual(cursor.params[-1], "11111111-1111-1111-1111-111111111111")
+        self.assertIn("11111111-1111-1111-1111-111111111111", cursor.params)
         self.assertEqual(result["supabase_user_id"], "11111111-1111-1111-1111-111111111111")
 
     def test_user_routes_fail_closed_when_agent_token_is_configured(self):

@@ -1,12 +1,20 @@
 import { supabase } from "../lib/supabase.js";
 
-export const API_BASE = import.meta.env.VITE_SIGNAL_API_URL || "";
+function env(name, fallback = "") {
+  try {
+    return import.meta.env?.[name] || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export const API_BASE = env("VITE_SIGNAL_API_URL");
 let wakePromise = null;
 let lastWakeOkAt = 0;
 const getCache = new Map();
 const STORAGE_PREFIX = "signal-cache-v1:";
 const BOOTSTRAP_CACHE_TTL_MS = 2 * 60 * 1000;
-const WAKE_OK_TTL_MS = Number(import.meta.env.VITE_SIGNAL_WAKE_OK_TTL_MS || 90 * 1000);
+const WAKE_OK_TTL_MS = Number(env("VITE_SIGNAL_WAKE_OK_TTL_MS", String(90 * 1000)));
 const wakeTarget = typeof EventTarget !== "undefined" ? new EventTarget() : null;
 let wakeState = { status: API_BASE ? "idle" : "disabled", attempt: 0, attempts: 0, message: "" };
 
@@ -179,6 +187,19 @@ export async function apiPost(path, payload) {
   const headers = { "Content-Type": "application/json", ...(await authHeaders()) };
   const response = await fetch(`${API_BASE}${path}`, {
     method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw await apiError(response, path);
+  return response.json();
+}
+
+export async function apiPatch(path, payload) {
+  if (!API_BASE) throw new Error("API is not configured for this build.");
+  await ensureAwake(path);
+  const headers = { "Content-Type": "application/json", ...(await authHeaders()) };
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: "PATCH",
     headers,
     body: JSON.stringify(payload),
   });
