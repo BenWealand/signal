@@ -11,13 +11,19 @@ function env(name) {
 const supabaseUrl = env("VITE_SUPABASE_URL");
 const supabaseAnonKey = env("VITE_SUPABASE_ANON_KEY");
 
-// Supabase auth is optional. Without configuration the app still runs; auth
-// calls resolve to a signed-out state instead of crashing the whole UI.
+export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
+
 function createStubClient() {
   const notConfigured = async () => ({
     data: { user: null, session: null },
     error: new Error("Sign-in is not configured for this preview."),
   });
+  const tableStub = {
+    select: () => tableStub,
+    eq: () => tableStub,
+    maybeSingle: async () => ({ data: null, error: new Error("Supabase is not configured.") }),
+    single: async () => ({ data: null, error: new Error("Supabase is not configured.") }),
+  };
   return {
     auth: {
       getSession: async () => ({ data: { session: null }, error: null }),
@@ -30,10 +36,9 @@ function createStubClient() {
       updateUser: notConfigured,
       resend: notConfigured,
     },
+    from: () => tableStub,
   };
 }
-
-export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
 
 export const supabase = isSupabaseConfigured
   ? createClient(supabaseUrl, supabaseAnonKey, {

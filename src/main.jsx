@@ -31,6 +31,7 @@ import { TrendsScreen } from "./screens/Trends.jsx";
 import { SectionScreen } from "./screens/Section.jsx";
 import { SavedScreen } from "./screens/Saved.jsx";
 import { syncAccountWithBackend } from "./lib/auth.js";
+import { fetchSharedArticle, readArticleSessionCache, writeArticleSessionCache } from "./lib/articles.js";
 import "./styles.css";
 
 const OFFLINE_PREVIEW_DELAY_MS = Number(import.meta.env.VITE_SIGNAL_OFFLINE_PREVIEW_DELAY_MS || 7200);
@@ -294,6 +295,7 @@ function App() {
         setActiveBuildId(article.buildId || "");
         setBuildProgress(null);
         setPhase("complete");
+        writeArticleSessionCache(normalized);
         if (normalized.id) {
           navigate(articlePath(normalized.id));
         }
@@ -443,6 +445,7 @@ function App() {
       setDraftPrompt(normalized.prompt);
       setExternalDraft(normalized);
       setPhase("complete");
+      writeArticleSessionCache(normalized);
       if (normalized.id) {
         navigate(articlePath(normalized.id));
       }
@@ -450,12 +453,11 @@ function App() {
       trackEvent(account?.id, "view", { prompt: normalized.prompt, article_id: String(normalized.id) });
     };
 
-    const needsFullArticle = hasApiBase()
-      && article?.id
+    const needsFullArticle = Boolean(article?.id)
       && (!Array.isArray(article.body) || !article.body.length || article.preview);
     if (needsFullArticle) {
-      apiGet(`/generated-articles/${encodeURIComponent(article.id)}`)
-        .then(finalize)
+      fetchSharedArticle(article.id, { preferCache: true })
+        .then(({ article: full }) => finalize(full))
         .catch(() => finalize(article));
       return;
     }
@@ -693,20 +695,21 @@ function ArticleRoute({
       return;
     }
     let cancelled = false;
-    setLoading(true);
     setPhase("complete");
-    const load = hasApiBase()
-      ? apiGet(`/generated-articles/${encodeURIComponent(articleId)}`)
-      : fetch(`/generated-articles.json?ts=${Date.now()}`)
-        .then((response) => (response.ok ? response.json() : []))
-        .then((rows) => {
-          const match = Array.isArray(rows) ? rows.find((row) => String(row.id) === String(articleId)) : null;
-          if (!match) throw new Error("Article not found");
-          return match;
-        });
 
-    load
-      .then((article) => {
+    const cached = readArticleSessionCache(articleId);
+    if (cached?.headline) {
+      const normalized = normalizeCommandArticle(cached);
+      setPrompt(normalized.prompt);
+      setDraftPrompt(normalized.prompt);
+      setExternalDraft(normalized);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+
+    fetchSharedArticle(articleId, { preferCache: false })
+      .then(({ article }) => {
         if (cancelled) return;
         const normalized = normalizeCommandArticle(article);
         setPrompt(normalized.prompt);
@@ -716,7 +719,7 @@ function ArticleRoute({
         trackEvent(account?.id, "view", { prompt: normalized.prompt, article_id: String(normalized.id) });
       })
       .catch(() => {
-        if (!cancelled) showToast("Could not open that article.", 4000);
+        if (!cancelled && !cached?.headline) showToast("Could not open that article.", 4000);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
