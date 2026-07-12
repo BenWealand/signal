@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { SECTION_NAMES } from "../lib/constants.js";
 import { dedupeStories } from "../utils/articleNormalize.js";
 import { EmptyState, LoadingState, ScreenShell } from "./shared.jsx";
 
@@ -8,7 +9,7 @@ function articleTimestamp(article) {
 
 export function LatestScreen({ commandArticles, onOpenArticle, loading = false, account }) {
   const [filter, setFilter] = useState("All");
-  const sections = ["All", "World", "Politics", "Markets", "Technology", "Climate"];
+  const sections = ["All", ...SECTION_NAMES];
   const filteredRaw = filter === "All"
     ? commandArticles
     : commandArticles.filter((a) => {

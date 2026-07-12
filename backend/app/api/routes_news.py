@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 SECTION_PROMPTS: dict[str, str] = {
     "world": "international diplomacy conflict global affairs",
     "politics": "congress senate legislation government policy",
+    "sporks": "sports athletics leagues championships olympic games",
     "markets": "stock market economy financial inflation interest rates",
     "technology": "artificial intelligence semiconductor technology cybersecurity",
     "climate": "climate change environment renewable energy weather",

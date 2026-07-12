@@ -1,24 +1,27 @@
+import { Link, NavLink } from "react-router-dom";
 import { SECTION_NAMES } from "../lib/constants.js";
+import { PRIMARY_NAV, sectionPath } from "../lib/routes.js";
 
 export function Header({
   activeScreen,
-  onScreenChange,
-  onSectionChange,
+  onNavigateAway,
   onOpenAccount,
   onOpenSettings,
   onOpenNotifications,
   notificationCount = 0,
   signedInUser,
 }) {
-  const screens = ["Home", "Latest", "Trending", "Saved"];
-  const sections = SECTION_NAMES;
-  const mobileScreens = ["Home", "Latest", "Trending", "Saved"];
   const displayDate = new Intl.DateTimeFormat("en-US", {
     weekday: "long",
     month: "long",
     day: "numeric",
     year: "numeric",
   }).format(new Date());
+
+  const go = () => {
+    onNavigateAway?.();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
 
   return (
     <>
@@ -30,9 +33,9 @@ export function Header({
       </div>
 
       <div className="masthead-row">
-        <a className="brand" href="/" aria-label="Signal home">
+        <Link className="brand" to="/" aria-label="Signal home" onClick={go}>
           <strong>Signal Dispatch</strong>
-        </a>
+        </Link>
         <div className="header-actions">
           <button className="header-icon-button" type="button" onClick={onOpenSettings} aria-label="Settings" title="Settings">
             <SettingsIcon />
@@ -48,63 +51,59 @@ export function Header({
       </div>
 
       <nav className="section-nav" aria-label="Primary navigation">
-        {screens.map((screen) => (
-          <button
-            className={activeScreen === screen ? "is-active" : ""}
-            key={screen}
-            type="button"
-            onClick={() => onScreenChange(screen)}
+        {PRIMARY_NAV.map((item) => (
+          <NavLink
+            className={({ isActive }) => (isActive || activeScreen === item.label ? "is-active" : "")}
+            end={item.path === "/"}
+            key={item.path}
+            to={item.path}
+            onClick={go}
           >
-            {screen}
-          </button>
+            {item.label}
+          </NavLink>
         ))}
       </nav>
 
       <nav className="topic-nav" aria-label="Topic navigation">
-        {sections.map((section) => (
-          <button
-            className={activeScreen === section ? "is-active" : ""}
+        {SECTION_NAMES.map((section) => (
+          <NavLink
+            className={({ isActive }) => (isActive || activeScreen === section ? "is-active" : "")}
             key={section}
-            type="button"
-            onClick={() => {
-              onSectionChange(section);
-              onScreenChange(section);
-            }}
+            to={sectionPath(section)}
+            onClick={go}
           >
             {section}
-          </button>
+          </NavLink>
         ))}
       </nav>
 
       <nav className="mobile-topic-nav" aria-label="Mobile topic navigation">
-        {sections.map((section) => (
-          <button
-            className={activeScreen === section ? "is-active" : ""}
+        {SECTION_NAMES.map((section) => (
+          <NavLink
+            className={({ isActive }) => (isActive || activeScreen === section ? "is-active" : "")}
             key={section}
-            type="button"
-            onClick={() => {
-              onSectionChange(section);
-              onScreenChange(section);
-            }}
+            to={sectionPath(section)}
+            onClick={go}
           >
             {section}
-          </button>
+          </NavLink>
         ))}
       </nav>
 
     </header>
     <nav className="mobile-bottom-nav" aria-label="Mobile primary navigation">
-      {mobileScreens.map((screen) => (
-        <button
-          className={activeScreen === screen ? "is-active" : ""}
-          key={screen}
-          type="button"
-          onClick={() => onScreenChange(screen)}
-          aria-label={screen}
+      {PRIMARY_NAV.map((item) => (
+        <NavLink
+          className={({ isActive }) => (isActive || activeScreen === item.label ? "is-active" : "")}
+          end={item.path === "/"}
+          key={item.path}
+          to={item.path}
+          onClick={go}
+          aria-label={item.label}
         >
-          <MobileNavIcon screen={screen} />
-          <span>{screen}</span>
-        </button>
+          <MobileNavIcon screen={item.label} />
+          <span>{item.label}</span>
+        </NavLink>
       ))}
     </nav>
     </>

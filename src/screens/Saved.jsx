@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { apiGetCached, hasApiBase } from "../api/client.js";
 import { EmptyState, LoadingState, ScreenShell } from "./shared.jsx";
 
-export function SavedScreen({ savedArticles, account, onOpenAccount }) {
+export function SavedScreen({ savedArticles, account, onOpenAccount, onOpenArticle }) {
   const [serverSaves, setServerSaves] = useState([]);
   const [loading, setLoading] = useState(Boolean(account?.id && hasApiBase()));
 
@@ -35,13 +35,24 @@ export function SavedScreen({ savedArticles, account, onOpenAccount }) {
     ...savedArticles,
     ...serverSaves
       .map((row) => ({
-        id: `server-${row.id || row.story_id}`,
+        id: row.story_id || `server-${row.id}`,
         title: row.title,
         sourceCount: row.source_count || 0,
         savedAt: row.created_at ? new Date(row.created_at).toLocaleString() : "",
+        articleId: row.story_id || "",
       }))
       .filter((row) => row.title && !seen.has(String(row.title).toLowerCase())),
   ];
+
+  const openSaved = (article) => {
+    if (!onOpenArticle) return;
+    const id = article.articleId || article.id;
+    if (!id || String(id).startsWith("server-") || String(id).match(/^\d{10,}$/)) {
+      // Local-only saves without a generated article id cannot deep-link.
+      return;
+    }
+    onOpenArticle({ id, headline: article.title, prompt: article.prompt || article.title });
+  };
 
   return (
     <ScreenShell eyebrow="Saved" title="Saved">
@@ -50,7 +61,19 @@ export function SavedScreen({ savedArticles, account, onOpenAccount }) {
       ) : merged.length ? (
         <div className="section-grid">
           {merged.map((article) => (
-            <article className="section-card" key={article.id}>
+            <article
+              className="section-card"
+              key={article.id}
+              role={onOpenArticle ? "button" : undefined}
+              tabIndex={onOpenArticle ? 0 : undefined}
+              onClick={() => openSaved(article)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  openSaved(article);
+                }
+              }}
+            >
               <div className="section-card-eyebrow">
                 <span>Saved</span>
                 <em>{article.sourceCount} sources</em>

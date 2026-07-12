@@ -175,7 +175,8 @@ a {
   text-transform: uppercase;
 }
 
-.section-nav button {
+.section-nav button,
+.section-nav a {
   border: 0;
   background: transparent;
   color: inherit;
@@ -184,10 +185,12 @@ a {
   font-weight: inherit;
   letter-spacing: inherit;
   padding: 0;
+  text-decoration: none;
   text-transform: inherit;
 }
 
-.section-nav button.is-active {
+.section-nav button.is-active,
+.section-nav a.is-active {
   color: #0b5a40;
 }
 
@@ -205,7 +208,8 @@ a {
   text-transform: uppercase;
 }
 
-.topic-nav button {
+.topic-nav button,
+.topic-nav a {
   border: 0;
   background: transparent;
   color: inherit;
@@ -213,10 +217,12 @@ a {
   font: inherit;
   letter-spacing: inherit;
   padding: 0;
+  text-decoration: none;
   text-transform: inherit;
 }
 
-.topic-nav button.is-active {
+.topic-nav button.is-active,
+.topic-nav a.is-active {
   color: #0b5a40;
 }
 
@@ -2439,6 +2445,32 @@ a.source-link-title:hover {
   line-height: 1.4;
 }
 
+.password-hints {
+  list-style: none;
+  margin: 0;
+  padding: 0.35rem 0 0.15rem;
+  display: grid;
+  gap: 0.28rem;
+}
+
+.password-hints li {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: #8a4b12;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.password-hints li[data-ok="true"] {
+  color: #0b5a40;
+}
+
+.password-hints li strong {
+  min-width: 0.9rem;
+  font-size: 0.72rem;
+}
+
 .auth-security-section {
   border-top: 1px solid #e1e5dc;
   padding-top: 0.85rem;
@@ -3085,13 +3117,17 @@ a.source-link-title:hover {
 }
 
 .section-nav button,
-.topic-nav button {
+.section-nav a,
+.topic-nav button,
+.topic-nav a {
   border-radius: 999px;
   padding: 0.42rem 0.72rem;
 }
 
 .section-nav button.is-active,
-.topic-nav button.is-active {
+.section-nav a.is-active,
+.topic-nav button.is-active,
+.topic-nav a.is-active {
   background: #edf3eb;
   color: #0b5a40;
 }
@@ -3593,7 +3629,8 @@ a.source-link-title:hover {
     display: none;
   }
 
-  .mobile-topic-nav button {
+  .mobile-topic-nav button,
+  .mobile-topic-nav a {
     flex: 0 0 auto;
     min-height: 2.35rem;
     border: 1px solid #d8ded2;
@@ -3609,7 +3646,8 @@ a.source-link-title:hover {
     text-transform: uppercase;
   }
 
-  .mobile-topic-nav button.is-active {
+  .mobile-topic-nav button.is-active,
+  .mobile-topic-nav a.is-active {
     border-color: rgba(11, 90, 64, 0.28);
     background: #eef5ef;
     color: #0b5a40;
@@ -3632,7 +3670,8 @@ a.source-link-title:hover {
     backdrop-filter: blur(18px);
   }
 
-  .mobile-bottom-nav button {
+  .mobile-bottom-nav button,
+  .mobile-bottom-nav a {
     display: grid;
     min-width: 0;
     min-height: 3.2rem;
@@ -3646,9 +3685,11 @@ a.source-link-title:hover {
     font: inherit;
     font-size: 0.63rem;
     font-weight: 900;
+    text-decoration: none;
   }
 
-  .mobile-bottom-nav button.is-active {
+  .mobile-bottom-nav button.is-active,
+  .mobile-bottom-nav a.is-active {
     background: #0b5a40;
     color: #ffffff;
   }

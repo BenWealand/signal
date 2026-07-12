@@ -11,8 +11,10 @@ Passwords are **never** stored in Signal’s database.
 |---------|--------|
 | Sign up / sign in | Account modal |
 | Password policy (10+ chars, letter + number) | Enforced in UI |
-| Email confirmation | Supabase + resend in UI |
+| Email confirmation | Disabled (turn Confirm email OFF in Supabase) |
 | Forgot / reset password | Supabase email link → recover mode |
+| Password helper checklist | Shown while creating/changing a password |
+| Autofill | Auth forms stay blank (no assumed email/name) |
 | Change password (signed in) | Account → Security |
 | Update display name | Account → Profile (`PATCH /users/me`) |
 | Session restore / refresh | Supabase PKCE + `onAuthStateChange` |
@@ -64,10 +66,10 @@ python3 scripts/apply_migrations.py
 ## Supabase dashboard checklist
 
 1. Authentication → Providers → **Email** enabled
-2. Confirm email (recommended for production)
+2. **Confirm email: OFF** (Signal signs users in immediately after signup)
 3. Site URL = your Vercel URL
 4. Redirect URLs include `https://your-frontend.vercel.app/**`
-5. Password requirements ≥ app policy
+5. Password requirements ≥ app policy (10+ chars, letter + number)
 
 ## Role model
 
