@@ -2924,6 +2924,27 @@ a.source-link-title:hover {
   color: #697167;
   font-size: 0.85rem;
   font-weight: 700;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.x-admin-terminal-locked strong {
+  color: #1b241c;
+  font-size: 0.92rem;
+}
+
+.x-admin-terminal-locked em {
+  font-style: normal;
+  font-weight: 600;
+  color: #8a9286;
+  font-size: 0.78rem;
+}
+
+.x-admin-terminal-locked p {
+  margin: 0;
+  font-weight: 650;
+  line-height: 1.4;
+  color: #5a6258;
 }
 
 .x-admin-terminal-head {

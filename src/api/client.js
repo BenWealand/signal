@@ -208,14 +208,27 @@ export async function apiPatch(path, payload) {
 }
 
 async function authHeaders() {
-  const { data } = await supabase.auth.getSession().catch(() => ({ data: {} }));
-  const token = data?.session?.access_token;
+  let { data } = await supabase.auth.getSession().catch(() => ({ data: {} }));
+  let token = data?.session?.access_token;
+  if (!token) {
+    const refreshed = await supabase.auth.refreshSession().catch(() => ({ data: {} }));
+    token = refreshed?.data?.session?.access_token;
+  }
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-export async function isAuthenticated() {
+export async function getAccessToken({ refresh = true } = {}) {
   const { data } = await supabase.auth.getSession().catch(() => ({ data: {} }));
-  return Boolean(data?.session?.access_token);
+  let token = data?.session?.access_token || "";
+  if (!token && refresh) {
+    const refreshed = await supabase.auth.refreshSession().catch(() => ({ data: {} }));
+    token = refreshed?.data?.session?.access_token || "";
+  }
+  return token;
+}
+
+export async function isAuthenticated() {
+  return Boolean(await getAccessToken({ refresh: true }));
 }
 
 export async function apiPostAfterWake(path, payload) {
