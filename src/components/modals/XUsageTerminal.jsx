@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { apiGet, apiPost, hasApiBase } from "../../api/client.js";
+import { apiGet, apiPost, getAccessToken, hasApiBase } from "../../api/client.js";
 import { isAdminAccount } from "../../lib/admin.js";
 
 function stamp() {
@@ -12,6 +12,27 @@ function summarizeCandidate(candidate, index) {
   return `#${index + 1} ${handle} — ${String(topic).slice(0, 72)}`;
 }
 
+function explainAdminError(error) {
+  const detail = String(error?.detail || error?.message || "").trim();
+  const status = Number(error?.status || 0);
+  if (!hasApiBase()) {
+    return "API URL is not configured (VITE_SIGNAL_API_URL).";
+  }
+  if (/missing authentication token/i.test(detail) || status === 401) {
+    return "Your sign-in session is missing or expired. Sign out, sign back in, then reopen Settings.";
+  }
+  if (/invalid authentication token/i.test(detail)) {
+    return "The API rejected your session token. Sign out, sign back in, and confirm SUPABASE_JWT_SECRET on Render matches your Supabase project.";
+  }
+  if (/not configured \(SUPABASE_JWT_SECRET\)/i.test(detail) || status === 503) {
+    return "Backend auth is not configured (SUPABASE_JWT_SECRET on Render).";
+  }
+  if (/admin access required/i.test(detail) || status === 403) {
+    return "Backend rejected admin access for this account. Confirm SIGNAL_ADMIN_EMAILS includes your email.";
+  }
+  return detail || "Could not verify admin access with the API.";
+}
+
 /**
  * Admin-only X usage board.
  * Requires a live `/admin/me` success — localStorage role spoofing is not enough.
@@ -19,10 +40,12 @@ function summarizeCandidate(candidate, index) {
 export function XUsageTerminal({ account, onToast }) {
   const [allowed, setAllowed] = useState(false);
   const [checking, setChecking] = useState(true);
+  const [verifyError, setVerifyError] = useState("");
   const [lines, setLines] = useState([]);
   const [status, setStatus] = useState(null);
   const [query, setQuery] = useState("federal reserve");
   const [busy, setBusy] = useState("");
+  const [retryToken, setRetryToken] = useState(0);
   const scrollerRef = useRef(null);
 
   const push = useCallback((text, kind = "info") => {
@@ -38,34 +61,54 @@ export function XUsageTerminal({ account, onToast }) {
     let active = true;
     setChecking(true);
     setAllowed(false);
+    setVerifyError("");
 
-    if (!isAdminAccount(account) || !hasApiBase()) {
+    if (!isAdminAccount(account)) {
       setChecking(false);
+      setVerifyError("This account is not marked as admin in the app.");
+      return () => {
+        active = false;
+      };
+    }
+    if (!hasApiBase()) {
+      setChecking(false);
+      setVerifyError("API URL is not configured (VITE_SIGNAL_API_URL).");
       return () => {
         active = false;
       };
     }
 
-    apiGet("/admin/me")
-      .then((data) => {
+    (async () => {
+      try {
+        const token = await getAccessToken({ refresh: true });
+        if (!active) return;
+        if (!token) {
+          setAllowed(false);
+          setVerifyError("No live Supabase session token. Sign out, sign back in, then reopen Settings.");
+          return;
+        }
+        const data = await apiGet("/admin/me");
         if (!active) return;
         if (data?.admin) {
           setAllowed(true);
+          setVerifyError("");
         } else {
           setAllowed(false);
+          setVerifyError("API did not grant admin access for this session.");
         }
-      })
-      .catch(() => {
-        if (active) setAllowed(false);
-      })
-      .finally(() => {
+      } catch (error) {
+        if (!active) return;
+        setAllowed(false);
+        setVerifyError(explainAdminError(error));
+      } finally {
         if (active) setChecking(false);
-      });
+      }
+    })();
 
     return () => {
       active = false;
     };
-  }, [account]);
+  }, [account, retryToken]);
 
   const refreshStatus = useCallback(async () => {
     if (!hasApiBase()) {
@@ -83,8 +126,7 @@ export function XUsageTerminal({ account, onToast }) {
       );
     } catch (error) {
       push(`status failed: ${error?.detail || error?.message || "unknown error"}`, "error");
-      onToast?.("Admin X status failed — sign in as the admin account.");
-      setAllowed(false);
+      onToast?.("Admin X status failed — check the terminal log.");
     } finally {
       setBusy("");
     }
@@ -97,13 +139,28 @@ export function XUsageTerminal({ account, onToast }) {
   if (checking) {
     return (
       <div className="x-admin-terminal x-admin-terminal-locked">
-        <p>Verifying admin access…</p>
+        <p>Verifying admin access with the API…</p>
+        <em>This can take a moment while Render wakes up.</em>
       </div>
     );
   }
 
   if (!allowed) {
-    return null;
+    return (
+      <div className="x-admin-terminal x-admin-terminal-locked">
+        <strong>X admin terminal unavailable</strong>
+        <p>{verifyError || "Admin verification failed."}</p>
+        <button
+          className="secondary-action"
+          type="button"
+          onClick={() => {
+            setRetryToken((value) => value + 1);
+          }}
+        >
+          Retry admin check
+        </button>
+      </div>
+    );
   }
 
   const runSearch = async () => {
