@@ -2877,6 +2877,12 @@ a.source-link-title:hover {
   border-top: 1px solid #e1e5dc;
 }
 
+.x-admin-terminal-locked {
+  color: #697167;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
 .x-admin-terminal-head {
   display: flex;
   flex-wrap: wrap;

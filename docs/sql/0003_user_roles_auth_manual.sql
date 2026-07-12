@@ -1,5 +1,5 @@
--- User auth/permissions extensions (roles stay app-side; passwords stay in Supabase Auth).
--- Keep statements semicolon-simple so the migration runner can split them safely.
+-- Paste into Supabase SQL Editor (or any Postgres client for DATABASE_URL)
+-- if you need to apply auth columns without waiting for a backend restart.
 
 ALTER TABLE users
   ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'reader';
@@ -23,3 +23,12 @@ ALTER TABLE users
 CREATE INDEX IF NOT EXISTS idx_users_role ON users (role);
 
 CREATE INDEX IF NOT EXISTS idx_users_email_lower ON users (LOWER(email));
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  version TEXT PRIMARY KEY,
+  applied_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+INSERT INTO schema_migrations (version)
+VALUES ('0003_user_roles_auth')
+ON CONFLICT DO NOTHING;

@@ -45,6 +45,22 @@ CORS_ORIGINS=https://your-frontend.vercel.app
 
 Apply migration `backend/app/db/migrations/0003_user_roles_auth.sql` (or recreate from `schema.sql`).
 
+On backend startup, `create_tables()` applies pending migrations automatically.
+To run them manually against `DATABASE_URL`:
+
+```bash
+cd backend
+python3 scripts/apply_migrations.py
+```
+
+## Finish checklist (production)
+
+1. **Postgres** — deploy/restart backend so `0003_user_roles_auth` applies, or run `scripts/apply_migrations.py`
+2. **Render env** — `DATABASE_URL`, `SUPABASE_JWT_SECRET`, `SIGNAL_ADMIN_EMAILS=benwealand@gmail.com`, `CORS_ORIGINS=<vercel url>`
+3. **Vercel env** — `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_SIGNAL_API_URL`, `VITE_SIGNAL_ADMIN_EMAILS`
+4. **Supabase Auth** — Email provider on; Site URL + redirect URLs include the Vercel origin
+5. Sign in as allowlisted admin → Settings shows X terminal only after `/admin/me` succeeds
+
 ## Supabase dashboard checklist
 
 1. Authentication → Providers → **Email** enabled
