@@ -1038,6 +1038,8 @@ def _list_generated_articles_by_section_cur(cur: Any, section: str, limit: int =
 
 def list_generated_articles_by_section(section: str, limit: int = 20) -> list[dict[str, Any]]:
     slug = section.lower()
+    if slug == "sporks":
+        slug = "sports"
     keywords = _SECTION_KEYWORDS.get(slug, [])
     if not keywords:
         return list_generated_articles(limit=limit)
@@ -1064,6 +1066,8 @@ def generated_prompt_exists_recent(prompt: str, max_age_minutes: int = 45) -> bo
 
 def list_section_generation_prompts(section: str, limit: int = 9) -> list[str]:
     slug = section.lower()
+    if slug == "sporks":
+        slug = "sports"
     keywords = _SECTION_KEYWORDS.get(slug, [])
     if not keywords:
         return []
@@ -1122,7 +1126,10 @@ def list_section_generation_prompts(section: str, limit: int = 9) -> list[str]:
 
 
 def list_stories_by_section(section: str, limit: int = 20) -> list[dict[str, Any]]:
-    keywords = _SECTION_KEYWORDS.get(section.lower(), [])
+    slug = section.lower()
+    if slug == "sporks":
+        slug = "sports"
+    keywords = _SECTION_KEYWORDS.get(slug, [])
     if not keywords:
         return list_stories()[:limit]
     conditions = " OR ".join(["topic_label ILIKE %s"] * len(keywords))

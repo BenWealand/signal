@@ -7,17 +7,20 @@ function articleTimestamp(article) {
   return String(article.createdAt || article.updated_at || article.created_at || "");
 }
 
+function articleMatchesSection(article, filter) {
+  if (filter === "All") return true;
+  const wanted = filter.toLowerCase();
+  const aliases = wanted === "sports" ? new Set(["sports", "sporks"]) : new Set([wanted]);
+  const section = String(article.section || "").toLowerCase();
+  if (section) return aliases.has(section);
+  const label = `${article.tag || ""} ${article.source || ""} ${article.prompt || ""}`.toLowerCase();
+  return [...aliases].some((alias) => label.includes(alias));
+}
+
 export function LatestScreen({ commandArticles, onOpenArticle, loading = false, account }) {
   const [filter, setFilter] = useState("All");
   const sections = ["All", ...SECTION_NAMES];
-  const filteredRaw = filter === "All"
-    ? commandArticles
-    : commandArticles.filter((a) => {
-        const section = String(a.section || "").toLowerCase();
-        if (section) return section === filter.toLowerCase();
-        const label = (a.tag || a.source || "").toLowerCase();
-        return label.includes(filter.toLowerCase()) || (a.prompt || "").toLowerCase().includes(filter.toLowerCase());
-      });
+  const filteredRaw = commandArticles.filter((article) => articleMatchesSection(article, filter));
   // Most recently written first.
   const newestFirst = [...filteredRaw].sort((a, b) => articleTimestamp(b).localeCompare(articleTimestamp(a)));
   const filtered = dedupeStories(newestFirst);
