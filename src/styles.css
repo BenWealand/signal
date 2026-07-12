@@ -2803,6 +2803,126 @@ a.source-link-title:hover {
   text-transform: none;
 }
 
+.x-admin-terminal {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 0.35rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid #e1e5dc;
+}
+
+.x-admin-terminal-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.x-admin-terminal-head strong {
+  display: block;
+  color: #1f2a22;
+  font-size: 0.9rem;
+  font-weight: 900;
+}
+
+.x-admin-terminal-head em {
+  display: block;
+  margin-top: 0.15rem;
+  color: #697167;
+  font-size: 0.74rem;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.x-admin-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.x-admin-badges span {
+  border: 1px solid #d5d9cf;
+  background: #f4f6f0;
+  color: #4d554c;
+  font-size: 0.68rem;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.28rem 0.45rem;
+}
+
+.x-admin-badges span[data-on="1"] {
+  border-color: #9fc9b4;
+  background: #e8f5ee;
+  color: #0b5a40;
+}
+
+.x-admin-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) repeat(4, auto);
+  gap: 0.45rem;
+}
+
+.x-admin-controls input {
+  min-height: 2.3rem;
+  border: 1px solid #cfd3c8;
+  background: #ffffff;
+  color: #111111;
+  font: inherit;
+  padding: 0 0.7rem;
+}
+
+.x-admin-controls button {
+  min-height: 2.3rem;
+  border: 1px solid #cfd3c8;
+  background: #ffffff;
+  color: #1f2a22;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 850;
+  padding: 0 0.7rem;
+  cursor: pointer;
+}
+
+.x-admin-controls button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.x-admin-controls .x-admin-run {
+  border-color: #0b5a40;
+  background: #0b5a40;
+  color: #ffffff;
+}
+
+.x-admin-log {
+  margin: 0;
+  max-height: 220px;
+}
+
+.x-admin-log code span[data-kind="ok"] em {
+  color: #1a6a3a;
+}
+
+.x-admin-log code span[data-kind="error"] em {
+  color: #8a3030;
+}
+
+.x-admin-log code span[data-kind="warn"] em {
+  color: #7a5a1a;
+}
+
+@media (max-width: 720px) {
+  .x-admin-controls {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .x-admin-controls input {
+    grid-column: 1 / -1;
+  }
+}
+
 .settings-toggle-row input[type="checkbox"] {
   width: 2.25rem;
   height: 1.25rem;

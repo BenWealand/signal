@@ -227,7 +227,42 @@ Manual share from the article UI: **Share on X** opens the intent URL (no API).
 
 ---
 
-## How to automate (today, without X API)
+## Admin UI terminal
+
+Signed in as `benwealand@gmail.com`, open **Settings** to use the **X API usage terminal**:
+
+- Status / Discover / Search / Run agent (dry-run)
+- Calls `/admin/x/*` with your Supabase session (no token in the browser)
+
+Backend allowlist: `SIGNAL_ADMIN_EMAILS` (default `benwealand@gmail.com`).
+Frontend mirror: `VITE_SIGNAL_ADMIN_EMAILS` (optional; defaults to the same email).
+
+## How to run the agent (ops)
+
+### A) From Settings (admin)
+
+1. Sign in as `benwealand@gmail.com`
+2. Open Settings → X API usage terminal
+3. Click **Run agent** (dry-run)
+
+### B) CLI / curl
+
+```bash
+export API=https://signal-54jh.onrender.com
+export SIGNAL_API_TOKEN=...
+
+curl -sS "$API/awake" >/dev/null
+curl -sS -X POST "$API/agents/x/run" \
+  -H "Authorization: Bearer $SIGNAL_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"max_articles":1,"dry_run":true}'
+```
+
+Or: `npm run x:pipeline`
+
+### C) GitHub Action
+
+`.github/workflows/x-trend-pipeline.yml` — needs `SIGNAL_API_URL` + `SIGNAL_API_TOKEN` secrets.
 
 ### Option A — GitHub Action (included)
 
