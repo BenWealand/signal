@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 
-from app.api.middleware import FeedCacheHeadersMiddleware
+from app.api.middleware import FeedCacheHeadersMiddleware, SecurityHeadersMiddleware
 from app.api.routes_articles import router as article_router
 from app.api.routes_x import router as x_router
 from app.api.routes_feeds import router as feeds_router
@@ -53,6 +53,7 @@ app.add_middleware(
 )
 app.add_middleware(GZipMiddleware, minimum_size=500)
 app.add_middleware(FeedCacheHeadersMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 
 app.include_router(story_router)
 app.include_router(article_router)

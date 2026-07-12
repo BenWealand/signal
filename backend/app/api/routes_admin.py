@@ -17,7 +17,7 @@ from app.api.routes_articles import (
     _client_rate_key,
     _write_gemini_article,
 )
-from app.api.routes_users import _user_id_from_supabase_jwt
+from app.auth import VALID_ROLES, public_user_view, require_admin_user
 from app.config import settings
 from app.db import queries
 from app.x.client import XApiError, XApiNotConfigured, get_x_client
@@ -29,12 +29,19 @@ from app.x.reply import share_intent_url
 router = APIRouter()
 
 
-def _admin_emails() -> set[str]:
-    return {
-        email.strip().lower()
-        for email in str(getattr(settings, "admin_emails", "") or "").split(",")
-        if email.strip()
-    }
+def _require_admin(authorization: str = "") -> dict:
+    return require_admin_user(authorization)
+
+
+class AdminRolePayload(BaseModel):
+    role: str
+
+    @validator("role")
+    def role_value(cls, value: str) -> str:
+        cleaned = (value or "").strip().lower()
+        if cleaned not in VALID_ROLES:
+            raise ValueError(f"role must be one of: {', '.join(sorted(VALID_ROLES))}")
+        return cleaned
 
 
 class AdminSearchRequest(BaseModel):
@@ -93,31 +100,49 @@ class AdminLookupRequest(BaseModel):
         return (value or "").strip()
 
 
-def _require_admin(authorization: str = "") -> dict:
-    if not getattr(settings, "supabase_jwt_secret", "").strip():
-        raise HTTPException(
-            status_code=503,
-            detail="Admin access requires SUPABASE_JWT_SECRET on the backend",
-        )
-    user_id = _user_id_from_supabase_jwt(authorization)
-    if user_id is None:
-        raise HTTPException(status_code=401, detail="Admin access requires sign-in")
-    user = queries.get_user(user_id) or {}
-    email = str(user.get("email") or "").strip().lower()
-    if not email or email not in _admin_emails():
-        raise HTTPException(status_code=403, detail="Admin access required")
-    return user
-
-
 @router.get("/admin/me")
 def admin_me(authorization: str = Header(default="")):
     user = _require_admin(authorization)
+    view = public_user_view(user)
     return {
         "admin": True,
-        "email": user.get("email"),
-        "name": user.get("name"),
-        "id": user.get("id"),
+        "email": view.get("email"),
+        "name": view.get("name"),
+        "id": view.get("id"),
+        "role": view.get("role"),
+        "permissions": view.get("permissions"),
     }
+
+
+@router.get("/admin/users")
+def admin_list_users(
+    limit: int = 50,
+    offset: int = 0,
+    authorization: str = Header(default=""),
+):
+    _require_admin(authorization)
+    rows = queries.list_users(limit=limit, offset=offset)
+    return {
+        "total": queries.count_users(),
+        "limit": min(max(int(limit or 50), 1), 200),
+        "offset": max(int(offset or 0), 0),
+        "users": [public_user_view(row) for row in rows],
+    }
+
+
+@router.patch("/admin/users/{user_id}/role")
+def admin_set_user_role(
+    user_id: int,
+    payload: AdminRolePayload,
+    authorization: str = Header(default=""),
+):
+    admin = _require_admin(authorization)
+    if int(admin["id"]) == int(user_id) and payload.role != "admin":
+        raise HTTPException(status_code=400, detail="Admins cannot demote their own account")
+    updated = queries.set_user_role(user_id, payload.role)
+    if not updated:
+        raise HTTPException(status_code=404, detail="User not found")
+    return public_user_view(updated)
 
 
 @router.get("/admin/x/status")

@@ -747,7 +747,20 @@ def purge_legacy_generated_articles(limit: int = 1000) -> dict[str, Any]:
     return {"scanned": scanned, "deleted": len(deleted), "articleIds": deleted}
 
 
-def upsert_user(name: str, email: str, plan: str = "Reader", supabase_user_id: str | None = None) -> dict[str, Any]:
+def upsert_user(
+    name: str,
+    email: str,
+    plan: str = "Reader",
+    supabase_user_id: str | None = None,
+    *,
+    role: str = "reader",
+    email_confirmed: bool = False,
+    touch_login: bool = False,
+) -> dict[str, Any]:
+    role = (role or "reader").strip().lower()
+    if role not in {"reader", "editor", "admin"}:
+        role = "reader"
+    confirmed = 1 if email_confirmed else 0
     with get_connection() as conn:
         with conn.cursor() as cur:
             if supabase_user_id:
@@ -758,18 +771,27 @@ def upsert_user(name: str, email: str, plan: str = "Reader", supabase_user_id: s
                       SET name = %s,
                           email = %s,
                           plan = %s,
-                          supabase_user_id = %s
+                          role = %s,
+                          supabase_user_id = %s,
+                          email_confirmed = GREATEST(COALESCE(email_confirmed, 0), %s),
+                          last_login_at = CASE WHEN %s THEN NOW() ELSE last_login_at END
                       WHERE email = %s OR supabase_user_id = %s
                       RETURNING *
                     ),
                     inserted AS (
-                      INSERT INTO users (name, email, plan, supabase_user_id)
-                      SELECT %s, %s, %s, %s
+                      INSERT INTO users (name, email, plan, role, supabase_user_id, email_confirmed, last_login_at)
+                      SELECT %s, %s, %s, %s, %s, %s, CASE WHEN %s THEN NOW() ELSE NULL END
                       WHERE NOT EXISTS (SELECT 1 FROM updated)
                       ON CONFLICT(email) DO UPDATE SET
                         name = EXCLUDED.name,
                         plan = EXCLUDED.plan,
-                        supabase_user_id = EXCLUDED.supabase_user_id
+                        role = EXCLUDED.role,
+                        supabase_user_id = EXCLUDED.supabase_user_id,
+                        email_confirmed = GREATEST(COALESCE(users.email_confirmed, 0), EXCLUDED.email_confirmed),
+                        last_login_at = CASE
+                          WHEN %s THEN NOW()
+                          ELSE users.last_login_at
+                        END
                       RETURNING *
                     )
                     SELECT * FROM updated
@@ -781,24 +803,39 @@ def upsert_user(name: str, email: str, plan: str = "Reader", supabase_user_id: s
                         name,
                         email,
                         plan,
+                        role,
                         supabase_user_id,
+                        confirmed,
+                        touch_login,
                         email,
                         supabase_user_id,
                         name,
                         email,
                         plan,
+                        role,
                         supabase_user_id,
+                        confirmed,
+                        touch_login,
+                        touch_login,
                     ),
                 )
             else:
                 cur.execute(
                     """
-                    INSERT INTO users (name, email, plan)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT(email) DO UPDATE SET name = EXCLUDED.name, plan = EXCLUDED.plan
+                    INSERT INTO users (name, email, plan, role, email_confirmed, last_login_at)
+                    VALUES (%s, %s, %s, %s, %s, CASE WHEN %s THEN NOW() ELSE NULL END)
+                    ON CONFLICT(email) DO UPDATE SET
+                      name = EXCLUDED.name,
+                      plan = EXCLUDED.plan,
+                      role = EXCLUDED.role,
+                      email_confirmed = GREATEST(COALESCE(users.email_confirmed, 0), EXCLUDED.email_confirmed),
+                      last_login_at = CASE
+                        WHEN %s THEN NOW()
+                        ELSE users.last_login_at
+                      END
                     RETURNING *
                     """,
-                    (name, email, plan),
+                    (name, email, plan, role, confirmed, touch_login, touch_login),
                 )
             return row_to_dict(cur.fetchone())
 
@@ -815,6 +852,64 @@ def get_user_by_supabase_id(supabase_user_id: str) -> dict[str, Any]:
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM users WHERE supabase_user_id = %s", (supabase_user_id,))
             return row_to_dict(cur.fetchone())
+
+
+def get_user_by_email(email: str) -> dict[str, Any]:
+    cleaned = (email or "").strip().lower()
+    if not cleaned:
+        return {}
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM users WHERE LOWER(email) = %s", (cleaned,))
+            return row_to_dict(cur.fetchone())
+
+
+def set_user_role(user_id: int, role: str) -> dict[str, Any]:
+    cleaned = (role or "reader").strip().lower()
+    if cleaned not in {"reader", "editor", "admin"}:
+        cleaned = "reader"
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE users
+                SET role = %s,
+                    plan = CASE WHEN %s = 'admin' THEN 'Admin' ELSE COALESCE(plan, 'Reader') END
+                WHERE id = %s
+                RETURNING *
+                """,
+                (cleaned, cleaned, user_id),
+            )
+            return row_to_dict(cur.fetchone())
+
+
+def list_users(*, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+    safe_limit = min(max(int(limit or 50), 1), 200)
+    safe_offset = max(int(offset or 0), 0)
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, name, email, plan, role, supabase_user_id, email_confirmed,
+                       last_login_at, created_at
+                FROM users
+                ORDER BY created_at DESC NULLS LAST, id DESC
+                LIMIT %s OFFSET %s
+                """,
+                (safe_limit, safe_offset),
+            )
+            return [row_to_dict(row) for row in cur.fetchall()]
+
+
+def count_users() -> int:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS count FROM users")
+            row = cur.fetchone()
+            if not row:
+                return 0
+            data = row_to_dict(row)
+            return int(data.get("count") or 0)
 
 
 def save_story(user_id: int | None, story_id: str, title: str, source_count: int = 0) -> int:
