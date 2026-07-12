@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 SECTION_PROMPTS: dict[str, str] = {
     "world": "international diplomacy conflict global affairs",
     "politics": "congress senate legislation government policy",
-    "sporks": "sports athletics leagues championships olympic games",
+    "sports": "sports athletics leagues championships olympic games",
     "markets": "stock market economy financial inflation interest rates",
     "technology": "artificial intelligence semiconductor technology cybersecurity",
     "climate": "climate change environment renewable energy weather",
@@ -27,6 +27,13 @@ SECTION_PROMPTS: dict[str, str] = {
 SECTION_SLUGS = tuple(SECTION_PROMPTS)
 
 router = APIRouter()
+
+
+def _normalize_section_slug(section: str) -> str:
+    slug = (section or "").lower().replace(" ", "-")
+    if slug == "sporks":
+        return "sports"
+    return slug
 
 
 def _story_key(item: dict) -> str:

@@ -177,6 +177,9 @@ a {
 
 .section-nav button,
 .section-nav a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: 0;
   background: transparent;
   color: inherit;
@@ -184,7 +187,9 @@ a {
   font: inherit;
   font-weight: inherit;
   letter-spacing: inherit;
+  line-height: 1;
   padding: 0;
+  text-align: center;
   text-decoration: none;
   text-transform: inherit;
 }
@@ -210,13 +215,19 @@ a {
 
 .topic-nav button,
 .topic-nav a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: 0;
   background: transparent;
   color: inherit;
   cursor: pointer;
   font: inherit;
+  font-weight: inherit;
   letter-spacing: inherit;
+  line-height: 1;
   padding: 0;
+  text-align: center;
   text-decoration: none;
   text-transform: inherit;
 }
@@ -3120,8 +3131,13 @@ a.source-link-title:hover {
 .section-nav a,
 .topic-nav button,
 .topic-nav a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 999px;
   padding: 0.42rem 0.72rem;
+  line-height: 1;
+  text-align: center;
 }
 
 .section-nav button.is-active,
@@ -3631,6 +3647,9 @@ a.source-link-title:hover {
 
   .mobile-topic-nav button,
   .mobile-topic-nav a {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     flex: 0 0 auto;
     min-height: 2.35rem;
     border: 1px solid #d8ded2;
@@ -3642,7 +3661,10 @@ a.source-link-title:hover {
     font-size: 0.72rem;
     font-weight: 900;
     letter-spacing: 0.04em;
+    line-height: 1;
     padding: 0 0.85rem;
+    text-align: center;
+    text-decoration: none;
     text-transform: uppercase;
   }
 
@@ -3958,8 +3980,8 @@ a.source-link-title:hover {
   }
 
   .article-reader h1 {
-    font-size: clamp(2rem, 10vw, 3.15rem);
-    line-height: 1.02;
+    font-size: clamp(1.35rem, 6.2vw, 1.85rem);
+    line-height: 1.15;
   }
 
   .article-reader .dek {

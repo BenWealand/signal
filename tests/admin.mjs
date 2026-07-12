@@ -29,10 +29,10 @@ assert.equal(checks.find((item) => item.id === "length").ok, false);
 assert.equal(checks.find((item) => item.id === "match").ok, true);
 assert.equal(passwordChecklist("longenough1", "longenough1").every((item) => item.ok), true);
 
-assert.deepEqual(SECTION_NAMES.slice(0, 4), ["World", "Politics", "Sporks", "Markets"]);
-assert.equal(sectionPath("Sporks"), "/sporks");
+assert.deepEqual(SECTION_NAMES.slice(0, 4), ["World", "Politics", "Sports", "Markets"]);
+assert.equal(sectionPath("Sports"), "/sports");
 assert.equal(articlePath("abc"), "/article/abc");
-assert.equal(screenFromPathname("/sporks"), "Sporks");
+assert.equal(screenFromPathname("/sports"), "Sports");
 assert.equal(screenFromPathname("/trending"), "Trending");
 assert.equal(screenFromPathname("/article/xyz"), "Article");
 

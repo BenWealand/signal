@@ -37,7 +37,7 @@ SECTION_FEEDS: dict[str, list[tuple[str, str]]] = {
         ("http://feeds.bbci.co.uk/news/politics/rss.xml",              "BBC"),
         ("https://thehill.com/feed/",                                  "The Hill"),
     ],
-    "sporks": [
+    "sports": [
         ("https://feeds.bbci.co.uk/sport/rss.xml",                     "BBC Sport"),
         ("https://www.theguardian.com/sport/rss",                      "The Guardian"),
         ("https://feeds.npr.org/1055/rss.xml",                         "NPR"),
