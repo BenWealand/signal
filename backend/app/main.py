@@ -257,6 +257,7 @@ def health():
         "database": database,
         "auth": {
             "jwt_secret_configured": bool((settings.supabase_jwt_secret or "").strip()),
+            "supabase_url_configured": bool((settings.supabase_url or "").strip()),
             "schema": auth_schema,
         },
         "mode": "llm" if (settings.openai_api_key or settings.gemini_api_key) else "demo",

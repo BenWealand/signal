@@ -18,17 +18,22 @@ function explainAdminError(error) {
   if (!hasApiBase()) {
     return "API URL is not configured (VITE_SIGNAL_API_URL).";
   }
-  if (/missing authentication token/i.test(detail) || status === 401) {
+  if (/missing authentication token/i.test(detail)) {
     return "Your sign-in session is missing or expired. Sign out, sign back in, then reopen Settings.";
   }
   if (/invalid authentication token/i.test(detail)) {
-    return "The API rejected your session token. Sign out, sign back in, and confirm SUPABASE_JWT_SECRET on Render matches your Supabase project.";
+    return "The API could not verify your session token. On Render, set SUPABASE_URL to your project URL (for ES256/JWKS) or ensure SUPABASE_JWT_SECRET matches for HS256 tokens, then redeploy.";
   }
-  if (/not configured \(SUPABASE_JWT_SECRET\)/i.test(detail) || status === 503) {
-    return "Backend auth is not configured (SUPABASE_JWT_SECRET on Render).";
+  if (/not configured \(SUPABASE_URL or SUPABASE_JWT_SECRET\)/i.test(detail)
+    || /not configured \(SUPABASE_JWT_SECRET\)/i.test(detail)
+    || status === 503) {
+    return "Backend auth is not configured. Set SUPABASE_URL (recommended) and/or SUPABASE_JWT_SECRET on Render.";
   }
   if (/admin access required/i.test(detail) || status === 403) {
     return "Backend rejected admin access for this account. Confirm SIGNAL_ADMIN_EMAILS includes your email.";
+  }
+  if (status === 401) {
+    return "Your sign-in session is missing or expired. Sign out, sign back in, then reopen Settings.";
   }
   return detail || "Could not verify admin access with the API.";
 }

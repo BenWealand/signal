@@ -9,8 +9,10 @@ from typing import Any
 
 try:
     import jwt
+    from jwt import PyJWKClient
 except ImportError:  # pragma: no cover
     jwt = None
+    PyJWKClient = None  # type: ignore[misc, assignment]
 
 from fastapi import Header, HTTPException
 
@@ -22,6 +24,10 @@ AUTH_RATE_WINDOW_SECONDS = 60.0
 _rate_buckets: dict[str, deque[float]] = defaultdict(deque)
 
 VALID_ROLES = frozenset({"reader", "editor", "admin"})
+
+# Cached JWKS client keyed by URL (Supabase rotates keys; PyJWKClient caches internally).
+_jwks_clients: dict[str, Any] = {}
+_ASYMMETRIC_ALGS = ("ES256", "RS256")
 
 
 def extract_bearer_token(authorization: str) -> str:
@@ -41,37 +47,94 @@ def check_auth_rate_limit(key: str, *, limit: int = AUTH_RATE_LIMIT) -> None:
     bucket.append(now)
 
 
-def decode_supabase_jwt(authorization: str) -> dict[str, Any]:
-    secret = (settings.supabase_jwt_secret or "").strip()
-    if not secret:
-        raise HTTPException(status_code=503, detail="Authentication is not configured (SUPABASE_JWT_SECRET)")
-    if jwt is None:
-        raise HTTPException(status_code=503, detail="JWT authentication dependency is not installed")
-    token = extract_bearer_token(authorization)
-    if not token:
-        raise HTTPException(status_code=401, detail="Missing authentication token")
+def supabase_auth_configured() -> bool:
+    """True when JWT verification can run via JWKS (SUPABASE_URL) and/or HS256 secret."""
+    return bool(
+        (getattr(settings, "supabase_url", "") or "").strip()
+        or (getattr(settings, "supabase_jwt_secret", "") or "").strip()
+    )
+
+
+def _supabase_jwks_url() -> str:
+    base = (getattr(settings, "supabase_url", "") or "").strip().rstrip("/")
+    if not base:
+        return ""
+    return f"{base}/auth/v1/.well-known/jwks.json"
+
+
+def _get_jwks_client():
+    if jwt is None or PyJWKClient is None:
+        return None
+    url = _supabase_jwks_url()
+    if not url:
+        return None
+    client = _jwks_clients.get(url)
+    if client is None:
+        # lifespan keeps JWKS fresh; cache_keys=True is default in recent PyJWT
+        client = PyJWKClient(url, cache_keys=True, lifespan=600)
+        _jwks_clients[url] = client
+    return client
+
+
+def _decode_token(token: str, key: Any, algorithms: list[str]) -> dict[str, Any]:
+    assert jwt is not None
     try:
         return jwt.decode(
             token,
-            secret,
-            algorithms=["HS256"],
+            key,
+            algorithms=algorithms,
             audience="authenticated",
             options={"require": ["exp", "sub"]},
             leeway=30,
         )
     except jwt.InvalidAudienceError:
+        return jwt.decode(
+            token,
+            key,
+            algorithms=algorithms,
+            options={"verify_aud": False, "require": ["exp", "sub"]},
+            leeway=30,
+        )
+
+
+def decode_supabase_jwt(authorization: str) -> dict[str, Any]:
+    """
+    Verify a Supabase access token.
+
+    Modern Supabase projects sign with ES256 and publish keys at
+    `{SUPABASE_URL}/auth/v1/.well-known/jwks.json`. Older / legacy projects
+    still use HS256 with the dashboard JWT secret.
+    """
+    if jwt is None:
+        raise HTTPException(status_code=503, detail="JWT authentication dependency is not installed")
+    if not supabase_auth_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Authentication is not configured (SUPABASE_URL or SUPABASE_JWT_SECRET)",
+        )
+
+    token = extract_bearer_token(authorization)
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing authentication token")
+
+    last_error: Exception | None = None
+
+    jwks_client = _get_jwks_client()
+    if jwks_client is not None:
         try:
-            return jwt.decode(
-                token,
-                secret,
-                algorithms=["HS256"],
-                options={"verify_aud": False, "require": ["exp", "sub"]},
-                leeway=30,
-            )
+            signing_key = jwks_client.get_signing_key_from_jwt(token)
+            return _decode_token(token, signing_key.key, list(_ASYMMETRIC_ALGS))
+        except Exception as exc:  # network / kid / alg / signature
+            last_error = exc
+
+    secret = (getattr(settings, "supabase_jwt_secret", "") or "").strip()
+    if secret:
+        try:
+            return _decode_token(token, secret, ["HS256"])
         except jwt.PyJWTError as exc:
-            raise HTTPException(status_code=401, detail="Invalid authentication token") from exc
-    except jwt.PyJWTError as exc:
-        raise HTTPException(status_code=401, detail="Invalid authentication token") from exc
+            last_error = exc
+
+    raise HTTPException(status_code=401, detail="Invalid authentication token") from last_error
 
 
 def _claims_email(claims: dict[str, Any]) -> str:
