@@ -252,6 +252,7 @@ def admin_x_run(
                 or share_intent_url(
                     pkg.get("article_url") or "",
                     (pkg.get("article") or {}).get("headline") or "",
+                    reply_text=pkg.get("reply_text") or "",
                 ),
             }
         )

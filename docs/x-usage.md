@@ -17,8 +17,8 @@ Canonical agent playbook for a single post: [`x-trend-agent.md`](./x-trend-agent
 | Resolve a post URL | `POST /agents/x/lookup` | Bearer token |
 | Decide if it's worth covering | `app/x/filter.py` + prompt blacklist | Optional: tighten filter |
 | Write a sourced article | Gemini + news providers (not the tweet body) | `GEMINI_API_KEY` |
-| Keep it on a frontend link | Postgres + `/?article=<id>` | `PUBLIC_ARTICLE_BASE_URL` |
-| Build reply / share text | `replyText` + `intentUrl` | — |
+| Keep it on a frontend link | Postgres + `/article/<id>` (Supabase-fast load) | `PUBLIC_ARTICLE_BASE_URL` |
+| Build reply / share text | Promote draft: 2 lines + half of 3rd + `…` + article URL | — |
 | Post / reply on X | Live OAuth 1.0a `post_tweet` (dry-run by default) | Write tokens + `SIGNAL_X_DRY_RUN` |
 
 Trends API is **not** used. X/Twitter URLs are never scraped as article sources.
@@ -44,10 +44,10 @@ Trends API is **not** used. X/Twitter URLs are never scraped as article sources.
                                               generated_articles (Postgres)
                                                          │
                                                          ▼
-                              PUBLIC_ARTICLE_BASE_URL/?article=write-...
+                              PUBLIC_ARTICLE_BASE_URL/article/write-...
                                                          │
                                                          ▼
-                                              replyText + intentUrl
+                                              replyText (2 lines + half 3rd…) + intentUrl
                                                          │
                                                          ▼
                                               XClient.post_tweet (stub / your API)
@@ -153,8 +153,8 @@ Success shape:
 ```json
 {
   "status": "ready_to_post",
-  "articleUrl": "https://signal-mocha-three.vercel.app/?article=write-...",
-  "replyText": "Headline...\n\nRead the sourced Signal write-up: https://...",
+  "articleUrl": "https://signal-mocha-three.vercel.app/article/write-...",
+  "replyText": "Headline\nDek line\nHalf of next paragraph…\n\nhttps://signal-mocha-three.vercel.app/article/write-...",
   "trendUrl": "https://x.com/example/status/123",
   "share": { "intentUrl": "https://x.com/intent/tweet?...", "dry_run": true },
   "article": { "id": "write-...", "headline": "...", "sourceCount": 8 }
@@ -216,11 +216,12 @@ Every successful write saves to Postgres `generated_articles` with id `write-<un
 Public link:
 
 ```text
-https://<PUBLIC_ARTICLE_BASE_URL>/?article=write-<id>
+https://<PUBLIC_ARTICLE_BASE_URL>/article/write-<id>
 ```
 
-Opening that URL on Vercel loads the SPA, reads `?article=`, and fetches
-`GET /generated-articles/<id>` from Render. The article also becomes eligible for
+Opening that URL on Vercel loads `/article/:id`, which prefers Supabase PostgREST
+(`generated_articles` public read) before falling back to Render
+`GET /generated-articles/<id>`. The article also becomes eligible for
 `/news/trending` once it accrues views/likes/comments.
 
 Manual share from the article UI: **Share on X** opens the intent URL (no API).

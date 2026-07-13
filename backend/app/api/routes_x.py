@@ -265,6 +265,7 @@ def run_pipeline(
                 "intentUrl": (pkg.get("share") or {}).get("intentUrl") or share_intent_url(
                     pkg.get("article_url") or "",
                     (pkg.get("article") or {}).get("headline") or "",
+                    reply_text=pkg.get("reply_text") or "",
                 ),
             }
         )
@@ -303,7 +304,11 @@ def share_existing(
         article=article or {},
         share={
             "postId": payload.post_id,
-            "intentUrl": share_intent_url(article_url, (article or {}).get("headline") or ""),
+            "intentUrl": share_intent_url(
+                article_url,
+                (article or {}).get("headline") or "",
+                reply_text=reply,
+            ),
         },
     )
     package = maybe_share_package(package, dry_run=payload.dry_run, auto_post=True)

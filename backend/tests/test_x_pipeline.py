@@ -67,9 +67,45 @@ class XReplyTests(unittest.TestCase):
         )
 
     def test_reply_text_includes_link(self):
-        text = x_reply_text({"headline": "Budget Fight Intensifies"}, "https://signal.example.com/article/1")
+        text = x_reply_text(
+            {
+                "headline": "Budget Fight Intensifies",
+                "dek": "Lawmakers traded competing claims overnight.",
+                "body": [
+                    "The chamber neared a funding deadline as both parties dug in.",
+                    "Republicans argued the package protects defense spending while Democrats pressed for domestic priorities.",
+                ],
+            },
+            "https://signal.example.com/article/1",
+        )
         self.assertIn("Budget Fight Intensifies", text)
+        self.assertIn("Lawmakers traded competing claims overnight.", text)
+        self.assertIn("…", text)
         self.assertIn("https://signal.example.com/article/1", text)
+        self.assertTrue(text.endswith("https://signal.example.com/article/1"))
+        # First two lines full; third truncated before the URL block.
+        lines = text.split("\n")
+        self.assertEqual(lines[0], "Budget Fight Intensifies")
+        self.assertEqual(lines[1], "Lawmakers traded competing claims overnight.")
+        self.assertTrue(lines[2].endswith("…"))
+        self.assertLess(len(lines[2]), len(
+            "The chamber neared a funding deadline as both parties dug in."
+        ))
+
+    def test_reply_text_uses_body_when_no_dek(self):
+        text = x_reply_text(
+            {
+                "headline": "Markets Watch the Fed",
+                "body": [
+                    "Investors priced in a cautious hold ahead of the decision.",
+                    "Bond yields slipped as traders dialed back rate-cut bets for the quarter.",
+                ],
+            },
+            "https://signal.example.com/article/write-9",
+        )
+        self.assertIn("Investors priced in a cautious hold", text)
+        self.assertIn("…", text)
+        self.assertIn("/article/write-9", text)
 
 
 class XClientTests(unittest.TestCase):
