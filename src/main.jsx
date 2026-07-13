@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Analytics } from "@vercel/analytics/react";
 import {
@@ -109,7 +109,22 @@ function App() {
       }
       const next = await syncAccountWithBackend(session.user);
       if (!active) return;
-      setAccount(next);
+      // Keep the same object when nothing meaningful changed so admin Settings
+      // (and other account consumers) do not remount / re-verify on every sync.
+      setAccount((current) => {
+        if (
+          current
+          && current.id === next.id
+          && current.email === next.email
+          && current.role === next.role
+          && current.name === next.name
+          && current.plan === next.plan
+          && Boolean(current.is_admin) === Boolean(next.is_admin)
+        ) {
+          return current;
+        }
+        return next;
+      });
       if (openRecover) {
         setAccountMode("recover");
         setAccountOpen(true);
@@ -127,6 +142,10 @@ function App() {
       }
       if (event === "SIGNED_OUT") {
         setAccount(null);
+        return;
+      }
+      // Token refresh keeps the same user — skip backend re-sync thrash.
+      if (event === "TOKEN_REFRESHED") {
         return;
       }
       if (session?.user) {
@@ -314,11 +333,11 @@ function App() {
     startArticleWrite(nextPrompt);
   };
 
-  const showToast = (message, durationMs = 2400) => {
+  const showToast = useCallback((message, durationMs = 2400) => {
     setToast(message);
     window.clearTimeout(toastTimerRef.current);
     toastTimerRef.current = window.setTimeout(() => setToast(""), durationMs);
-  };
+  }, []);
 
   const handleArticleWriteFailure = (failedPrompt, error) => {
     if (error?.status === 422 && String(error.detail || error.message || "").toLowerCase().includes("blocked")) {

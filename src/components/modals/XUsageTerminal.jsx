@@ -12,6 +12,11 @@ function summarizeCandidate(candidate, index) {
   return `#${index + 1} ${handle} — ${String(topic).slice(0, 72)}`;
 }
 
+function accountKey(account) {
+  if (!account) return "";
+  return String(account.id || account.supabase_user_id || account.email || "").trim().toLowerCase();
+}
+
 function explainAdminError(error) {
   const detail = String(error?.detail || error?.message || "").trim();
   const status = Number(error?.status || 0);
@@ -41,6 +46,8 @@ function explainAdminError(error) {
 /**
  * Admin-only X usage board.
  * Requires a live `/admin/me` success — localStorage role spoofing is not enough.
+ * Once verified for an account, stay open for that Settings session (auth refresh
+ * must not tear the terminal down).
  */
 export function XUsageTerminal({ account, onToast }) {
   const [allowed, setAllowed] = useState(false);
@@ -52,6 +59,19 @@ export function XUsageTerminal({ account, onToast }) {
   const [busy, setBusy] = useState("");
   const [retryToken, setRetryToken] = useState(0);
   const scrollerRef = useRef(null);
+  const onToastRef = useRef(onToast);
+  const accountRef = useRef(account);
+  const verifiedKeyRef = useRef("");
+  const statusFetchedForKeyRef = useRef("");
+  const identity = accountKey(account);
+
+  useEffect(() => {
+    onToastRef.current = onToast;
+  }, [onToast]);
+
+  useEffect(() => {
+    accountRef.current = account;
+  }, [account]);
 
   const push = useCallback((text, kind = "info") => {
     setLines((prev) => [...prev.slice(-120), { uid: `${Date.now()}-${Math.random()}`, at: stamp(), text, kind }]);
@@ -64,11 +84,21 @@ export function XUsageTerminal({ account, onToast }) {
 
   useEffect(() => {
     let active = true;
-    setChecking(true);
-    setAllowed(false);
-    setVerifyError("");
+    const currentAccount = accountRef.current;
 
-    if (!isAdminAccount(account)) {
+    // Sticky grant: same account already passed /admin/me in this Settings mount.
+    if (identity && verifiedKeyRef.current === identity) {
+      setAllowed(true);
+      setChecking(false);
+      setVerifyError("");
+      return () => {
+        active = false;
+      };
+    }
+
+    if (!isAdminAccount(currentAccount)) {
+      verifiedKeyRef.current = "";
+      setAllowed(false);
       setChecking(false);
       setVerifyError("This account is not marked as admin in the app.");
       return () => {
@@ -76,6 +106,8 @@ export function XUsageTerminal({ account, onToast }) {
       };
     }
     if (!hasApiBase()) {
+      verifiedKeyRef.current = "";
+      setAllowed(false);
       setChecking(false);
       setVerifyError("API URL is not configured (VITE_SIGNAL_API_URL).");
       return () => {
@@ -83,11 +115,15 @@ export function XUsageTerminal({ account, onToast }) {
       };
     }
 
+    setChecking(true);
+    setVerifyError("");
+
     (async () => {
       try {
         const token = await getAccessToken({ refresh: true });
         if (!active) return;
         if (!token) {
+          verifiedKeyRef.current = "";
           setAllowed(false);
           setVerifyError("No live Supabase session token. Sign out, sign back in, then reopen Settings.");
           return;
@@ -95,14 +131,17 @@ export function XUsageTerminal({ account, onToast }) {
         const data = await apiGet("/admin/me");
         if (!active) return;
         if (data?.admin) {
+          verifiedKeyRef.current = identity;
           setAllowed(true);
           setVerifyError("");
         } else {
+          verifiedKeyRef.current = "";
           setAllowed(false);
           setVerifyError("API did not grant admin access for this session.");
         }
       } catch (error) {
         if (!active) return;
+        verifiedKeyRef.current = "";
         setAllowed(false);
         setVerifyError(explainAdminError(error));
       } finally {
@@ -113,9 +152,9 @@ export function XUsageTerminal({ account, onToast }) {
     return () => {
       active = false;
     };
-  }, [account, retryToken]);
+  }, [identity, retryToken]);
 
-  const refreshStatus = useCallback(async () => {
+  const refreshStatus = useCallback(async ({ quietToast = false } = {}) => {
     if (!hasApiBase()) {
       push("No API base configured (VITE_SIGNAL_API_URL).", "error");
       return;
@@ -131,17 +170,20 @@ export function XUsageTerminal({ account, onToast }) {
       );
     } catch (error) {
       push(`status failed: ${error?.detail || error?.message || "unknown error"}`, "error");
-      onToast?.("Admin X status failed — check the terminal log.");
+      if (!quietToast) onToastRef.current?.("Admin X status failed — check the terminal log.");
     } finally {
       setBusy("");
     }
-  }, [onToast, push]);
+  }, [push]);
 
   useEffect(() => {
-    if (allowed) refreshStatus();
-  }, [allowed, refreshStatus]);
+    if (!allowed || !identity) return;
+    if (statusFetchedForKeyRef.current === identity) return;
+    statusFetchedForKeyRef.current = identity;
+    refreshStatus({ quietToast: true });
+  }, [allowed, identity, refreshStatus]);
 
-  if (checking) {
+  if (checking && !allowed) {
     return (
       <div className="x-admin-terminal x-admin-terminal-locked">
         <p>Verifying admin access with the API…</p>
@@ -159,6 +201,8 @@ export function XUsageTerminal({ account, onToast }) {
           className="secondary-action"
           type="button"
           onClick={() => {
+            verifiedKeyRef.current = "";
+            statusFetchedForKeyRef.current = "";
             setRetryToken((value) => value + 1);
           }}
         >
@@ -225,10 +269,10 @@ export function XUsageTerminal({ account, onToast }) {
           push(`reply: ${String(pkg.replyText || pkg.reply_text).slice(0, 160)}`);
         }
       });
-      onToast?.("X agent run finished (dry-run).");
+      onToastRef.current?.("X agent run finished (dry-run).");
     } catch (error) {
       push(`run failed: ${error?.detail || error?.message || "unknown error"}`, "error");
-      onToast?.("X agent run failed.");
+      onToastRef.current?.("X agent run failed.");
     } finally {
       setBusy("");
     }
@@ -260,7 +304,7 @@ export function XUsageTerminal({ account, onToast }) {
             if (event.key === "Enter") runSearch();
           }}
         />
-        <button type="button" disabled={Boolean(busy)} onClick={refreshStatus}>
+        <button type="button" disabled={Boolean(busy)} onClick={() => refreshStatus()}>
           {busy === "status" ? "…" : "Status"}
         </button>
         <button type="button" disabled={Boolean(busy)} onClick={runDiscover}>
