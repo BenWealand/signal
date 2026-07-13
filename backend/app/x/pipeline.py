@@ -168,6 +168,7 @@ def write_article_for_candidate(
     article["trendUrl"] = candidate.trend_url
     article["tag"] = candidate.tag or "x-trend"
     article["ownerUserId"] = None
+    article["status"] = article.get("status") or "published"
     queries.save_generated_article(article)
 
     article_url = article_public_url(str(article["id"]))
@@ -180,7 +181,11 @@ def write_article_for_candidate(
         candidate=candidate.to_dict(),
         article=article,
         share={
-            "intentUrl": share_intent_url(article_url, article.get("headline") or ""),
+            "intentUrl": share_intent_url(
+                article_url,
+                article.get("headline") or "",
+                reply_text=reply,
+            ),
             "postId": candidate.post_id,
         },
     )

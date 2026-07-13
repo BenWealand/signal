@@ -2918,6 +2918,7 @@ a.source-link-title:hover {
   margin-top: 0.35rem;
   padding-top: 0.85rem;
   border-top: 1px solid #e1e5dc;
+  min-width: 0;
 }
 
 .x-admin-terminal-locked {
@@ -2953,6 +2954,7 @@ a.source-link-title:hover {
   align-items: flex-start;
   justify-content: space-between;
   gap: 0.75rem;
+  min-width: 0;
 }
 
 .x-admin-terminal-head strong {
@@ -2969,6 +2971,8 @@ a.source-link-title:hover {
   font-size: 0.74rem;
   font-style: normal;
   font-weight: 700;
+  line-height: 1.35;
+  max-width: 36rem;
 }
 
 .x-admin-badges {
@@ -2998,10 +3002,13 @@ a.source-link-title:hover {
   display: grid;
   grid-template-columns: minmax(0, 1fr) repeat(4, auto);
   gap: 0.45rem;
+  min-width: 0;
 }
 
 .x-admin-controls input {
   min-height: 2.3rem;
+  min-width: 0;
+  width: 100%;
   border: 1px solid #cfd3c8;
   background: #ffffff;
   color: #111111;
@@ -3011,6 +3018,7 @@ a.source-link-title:hover {
 
 .x-admin-controls button {
   min-height: 2.3rem;
+  min-width: 0;
   border: 1px solid #cfd3c8;
   background: #ffffff;
   color: #1f2a22;
@@ -3019,6 +3027,7 @@ a.source-link-title:hover {
   font-weight: 850;
   padding: 0 0.7rem;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .x-admin-controls button:disabled {
@@ -3032,30 +3041,230 @@ a.source-link-title:hover {
   color: #ffffff;
 }
 
+.x-admin-config {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) repeat(2, auto);
+  gap: 0.45rem 0.55rem;
+  align-items: end;
+  min-width: 0;
+}
+
+.x-admin-config label {
+  display: grid;
+  gap: 0.25rem;
+  color: #5a6258;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  min-width: 0;
+}
+
+.x-admin-config select {
+  min-height: 2.1rem;
+  width: 100%;
+  border: 1px solid #cfd3c8;
+  background: #ffffff;
+  color: #111111;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: none;
+  letter-spacing: 0;
+  padding: 0 0.55rem;
+}
+
+.x-admin-config-toggle {
+  display: flex !important;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 2.1rem;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 0.76rem !important;
+  font-weight: 750 !important;
+  color: #1f2a22 !important;
+}
+
+.x-admin-config-toggle input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: #0b5a40;
+  flex: 0 0 auto;
+}
+
+.x-admin-draft {
+  display: grid;
+  gap: 0.45rem;
+  border: 1px solid #d7dbd1;
+  background: #f7f8f4;
+  padding: 0.7rem 0.75rem;
+  min-width: 0;
+}
+
+.x-admin-draft-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+}
+
+.x-admin-draft-head strong {
+  color: #1f2a22;
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.x-admin-draft-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.x-admin-draft-actions .secondary-action,
+.x-admin-draft-actions a.secondary-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 1.9rem;
+  padding: 0 0.65rem;
+  font-size: 0.72rem;
+  text-decoration: none;
+}
+
+.x-admin-draft pre {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  color: #1b241c;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  font-weight: 650;
+}
+
 .x-admin-log {
   margin: 0;
   max-height: 220px;
+  min-height: 0;
+  height: auto;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  border: 1px solid #d7dbd1;
+  background: #10140f;
+}
+
+.x-admin-log-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.45rem 0.65rem;
+  background: #1a2118;
+  color: #c5cec0;
+  font-size: 0.68rem;
+  font-weight: 750;
+  letter-spacing: 0.02em;
+  min-width: 0;
+}
+
+.x-admin-log-bar span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.x-admin-log code {
+  display: grid;
+  gap: 0.28rem;
+  padding: 0.65rem 0.7rem 0.75rem;
+  overflow: auto;
+  max-height: 180px;
+  color: #d7e0d2;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.x-admin-log code span {
+  display: block;
+  min-width: 0;
+}
+
+.x-admin-log code i {
+  color: #7f8a78;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.x-admin-log code em {
+  font-style: normal;
+  font-weight: 650;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .x-admin-log code span[data-kind="ok"] em {
-  color: #1a6a3a;
+  color: #7dcea0;
 }
 
 .x-admin-log code span[data-kind="error"] em {
-  color: #8a3030;
+  color: #f0a0a0;
 }
 
 .x-admin-log code span[data-kind="warn"] em {
-  color: #7a5a1a;
+  color: #e2c070;
 }
 
 @media (max-width: 720px) {
+  .x-admin-terminal-head {
+    flex-direction: column;
+  }
+
   .x-admin-controls {
     grid-template-columns: 1fr 1fr;
   }
 
   .x-admin-controls input {
     grid-column: 1 / -1;
+  }
+
+  .x-admin-controls button {
+    width: 100%;
+  }
+
+  .x-admin-controls .x-admin-run {
+    grid-column: 1 / -1;
+  }
+
+  .x-admin-config {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .x-admin-config-toggle {
+    grid-column: 1 / -1;
+  }
+
+  .x-admin-log {
+    max-height: 200px;
+  }
+
+  .x-admin-draft-actions {
+    width: 100%;
+  }
+
+  .x-admin-draft-actions .secondary-action,
+  .x-admin-draft-actions a.secondary-action {
+    flex: 1 1 auto;
   }
 }
 
@@ -4164,6 +4373,11 @@ a.source-link-title:hover {
 
   .modal-body {
     max-height: none;
+    overflow-x: hidden;
+  }
+
+  .modal-section {
+    min-width: 0;
   }
 
   .modal-card > header {
