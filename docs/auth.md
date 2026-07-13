@@ -38,12 +38,18 @@ VITE_SIGNAL_ADMIN_EMAILS=benwealand@gmail.com
 ## Backend env (Render)
 
 ```env
-SUPABASE_JWT_SECRET=...          # Project Settings → API → JWT Secret
+SUPABASE_URL=https://YOUR_PROJECT.supabase.co   # preferred — verifies ES256 via JWKS
+SUPABASE_JWT_SECRET=...                         # optional fallback for legacy HS256 tokens
 SIGNAL_ADMIN_EMAILS=benwealand@gmail.com
 SIGNAL_API_TOKEN=...             # agents/CI only — not for browser login
 DATABASE_URL=...
 CORS_ORIGINS=https://your-frontend.vercel.app
 ```
+
+> **Important:** Current Supabase projects sign access tokens with **ES256** and publish keys at
+> `{SUPABASE_URL}/auth/v1/.well-known/jwks.json`. Setting only `SUPABASE_JWT_SECRET` (HS256) will
+> reject valid sessions and the admin X terminal will fail. Set `SUPABASE_URL` on Render to match
+> `VITE_SUPABASE_URL`.
 
 Apply migration `backend/app/db/migrations/0003_user_roles_auth.sql` (or recreate from `schema.sql`).
 For fast shared article links, also apply `0004_generated_articles_public_read.sql`.
@@ -75,10 +81,11 @@ Requires `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` on Vercel (same as auth)
 
 
 1. **Postgres** — deploy/restart backend so `0003_user_roles_auth` applies, or run `scripts/apply_migrations.py`
-2. **Render env** — `DATABASE_URL`, `SUPABASE_JWT_SECRET`, `SIGNAL_ADMIN_EMAILS=benwealand@gmail.com`, `CORS_ORIGINS=<vercel url>`
+2. **Render env** — `DATABASE_URL`, `SUPABASE_URL` (same project as Vercel), optional `SUPABASE_JWT_SECRET`, `SIGNAL_ADMIN_EMAILS=benwealand@gmail.com`, `CORS_ORIGINS=<vercel url>`
 3. **Vercel env** — `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_SIGNAL_API_URL`, `VITE_SIGNAL_ADMIN_EMAILS`
 4. **Supabase Auth** — Email provider on; Site URL + redirect URLs include the Vercel origin
 5. Sign in as allowlisted admin → Settings shows X terminal only after `/admin/me` succeeds
+6. Confirm `/health` reports `auth.supabase_url_configured: true` (and optionally `jwt_secret_configured`)
 
 ## Supabase dashboard checklist
 
@@ -112,7 +119,7 @@ Admin is granted when:
 
 ## Security notes
 
-- JWT verified with `SUPABASE_JWT_SECRET` (HS256, audience `authenticated`, requires `exp` + `sub`)
+- JWT verified via Supabase **JWKS** (`SUPABASE_URL`, ES256/RS256) with **HS256** fallback (`SUPABASE_JWT_SECRET`); audience `authenticated`; requires `exp` + `sub`
 - Client cannot spoof email/`supabase_user_id` on sync — taken from token claims
 - Auth endpoints rate-limited (30/min/IP on `/users`)
 - CORS allowlist via `CORS_ORIGINS`

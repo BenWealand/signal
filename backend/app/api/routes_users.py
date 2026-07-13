@@ -10,6 +10,7 @@ from app.auth import (
     decode_supabase_jwt,
     extract_bearer_token,
     public_user_view,
+    supabase_auth_configured,
     sync_user_from_claims,
 )
 from app.config import settings
@@ -88,8 +89,7 @@ def _extract_bearer_token(authorization: str) -> str:
 
 
 def _user_id_from_supabase_jwt(authorization: str) -> int | None:
-    secret = getattr(settings, "supabase_jwt_secret", "").strip()
-    if not secret:
+    if not supabase_auth_configured():
         return None
     claims = decode_supabase_jwt(authorization)
     user = sync_user_from_claims(claims, touch_login=False)
@@ -99,14 +99,14 @@ def _user_id_from_supabase_jwt(authorization: str) -> int | None:
 
 
 def _require_user_route_guard(user_id: int | None, x_signal_token: str = "", authorization: str = "") -> int | None:
-    if getattr(settings, "supabase_jwt_secret", "").strip() and extract_bearer_token(authorization):
+    if supabase_auth_configured() and extract_bearer_token(authorization):
         jwt_user_id = _user_id_from_supabase_jwt(authorization)
         if user_id is not None and int(user_id) != jwt_user_id:
             raise HTTPException(status_code=403, detail="Authenticated user does not match requested user")
         return jwt_user_id
 
-    # Prefer JWT when secret is configured even if token missing — force auth for user-scoped ids.
-    if getattr(settings, "supabase_jwt_secret", "").strip() and user_id is not None:
+    # Prefer JWT when auth is configured even if token missing — force auth for user-scoped ids.
+    if supabase_auth_configured() and user_id is not None:
         jwt_user_id = _user_id_from_supabase_jwt(authorization)
         if int(user_id) != jwt_user_id:
             raise HTTPException(status_code=403, detail="Authenticated user does not match requested user")

@@ -23,6 +23,7 @@ class AdminAccessTest(unittest.TestCase):
     def test_require_admin_rejects_missing_jwt_secret(self):
         auth_mod.settings = SimpleNamespace(
             supabase_jwt_secret="",
+            supabase_url="",
             admin_emails="benwealand@gmail.com",
             signal_api_token="",
         )

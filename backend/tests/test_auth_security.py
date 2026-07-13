@@ -112,6 +112,96 @@ class AuthSecurityTests(unittest.TestCase):
         self.assertTrue(view["permissions"]["writeArticles"])
         self.assertFalse(view["permissions"]["adminTerminal"])
 
+    def test_decode_hs256_with_secret(self):
+        import time
+        import jwt as pyjwt
+
+        secret = "test-hs-secret"
+        token = pyjwt.encode(
+            {
+                "sub": "user-hs",
+                "email": "hs@example.com",
+                "aud": "authenticated",
+                "exp": int(time.time()) + 3600,
+            },
+            secret,
+            algorithm="HS256",
+        )
+        auth_mod.settings = SimpleNamespace(supabase_jwt_secret=secret, supabase_url="")
+        auth_mod._jwks_clients.clear()
+        claims = auth_mod.decode_supabase_jwt(f"Bearer {token}")
+        self.assertEqual(claims["email"], "hs@example.com")
+        auth_mod.settings = self._settings
+
+    def test_decode_es256_via_jwks(self):
+        import time
+        from cryptography.hazmat.primitives.asymmetric import ec
+        import jwt as pyjwt
+
+        private_key = ec.generate_private_key(ec.SECP256R1())
+        token = pyjwt.encode(
+            {
+                "sub": "user-es",
+                "email": "es@example.com",
+                "aud": "authenticated",
+                "exp": int(time.time()) + 3600,
+            },
+            private_key,
+            algorithm="ES256",
+            headers={"kid": "test-kid"},
+        )
+
+        class FakeSigningKey:
+            def __init__(self, key):
+                self.key = key
+
+        class FakeJwks:
+            def get_signing_key_from_jwt(self, _token):
+                return FakeSigningKey(private_key.public_key())
+
+        auth_mod.settings = SimpleNamespace(
+            supabase_jwt_secret="",
+            supabase_url="https://example.supabase.co",
+        )
+        auth_mod._jwks_clients.clear()
+        with patch.object(auth_mod, "_get_jwks_client", return_value=FakeJwks()):
+            claims = auth_mod.decode_supabase_jwt(f"Bearer {token}")
+        self.assertEqual(claims["sub"], "user-es")
+        self.assertEqual(claims["email"], "es@example.com")
+        auth_mod.settings = self._settings
+
+    def test_decode_rejects_when_neither_url_nor_secret(self):
+        auth_mod.settings = SimpleNamespace(supabase_jwt_secret="", supabase_url="")
+        with self.assertRaises(HTTPException) as ctx:
+            auth_mod.decode_supabase_jwt("Bearer anything")
+        self.assertEqual(ctx.exception.status_code, 503)
+        auth_mod.settings = self._settings
+
+    def test_hs256_secret_cannot_verify_es256_without_jwks(self):
+        """Mirrors production misconfig: JWT secret set but tokens are ES256."""
+        import time
+        from cryptography.hazmat.primitives.asymmetric import ec
+        import jwt as pyjwt
+
+        private_key = ec.generate_private_key(ec.SECP256R1())
+        token = pyjwt.encode(
+            {
+                "sub": "user-es",
+                "email": "es@example.com",
+                "aud": "authenticated",
+                "exp": int(time.time()) + 3600,
+            },
+            private_key,
+            algorithm="ES256",
+        )
+        auth_mod.settings = SimpleNamespace(supabase_jwt_secret="legacy-hs-secret", supabase_url="")
+        auth_mod._jwks_clients.clear()
+        with self.assertRaises(HTTPException) as ctx:
+            auth_mod.decode_supabase_jwt(f"Bearer {token}")
+        self.assertEqual(ctx.exception.status_code, 401)
+        self.assertIn("Invalid", ctx.exception.detail)
+        auth_mod.settings = self._settings
+
 
 class AdminRouteTests(unittest.TestCase):
     def test_admin_me_uses_shared_guard(self):

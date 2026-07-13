@@ -10,6 +10,8 @@ pydantic[email]==2.13.3
 psycopg2-binary==2.9.12
 openai==2.34.0
 PyJWT==2.10.1
+# Required for Supabase ES256 / JWKS verification (PyJWT asymmetric algs).
+cryptography==44.0.3
 
 # Article extraction
 trafilatura==2.0.0
