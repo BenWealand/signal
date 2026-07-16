@@ -24,7 +24,7 @@ from app.processing.article_writer import (
 
 from app.x.models import XCandidate
 from app.x.pipeline import maybe_share_package, write_article_for_candidate
-from app.x.reply import article_public_url, x_reply_text
+from app.x.reply import article_public_url, build_prompt, x_reply_text
 
 
 router = APIRouter()
@@ -221,9 +221,19 @@ def _resolve_optional_owner_user_id(user_id: int | None, authorization: str = ""
         raise HTTPException(status_code=401, detail="Article owner requires authentication") from exc
 
 
-def _prompt_from_x_payload(payload: XTrendArticleRequest) -> str:
-    from app.x.reply import build_prompt
+def _is_specific_x_prompt(prompt: str) -> bool:
+    words = re.findall(r"[A-Za-z0-9][A-Za-z0-9'&.-]*", prompt or "")
+    if len(words) >= 4:
+        return True
+    if len(words) >= 3 and len(prompt) >= 24:
+        return True
+    return False
 
+
+def _prompt_from_x_payload(payload: XTrendArticleRequest) -> str:
+    prompt = re.sub(r"\s+", " ", payload.prompt or "").strip()[:240].rstrip()
+    if prompt and _is_specific_x_prompt(prompt):
+        return prompt
     try:
         return build_prompt(payload.trending_topic, payload.snippet, payload.prompt)
     except ValueError as exc:

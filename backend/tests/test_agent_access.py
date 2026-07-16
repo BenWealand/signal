@@ -46,6 +46,26 @@ class AgentAccessTest(unittest.TestCase):
         self.assertIn("Trending topic: #BudgetVote", prompt)
         self.assertIn("Social post snippet:", prompt)
 
+    def test_x_payload_keeps_specific_prompt_clean(self):
+        payload = XTrendArticleRequest(
+            prompt="latest senate budget vote",
+            trending_topic="#BudgetVote",
+            snippet="Lawmakers are posting competing claims about the overnight budget vote.",
+        )
+        prompt = routes_articles._prompt_from_x_payload(payload)
+        self.assertEqual(prompt, "latest senate budget vote")
+
+    def test_x_payload_enriches_short_prompt(self):
+        payload = XTrendArticleRequest(
+            prompt="budget",
+            trending_topic="#BudgetVote",
+            snippet="Lawmakers are posting competing claims about the overnight budget vote.",
+        )
+        prompt = routes_articles._prompt_from_x_payload(payload)
+        self.assertIn("budget", prompt)
+        self.assertIn("Trending topic: #BudgetVote", prompt)
+        self.assertIn("Social post snippet:", prompt)
+
     def test_article_public_url_uses_configured_base(self):
         reply_mod.settings = SimpleNamespace(
             signal_api_token="secret",
