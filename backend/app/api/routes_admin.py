@@ -13,6 +13,7 @@ from pydantic import BaseModel, validator
 from app.api.routes_articles import (
     ARTICLE_RATE_LIMIT,
     MAX_LIMIT,
+    MAX_PROMPT_CHARS,
     _check_article_rate_limit,
     _client_rate_key,
     _write_gemini_article,
@@ -63,6 +64,7 @@ class AdminSearchRequest(BaseModel):
 class AdminRunRequest(BaseModel):
     max_articles: int = 1
     discover_limit: int = 8
+    prompt: str = ""
     query: str = ""
     mode: str = "fast"
     limit: int = 10
@@ -79,6 +81,10 @@ class AdminRunRequest(BaseModel):
         if cleaned not in {"fast", "thorough"}:
             raise ValueError("mode must be fast or thorough")
         return cleaned
+
+    @validator("prompt")
+    def prompt_size(cls, value: str) -> str:
+        return (value or "").strip()[:MAX_PROMPT_CHARS]
 
     @validator("query")
     def query_size(cls, value: str) -> str:
@@ -231,7 +237,7 @@ def admin_x_run(
     result = run_x_pipeline(
         max_articles=payload.max_articles,
         discover_limit=payload.discover_limit,
-        query=payload.query,
+        direct_prompt=payload.prompt or payload.query,
         mode=payload.mode,
         source_limit=payload.limit,
         dry_run=payload.dry_run,

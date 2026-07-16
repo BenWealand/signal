@@ -331,6 +331,53 @@ class XPipelineTests(unittest.TestCase):
         self.assertEqual(result["packages"][0]["status"], "error")
         self.assertEqual(result["packages"][1]["status"], "ready_to_post")
 
+    def test_run_pipeline_uses_direct_prompt_without_discovery(self):
+        prompts = []
+
+        def fake_write(prompt, limit, mode, build_id):
+            prompts.append(prompt)
+            return {
+                "id": "write-direct",
+                "headline": "Federal Reserve Policy Update",
+                "body": ["A", "B"],
+                "sourceCount": 3,
+                "summary": "Summary",
+            }
+
+        with (
+            patch.object(pipeline_mod, "discover_candidates") as discover,
+            patch.object(pipeline_mod.queries, "save_generated_article", return_value=None),
+        ):
+            pipeline_mod.settings = SimpleNamespace(
+                public_article_base_url="https://signal.example.com",
+                x_dry_run=True,
+                x_auto_post=False,
+            )
+            reply_mod.settings = pipeline_mod.settings
+            client_mod.settings = SimpleNamespace(
+                x_api_bearer_token="",
+                x_api_key="",
+                x_api_secret="",
+                x_access_token="",
+                x_access_token_secret="",
+                x_trends_woeid=1,
+                x_dry_run=True,
+                x_auto_post=False,
+            )
+
+            result = run_x_pipeline(
+                max_articles=1,
+                direct_prompt="federal reserve",
+                write_fn=fake_write,
+                dry_run=True,
+                auto_post=False,
+            )
+
+        discover.assert_not_called()
+        self.assertEqual(result["provider"], "manual-prompt")
+        self.assertEqual(result["written"], 1)
+        self.assertEqual(prompts, ["federal reserve"])
+
     def test_write_article_for_candidate_keeps_specific_prompt_clean(self):
         candidate = XCandidate(
             topic="#BudgetVote",

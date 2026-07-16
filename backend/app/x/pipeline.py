@@ -115,19 +115,24 @@ def write_article_for_candidate(
     write_fn: Callable[..., dict] | None = None,
 ) -> XSharePackage:
     """Write + save a sourced article and return a ready-to-share package."""
-    ok, reason = is_actionable_candidate(candidate)
-    if not ok:
-        return XSharePackage(
-            status="skipped",
-            article_url="",
-            reply_text="",
-            trend_url=candidate.trend_url,
-            candidate=candidate.to_dict(),
-            error=reason,
-        )
+    is_direct_prompt = candidate.provider == "manual-prompt" and bool(candidate.prompt.strip())
+    if not is_direct_prompt:
+        ok, reason = is_actionable_candidate(candidate)
+        if not ok:
+            return XSharePackage(
+                status="skipped",
+                article_url="",
+                reply_text="",
+                trend_url=candidate.trend_url,
+                candidate=candidate.to_dict(),
+                error=reason,
+            )
 
-    prompt_seed = re.sub(r"\s+", " ", candidate.prompt or "").strip()[:240].rstrip()
-    if prompt_seed and _is_specific_prompt(prompt_seed):
+    prompt_seed = re.sub(r"\s+", " ", candidate.prompt or "").strip()
+    prompt_seed = prompt_seed[:2000 if is_direct_prompt else 240].rstrip()
+    if is_direct_prompt:
+        prompt = prompt_seed
+    elif prompt_seed and _is_specific_prompt(prompt_seed):
         prompt = prompt_seed
     else:
         try:
@@ -259,6 +264,7 @@ def run_x_pipeline(
     max_articles: int = 3,
     discover_limit: int = 10,
     query: str = "",
+    direct_prompt: str = "",
     mode: str = "fast",
     source_limit: int = 12,
     dry_run: bool | None = None,
@@ -276,12 +282,28 @@ def run_x_pipeline(
     5. Optionally dry-run / post via XClient stub
     """
     provider = "manual"
-    if candidates is None:
+    cleaned_prompt = re.sub(r"\s+", " ", direct_prompt or "").strip()[:2000].rstrip()
+    if cleaned_prompt:
+        candidates = [
+            XCandidate(
+                topic=cleaned_prompt,
+                prompt=cleaned_prompt,
+                source="x-agent",
+                tag="x-trend",
+                provider="manual-prompt",
+            )
+        ]
+        provider = "manual-prompt"
+    elif candidates is None:
         candidates, provider = discover_candidates(limit=discover_limit, query=query)
     else:
         provider = "manual"
 
-    actionable = filter_candidates(candidates, limit=max(discover_limit, max_articles))
+    actionable = (
+        candidates
+        if provider == "manual-prompt"
+        else filter_candidates(candidates, limit=max(discover_limit, max_articles))
+    )
     packages: list[dict[str, Any]] = []
     ready_count = 0
     for candidate in actionable:

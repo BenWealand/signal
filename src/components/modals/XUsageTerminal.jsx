@@ -257,7 +257,7 @@ export function XUsageTerminal({ account, onToast }) {
       const data = await apiPost("/admin/x/run", {
         max_articles: maxArticles,
         discover_limit: discoverLimit,
-        query: query.trim() || undefined,
+        prompt: query.trim() || undefined,
         mode,
         dry_run: dryRun,
         auto_post: autoPost,
@@ -328,12 +328,12 @@ export function XUsageTerminal({ account, onToast }) {
 
       <div className="x-admin-controls">
         <input
-          aria-label="X search query"
+          aria-label="Article prompt"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search query or topic seed"
+          placeholder="Article prompt"
           onKeyDown={(event) => {
-            if (event.key === "Enter") runSearch();
+            if (event.key === "Enter") runPromote();
           }}
         />
         <button type="button" disabled={Boolean(busy)} onClick={() => refreshStatus()}>
