@@ -12,6 +12,7 @@ from app.x.client import XApiNotConfigured, XClient
 from app.x.filter import filter_candidates, is_actionable_candidate
 from app.x.models import XCandidate
 from app.x.pipeline import maybe_share_package, run_x_pipeline, write_article_for_candidate
+from app.processing.article_writer import GeminiArticleUnavailable
 from app.x.reply import article_public_url, build_prompt, x_reply_text
 from app.x import reply as reply_mod
 from app.x import client as client_mod
@@ -277,6 +278,88 @@ class XPipelineTests(unittest.TestCase):
             self.assertEqual(result["status"], "ok")
             self.assertEqual(result["written"], 1)
             self.assertEqual(result["packages"][0]["status"], "ready_to_post")
+
+    def test_run_pipeline_keeps_trying_after_unavailable_candidate(self):
+        candidates = [
+            XCandidate(topic="Weak Topic", prompt="weak topic"),
+            XCandidate(topic="Climate insurance coastal markets pressure", prompt="Climate insurance coastal markets pressure"),
+        ]
+        calls = []
+
+        def fake_write(prompt, limit, mode, build_id):
+            calls.append(prompt)
+            if len(calls) == 1:
+                raise GeminiArticleUnavailable("No accessible sources were found for a Gemini draft")
+            return {
+                "id": "write-3",
+                "headline": "Coastal Insurance Pressure Rises",
+                "body": ["A", "B"],
+                "sourceCount": 3,
+                "summary": "Summary",
+            }
+
+        with patch.object(pipeline_mod.queries, "save_generated_article", return_value=None):
+            pipeline_mod.settings = SimpleNamespace(
+                public_article_base_url="https://signal.example.com",
+                x_dry_run=True,
+                x_auto_post=False,
+            )
+            reply_mod.settings = pipeline_mod.settings
+            client_mod.settings = SimpleNamespace(
+                x_api_bearer_token="",
+                x_api_key="",
+                x_api_secret="",
+                x_access_token="",
+                x_access_token_secret="",
+                x_trends_woeid=1,
+                x_dry_run=True,
+                x_auto_post=False,
+            )
+
+            result = run_x_pipeline(
+                max_articles=1,
+                discover_limit=8,
+                candidates=candidates,
+                write_fn=fake_write,
+                dry_run=True,
+                auto_post=False,
+            )
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["written"], 1)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(result["packages"][0]["status"], "error")
+        self.assertEqual(result["packages"][1]["status"], "ready_to_post")
+
+    def test_write_article_for_candidate_keeps_specific_prompt_clean(self):
+        candidate = XCandidate(
+            topic="#BudgetVote",
+            prompt="latest senate budget vote",
+            snippet="Lawmakers are posting competing claims about the overnight budget vote.",
+        )
+        prompts = []
+
+        def fake_write(prompt, limit, mode, build_id):
+            prompts.append(prompt)
+            return {
+                "id": "write-4",
+                "headline": "Senate Budget Vote Draws Scrutiny",
+                "body": ["A", "B"],
+                "sourceCount": 3,
+                "summary": "Summary",
+            }
+
+        with patch.object(pipeline_mod.queries, "save_generated_article", return_value=None):
+            pipeline_mod.settings = SimpleNamespace(
+                public_article_base_url="https://signal.example.com",
+                x_dry_run=True,
+                x_auto_post=False,
+            )
+            reply_mod.settings = pipeline_mod.settings
+            package = write_article_for_candidate(candidate, write_fn=fake_write)
+
+        self.assertEqual(package.status, "ready_to_post")
+        self.assertEqual(prompts, ["latest senate budget vote"])
 
     def test_maybe_share_dry_run(self):
         from app.x.models import XSharePackage

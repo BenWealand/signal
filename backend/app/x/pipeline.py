@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from typing import Any, Callable
 
@@ -14,6 +15,15 @@ from app.x.models import XCandidate, XSharePackage
 from app.x.reply import article_public_url, build_prompt, share_intent_url, x_reply_text
 
 logger = logging.getLogger(__name__)
+
+
+def _is_specific_prompt(prompt: str) -> bool:
+    words = re.findall(r"[A-Za-z0-9][A-Za-z0-9'&.-]*", prompt or "")
+    if len(words) >= 4:
+        return True
+    if len(words) >= 3 and len(prompt or "") >= 24:
+        return True
+    return False
 
 
 def _candidates_from_signal_topics(limit: int = 10) -> list[XCandidate]:
@@ -116,17 +126,21 @@ def write_article_for_candidate(
             error=reason,
         )
 
-    try:
-        prompt = build_prompt(candidate.topic, candidate.snippet, candidate.prompt)
-    except ValueError as exc:
-        return XSharePackage(
-            status="error",
-            article_url="",
-            reply_text="",
-            trend_url=candidate.trend_url,
-            candidate=candidate.to_dict(),
-            error=str(exc),
-        )
+    prompt_seed = re.sub(r"\s+", " ", candidate.prompt or "").strip()[:240].rstrip()
+    if prompt_seed and _is_specific_prompt(prompt_seed):
+        prompt = prompt_seed
+    else:
+        try:
+            prompt = build_prompt(candidate.topic, candidate.snippet, candidate.prompt)
+        except ValueError as exc:
+            return XSharePackage(
+                status="error",
+                article_url="",
+                reply_text="",
+                trend_url=candidate.trend_url,
+                candidate=candidate.to_dict(),
+                error=str(exc),
+            )
 
     blocked = prompt_is_blocked(prompt)
     if blocked.blocked:
@@ -267,8 +281,9 @@ def run_x_pipeline(
     else:
         provider = "manual"
 
-    actionable = filter_candidates(candidates, limit=max_articles)
+    actionable = filter_candidates(candidates, limit=max(discover_limit, max_articles))
     packages: list[dict[str, Any]] = []
+    ready_count = 0
     for candidate in actionable:
         package = write_article_for_candidate(
             candidate,
@@ -277,7 +292,12 @@ def run_x_pipeline(
             write_fn=write_fn,
         )
         package = maybe_share_package(package, dry_run=dry_run, auto_post=auto_post)
-        packages.append(package.to_dict())
+        package_dict = package.to_dict()
+        packages.append(package_dict)
+        if package_dict.get("status") in {"ready_to_post", "shared"}:
+            ready_count += 1
+            if ready_count >= max_articles:
+                break
 
     ready = [p for p in packages if p.get("status") in {"ready_to_post", "shared"}]
     return {
