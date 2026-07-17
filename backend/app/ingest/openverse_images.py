@@ -490,7 +490,7 @@ class ArticleImagePicker:
         self,
         *,
         enabled: bool = True,
-        search_timeout: float = 4.0,
+        search_timeout: float = 8.0,
         min_chars: int = 100,
     ) -> None:
         self.enabled = enabled
