@@ -94,7 +94,11 @@ test("sourced article image renders with attribution and stable layout", async (
   await expect(figure).toBeVisible();
   await expect(figure.locator("img")).toHaveAttribute("alt", article.image.alt);
   await expect(figure.getByRole("link", { name: article.image.title })).toHaveAttribute("href", article.image.sourceUrl);
+  await expect(figure.getByRole("link", { name: article.image.creator })).toHaveAttribute("href", article.image.creatorUrl);
   await expect(figure.getByRole("link", { name: article.image.license })).toHaveAttribute("href", article.image.licenseUrl);
+  await expect(figure.locator("figcaption")).not.toContainText(/via/i);
+  await expect(page.locator('meta[property="og:image"]')).toHaveAttribute("content", imageUrl);
+  await expect(page.locator('meta[name="twitter:card"]')).toHaveAttribute("content", "summary_large_image");
   const dimensions = await figure.locator("img").evaluate((img) => ({
     naturalWidth: img.naturalWidth,
     ratio: img.getBoundingClientRect().width / img.getBoundingClientRect().height,

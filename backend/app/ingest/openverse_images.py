@@ -10,11 +10,15 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
+from app.nlp.ner import extract_entities
+
 logger = logging.getLogger(__name__)
 
 _SEARCH_URL = "https://api.openverse.org/v1/images/"
 _ALLOWED_LICENSES = frozenset({"by", "by-sa", "cc0", "pdm"})
 _ALLOWED_FILE_TYPES = frozenset({"jpg", "jpeg", "png", "webp"})
+# Prefer visually concrete subjects first when choosing an Openverse query.
+_IMAGE_ENTITY_PRIORITY = ("PERSON", "EVENT", "ORG", "GPE", "PRODUCT", "LAW", "DATE")
 _STOPWORDS = frozenset({
     "the", "a", "an", "and", "or", "of", "in", "on", "for", "is", "was",
     "at", "to", "from", "with", "by", "that", "this", "it", "its", "be",
@@ -70,6 +74,48 @@ def _search_query(value: str) -> str:
             break
     subject = " ".join(phrase)
     return f'"{subject}"' if meaningful >= 2 else subject
+
+
+def _format_entity_query(value: str) -> str:
+    """Turn an NER span into a focused Openverse subject query."""
+    cleaned = _clean_text(value, 120)
+    if not cleaned:
+        return ""
+    meaningful: list[str] = []
+    for word in re.findall(r"[A-Za-z0-9][A-Za-z0-9'-]*", cleaned):
+        normalized = word.lower().strip("'-")
+        if not normalized or normalized in _STOPWORDS:
+            continue
+        # Keep short numerals (dates, bill numbers) and normal words of length 3+.
+        if normalized.isdigit() or len(normalized) >= 3:
+            meaningful.append(word)
+    if not meaningful:
+        return ""
+    subject = " ".join(meaningful[:4])
+    return f'"{subject}"' if len(meaningful) >= 2 else subject
+
+
+def priority_image_queries(text: str) -> list[str]:
+    """Ordered Openverse subjects: people → event → org → place → product → law → date."""
+    by_type: dict[str, list[str]] = {label: [] for label in _IMAGE_ENTITY_PRIORITY}
+    for entity in extract_entities(text or ""):
+        label = str(entity.get("type") or "").upper()
+        if label not in by_type:
+            continue
+        query = _format_entity_query(str(entity.get("text") or ""))
+        if query and query not in by_type[label]:
+            by_type[label].append(query)
+
+    subjects: list[str] = []
+    for label in _IMAGE_ENTITY_PRIORITY:
+        for query in by_type[label][:1]:
+            if query not in subjects:
+                subjects.append(query)
+
+    fallback = _search_query(text or "")
+    if fallback and fallback not in subjects:
+        subjects.append(fallback)
+    return subjects
 
 
 def _valid_http_url(value: Any) -> str:
@@ -159,9 +205,8 @@ def _normalize_image(item: dict[str, Any], query: str) -> dict[str, Any]:
     }
 
 
-def find_openverse_image(query: str, *, timeout: float = 4.0) -> dict[str, Any]:
-    """Return one relevant, attribution-ready open image or an empty dict."""
-    clean_query = _search_query(query)
+def _lookup_openverse_image(clean_query: str, *, timeout: float) -> dict[str, Any]:
+    """Return one ranked Openverse match for a prepared subject query, or {}."""
     query_keywords = _keywords(clean_query)
     if not clean_query or not query_keywords:
         return {}
@@ -215,3 +260,27 @@ def find_openverse_image(query: str, *, timeout: float = 4.0) -> dict[str, Any]:
             _image_cache.pop(next(iter(_image_cache)))
         _image_cache[cache_key] = (now + _CACHE_TTL_SECONDS, selected)
     return dict(selected)
+
+
+def find_openverse_image(query: str, *, timeout: float = 4.0) -> dict[str, Any]:
+    """Return one relevant, attribution-ready open image or an empty dict.
+
+    Search subjects prefer NER spans in this order: PERSON, EVENT, ORG, GPE,
+    PRODUCT, LAW, DATE. Falls back to a prompt phrase when no entity matches.
+    """
+    subjects = priority_image_queries(query)
+    if not subjects:
+        return {}
+
+    deadline = time.monotonic() + max(1.0, float(timeout))
+    for index, subject in enumerate(subjects):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        # Leave a little budget for later priority subjects when several remain.
+        later = len(subjects) - index - 1
+        per_try = remaining if later <= 0 else max(0.75, remaining / (later + 1))
+        image = _lookup_openverse_image(subject, timeout=per_try)
+        if image:
+            return image
+    return {}
