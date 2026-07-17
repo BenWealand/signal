@@ -708,7 +708,7 @@ def _article_from_consensus(
     )
     image_picker = ArticleImagePicker(
         enabled=getattr(settings, "article_images_enabled", True),
-        search_timeout=getattr(settings, "article_image_search_timeout_seconds", 4.0),
+        search_timeout=getattr(settings, "article_image_search_timeout_seconds", 8.0),
     )
     try:
         body, gemini_header = _article_body(
@@ -735,7 +735,7 @@ def _article_from_consensus(
         headline=headline,
         dek=dek,
         body=body,
-        wait_seconds=getattr(settings, "article_image_wait_seconds", 1.0),
+        wait_seconds=getattr(settings, "article_image_wait_seconds", 4.0),
     )
     facts = _facts_from_consensus(source_articles, supported, unique)
     terms = list(dict.fromkeys(re.findall(r"[a-z]{4,}", prompt.lower())))[:5]

@@ -91,6 +91,50 @@ class OpenverseImagesTest(unittest.TestCase):
         self.assertLess(candidate_title_relevance(bad, article_keywords, article_text=article), 0)
         self.assertGreater(candidate_title_relevance(good, article_keywords, article_text=article), 0)
 
+    def test_exact_entity_in_title_accepts_filler_words(self):
+        cases = [
+            (
+                "Keir Starmer met European leaders after talks on Ukraine support.",
+                [{"text": "Keir Starmer", "type": "PERSON"}],
+                "Official portrait of Keir Starmer crop 2",
+            ),
+            (
+                "Federal Reserve officials held interest rates steady after the latest meeting.",
+                [{"text": "Federal Reserve", "type": "ORG"}],
+                "Aerial view of the Federal Reserve building in Washington",
+            ),
+            (
+                "Flood barriers rose along the Seine as Paris prepared for spring runoff.",
+                [{"text": "Paris", "type": "GPE"}],
+                "Sunset over Paris from the Left Bank overlook",
+            ),
+            (
+                "Apple unveiled a thinner iPhone prototype during its spring product event.",
+                [{"text": "iPhone", "type": "PRODUCT"}],
+                "Close-up photo of an iPhone on a retail display table",
+            ),
+        ]
+        for article, entities, title in cases:
+            with self.subTest(title=title):
+                with patch("app.ingest.openverse_images.extract_entities", return_value=entities):
+                    score = candidate_title_relevance(
+                        image_result(title),
+                        image_module._keywords(article),
+                        article_text=article,
+                    )
+                self.assertGreater(score, 0)
+
+    def test_exact_entity_match_still_rejects_sensitive_offtopic_titles(self):
+        article = "English Football League clubs prepared for the playoff finals."
+        entities = [{"text": "English Football League", "type": "ORG"}]
+        with patch("app.ingest.openverse_images.extract_entities", return_value=entities):
+            score = candidate_title_relevance(
+                image_result("Lingerie League"),
+                image_module._keywords(article),
+                article_text=article,
+            )
+        self.assertLess(score, 0)
+
     @patch("app.ingest.openverse_images.extract_entities", return_value=[
         {"text": "English Football League", "type": "ORG"},
     ])
