@@ -25,7 +25,7 @@ from app.x.client import XApiError, XApiNotConfigured, get_x_client
 from app.x.filter import filter_candidates
 from app.x.models import XCandidate
 from app.x.pipeline import discover_candidates, run_x_pipeline
-from app.x.reply import share_intent_url
+from app.x.reply import article_public_url, share_intent_url, x_reply_text
 
 router = APIRouter()
 
@@ -104,6 +104,18 @@ class AdminLookupRequest(BaseModel):
     @validator("url", "post_id")
     def trim(cls, value: str) -> str:
         return (value or "").strip()
+
+
+class AdminFeedShareRequest(BaseModel):
+    article_id: str
+    dry_run: bool = True
+
+    @validator("article_id")
+    def article_id_required(cls, value: str) -> str:
+        cleaned = (value or "").strip()
+        if not cleaned:
+            raise ValueError("article_id is required")
+        return cleaned[:160]
 
 
 @router.get("/admin/me")
@@ -264,3 +276,85 @@ def admin_x_run(
         )
     result["packages"] = packages
     return result
+
+
+@router.get("/admin/x/feed-drafts")
+def admin_x_feed_drafts(
+    hours: int = 24,
+    limit: int = 100,
+    authorization: str = Header(default=""),
+):
+    """Draft X posts for unique Gemini articles currently visible in the feeds."""
+    _require_admin(authorization)
+    safe_hours = min(max(int(hours or 24), 1), 168)
+    safe_limit = min(max(int(limit or 100), 1), 200)
+    articles = queries.list_recent_x_feed_articles(hours=safe_hours, limit=safe_limit)
+    drafts = []
+    for article in articles:
+        url = article_public_url(str(article["id"]))
+        text = x_reply_text(article, url)
+        drafts.append(
+            {
+                "articleId": article["id"],
+                "headline": article.get("headline") or "Signal article",
+                "section": article.get("section") or "latest",
+                "createdAt": article.get("createdAt"),
+                "sourceCount": article.get("sourceCount") or 0,
+                "articleUrl": url,
+                "replyText": text,
+                "intentUrl": share_intent_url(url, article.get("headline") or "", reply_text=text),
+                "xShare": article.get("xShare") or {"posted": False},
+            }
+        )
+    return {
+        "hours": safe_hours,
+        "count": len(drafts),
+        "unposted": sum(1 for item in drafts if not item["xShare"].get("posted")),
+        "drafts": drafts,
+    }
+
+
+@router.post("/admin/x/feed-share")
+def admin_x_feed_share(
+    payload: AdminFeedShareRequest,
+    authorization: str = Header(default=""),
+):
+    """Post one stored feed article; successful live shares are idempotent."""
+    _require_admin(authorization)
+    article = queries.get_generated_article(payload.article_id)
+    if not article:
+        raise HTTPException(status_code=404, detail="Article not found")
+    if article.get("generation_mode") not in {"fast", "thorough"}:
+        raise HTTPException(status_code=422, detail="Only Gemini feed articles can be posted")
+
+    existing = queries.get_posted_x_share(payload.article_id)
+    if existing and not payload.dry_run:
+        return {
+            "status": "already_posted",
+            "articleId": payload.article_id,
+            "postId": existing.get("x_post_id") or "",
+            "postUrl": existing.get("x_post_url") or "",
+            "message": "This article has already been posted to X.",
+        }
+
+    url = article_public_url(str(article["id"]))
+    text = x_reply_text(article, url)
+    result = get_x_client().post_tweet(text, dry_run=payload.dry_run)
+    share_status = "posted" if result.posted else "dry_run" if result.dry_run and result.ok else "failed"
+    queries.record_x_article_share(
+        payload.article_id,
+        text,
+        status=share_status,
+        x_post_id=result.post_id,
+        x_post_url=result.post_url,
+        error="" if result.ok else result.message,
+    )
+    return {
+        "status": share_status,
+        "articleId": payload.article_id,
+        "articleUrl": url,
+        "replyText": text,
+        "postId": result.post_id,
+        "postUrl": result.post_url,
+        "message": result.message,
+    }

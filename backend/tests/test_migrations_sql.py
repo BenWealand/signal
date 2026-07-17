@@ -39,6 +39,14 @@ class MigrationSqlSplitTests(unittest.TestCase):
         self.assertEqual(len(parts), 2)
         self.assertIn("'a;b'", parts[0])
 
+    def test_x_article_share_migration_has_idempotency_index(self):
+        path = Path(__file__).resolve().parents[1] / "app" / "db" / "migrations" / "0005_x_article_shares.sql"
+        sql = path.read_text(encoding="utf-8")
+        parts = _split_sql(sql)
+        self.assertGreaterEqual(len(parts), 3)
+        self.assertIn("CREATE TABLE IF NOT EXISTS x_article_shares", parts[0])
+        self.assertIn("WHERE status = 'posted'", sql)
+
 
 if __name__ == "__main__":
     unittest.main()

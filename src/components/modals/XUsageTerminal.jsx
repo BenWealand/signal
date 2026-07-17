@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiGet, apiPost, getAccessToken, hasApiBase } from "../../api/client.js";
 import { isAdminAccount } from "../../lib/admin.js";
+import { XFeedDraftQueue } from "./XFeedDraftQueue.jsx";
 
 function stamp() {
   return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -433,6 +434,14 @@ export function XUsageTerminal({ account, onToast }) {
           <pre>{lastDraft.reply}</pre>
         </div>
       ) : null}
+
+      <XFeedDraftQueue
+        dryRun={dryRun}
+        busy={busy}
+        setBusy={setBusy}
+        push={push}
+        onToast={onToastRef.current}
+      />
 
       <div className="terminal-card x-admin-log" ref={scrollerRef}>
         <div className="x-admin-log-bar">

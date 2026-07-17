@@ -117,6 +117,17 @@ CREATE TABLE IF NOT EXISTS generated_articles (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS x_article_shares (
+  id BIGSERIAL PRIMARY KEY,
+  article_id TEXT NOT NULL REFERENCES generated_articles(id) ON DELETE CASCADE,
+  draft_text TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('posted', 'dry_run', 'failed')),
+  x_post_id TEXT DEFAULT '',
+  x_post_url TEXT DEFAULT '',
+  error TEXT DEFAULT '',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS article_likes (
   id SERIAL PRIMARY KEY,
   article_id TEXT NOT NULL REFERENCES generated_articles(id) ON DELETE CASCADE,
@@ -221,6 +232,10 @@ CREATE INDEX IF NOT EXISTS idx_consensus_cluster ON consensus_claims(story_clust
 CREATE INDEX IF NOT EXISTS idx_generated_articles_created ON generated_articles(created_at);
 CREATE INDEX IF NOT EXISTS idx_generated_articles_owner ON generated_articles(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_generated_articles_source ON generated_articles(source);
+CREATE INDEX IF NOT EXISTS idx_x_article_shares_article_created
+  ON x_article_shares(article_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_x_article_shares_posted_once
+  ON x_article_shares(article_id) WHERE status = 'posted';
 CREATE INDEX IF NOT EXISTS idx_saved_stories_user ON saved_stories(user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_saved_stories_unique_user_story ON saved_stories(user_id, story_id);
 CREATE INDEX IF NOT EXISTS idx_user_history_user ON user_history(user_id);

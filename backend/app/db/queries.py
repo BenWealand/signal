@@ -673,6 +673,106 @@ def get_generated_article(article_id: str) -> dict[str, Any]:
             return {} if article and article_is_blocked(article).blocked else article
 
 
+def list_recent_x_feed_articles(hours: int = 24, limit: int = 100) -> list[dict[str, Any]]:
+    """Return unique Gemini feed articles plus their latest successful X share."""
+    safe_hours = min(max(int(hours or 24), 1), 168)
+    safe_limit = min(max(int(limit or 100), 1), 200)
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                  ga.*,
+                  shared.x_post_id AS shared_x_post_id,
+                  shared.x_post_url AS shared_x_post_url,
+                  shared.created_at AS shared_at
+                FROM generated_articles ga
+                LEFT JOIN LATERAL (
+                  SELECT x_post_id, x_post_url, created_at
+                  FROM x_article_shares
+                  WHERE article_id = ga.id AND status = 'posted'
+                  ORDER BY created_at DESC
+                  LIMIT 1
+                ) shared ON TRUE
+                WHERE ga.status = 'published'
+                  AND ga.generation_mode IN ('fast', 'thorough')
+                  AND ga.created_at >= NOW() - (%s * INTERVAL '1 hour')
+                ORDER BY ga.created_at DESC
+                LIMIT %s
+                """,
+                (safe_hours, safe_limit * 3),
+            )
+            articles: list[dict[str, Any]] = []
+            for row in cur.fetchall():
+                raw = row_to_dict(row)
+                article = _decode_generated_article(raw)
+                if not article or article_is_blocked(article).blocked:
+                    continue
+                article["xShare"] = {
+                    "posted": bool(raw.get("shared_x_post_id")),
+                    "postId": raw.get("shared_x_post_id") or "",
+                    "postUrl": raw.get("shared_x_post_url") or "",
+                    "postedAt": raw.get("shared_at"),
+                }
+                articles.append(article)
+                if len(articles) >= safe_limit:
+                    break
+            return articles
+
+
+def get_posted_x_share(article_id: str) -> dict[str, Any]:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT * FROM x_article_shares
+                WHERE article_id = %s AND status = 'posted'
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (article_id,),
+            )
+            return row_to_dict(cur.fetchone())
+
+
+def record_x_article_share(
+    article_id: str,
+    draft_text: str,
+    *,
+    status: str,
+    x_post_id: str = "",
+    x_post_url: str = "",
+    error: str = "",
+) -> dict[str, Any]:
+    if status not in {"posted", "dry_run", "failed"}:
+        raise ValueError("Invalid X article share status")
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO x_article_shares
+                  (article_id, draft_text, status, x_post_id, x_post_url, error)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (article_id) WHERE status = 'posted' DO NOTHING
+                RETURNING *
+                """,
+                (article_id, draft_text, status, x_post_id, x_post_url, error),
+            )
+            saved = row_to_dict(cur.fetchone())
+            if saved:
+                return saved
+            cur.execute(
+                """
+                SELECT * FROM x_article_shares
+                WHERE article_id = %s AND status = 'posted'
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (article_id,),
+            )
+            return row_to_dict(cur.fetchone())
+
+
 def delete_generated_article(article_id: str) -> int:
     with get_connection() as conn:
         with conn.cursor() as cur:
