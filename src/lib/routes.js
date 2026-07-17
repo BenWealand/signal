@@ -1,4 +1,5 @@
 import { SECTION_NAMES } from "./constants.js";
+import { publicSiteOrigin } from "./siteUrl.js";
 
 export const PRIMARY_NAV = [
   { label: "Home", path: "/" },
@@ -37,7 +38,7 @@ export function screenFromPathname(pathname) {
   return section || "Home";
 }
 
-export function articleUrl(article, origin = typeof window !== "undefined" ? window.location.origin : "") {
+export function articleUrl(article, origin = publicSiteOrigin()) {
   if (!article?.id) return typeof window !== "undefined" ? window.location.href : "/";
   return `${origin}${articlePath(article.id)}`;
 }
