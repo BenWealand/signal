@@ -27,8 +27,21 @@ _STOPWORDS = frozenset({
     "latest", "update", "updates", "news", "review", "cross", "source",
     "what", "when", "where", "why", "how", "who", "happened", "happens",
 })
+# Generic words that must not be the only link between an image title and an article.
+_WEAK_ALONE_TERMS = frozenset({
+    "league", "football", "soccer", "rugby", "baseball", "basketball", "hockey",
+    "game", "games", "match", "matches", "team", "teams", "sport", "sports",
+    "player", "players", "final", "finals", "cup", "ball", "field", "stadium",
+    "press", "photo", "photograph", "photography", "image", "picture", "pictures",
+    "celebrity", "celebrities", "event", "events", "day", "night", "city", "club",
+    "season", "championship", "tournament", "score", "scores", "win", "wins",
+})
 _LOW_VALUE_IMAGE_TERMS = frozenset({
     "logo", "icon", "wordmark", "watermark", "placeholder", "avatar", "emoji",
+})
+# Reject these title terms unless the article itself uses them.
+_SENSITIVE_TITLE_TERMS = frozenset({
+    "lingerie", "nude", "nudes", "sexy", "erotic", "porn", "nsfw", "bikini",
 })
 _CACHE_TTL_SECONDS = 6 * 60 * 60
 _cache_lock = threading.Lock()
@@ -70,7 +83,7 @@ def _search_query(value: str) -> str:
         phrase.append(word)
         if len(normalized) >= 3 and normalized not in _STOPWORDS:
             meaningful += 1
-        if meaningful >= 2:
+        if meaningful >= 3:
             break
     subject = " ".join(phrase)
     return f'"{subject}"' if meaningful >= 2 else subject
@@ -114,7 +127,15 @@ def priority_image_queries(text: str) -> list[str]:
 
     fallback = _search_query(text or "")
     if fallback and fallback not in subjects:
-        subjects.append(fallback)
+        fallback_keywords = _keywords(fallback)
+        covered: set[str] = set()
+        for subject in subjects:
+            covered |= _keywords(subject)
+        uncovered = fallback_keywords - covered
+        # Keep the prompt phrase only when it adds real topical terms we do not
+        # already plan to search, or when NER found nothing usable.
+        if not subjects or len(uncovered) >= 2:
+            subjects.append(fallback)
     return subjects
 
 
@@ -146,29 +167,83 @@ def _tag_text(item: dict[str, Any]) -> str:
     return " ".join(values)
 
 
-def _candidate_score(item: dict[str, Any], query_keywords: frozenset[str]) -> float:
+def _contains_phrase(haystack: str, needle: str) -> bool:
+    left = re.sub(r"\s+", " ", (haystack or "").lower()).strip()
+    right = re.sub(r"\s+", " ", (needle or "").lower()).strip(" \"'")
+    if not left or not right or len(right) < 5:
+        return False
+    return right in left
+
+
+def candidate_title_relevance(
+    item: dict[str, Any],
+    article_keywords: frozenset[str],
+    *,
+    article_text: str = "",
+) -> float:
+    """Score how well an image title matches the article; -1 means reject."""
     title = _clean_text(item.get("title"))
-    candidate_keywords = _keywords(f"{title} {_tag_text(item)}")
-    if not candidate_keywords or not query_keywords:
-        return -1
-    overlap = query_keywords & candidate_keywords
-    if not overlap:
-        return -1
-    if _keywords(title) & _LOW_VALUE_IMAGE_TERMS:
-        return -1
+    title_keywords = _keywords(title)
+    if not title_keywords or not article_keywords:
+        return -1.0
+    if title_keywords & _LOW_VALUE_IMAGE_TERMS:
+        return -1.0
+
+    sensitive = title_keywords & _SENSITIVE_TITLE_TERMS
+    if sensitive and not (sensitive & article_keywords):
+        return -1.0
+
+    title_overlap = title_keywords & article_keywords
+    if not title_overlap:
+        return -1.0
+
+    distinctive = title_overlap - _WEAK_ALONE_TERMS
+    # A single generic word like "league" or "football" is not enough.
+    if not distinctive and len(title_overlap) < 2:
+        return -1.0
+
+    # Most of the title's content words should also appear in the article.
+    title_precision = len(title_overlap) / max(1, len(title_keywords))
+    if title_precision < 0.5:
+        return -1.0
+    # If half the title is off-topic, demand a distinctive shared term.
+    if title_precision < 0.67 and not distinctive:
+        return -1.0
 
     width = _safe_int(item.get("width"))
     height = _safe_int(item.get("height"))
     if width and height:
         if width < 640 or height < 360:
-            return -1
+            return -1.0
         ratio = width / height
         if ratio < 1.15 or ratio > 2.6:
-            return -1
+            return -1.0
 
-    title_overlap = len(query_keywords & _keywords(title))
-    coverage = len(overlap) / max(1, len(query_keywords))
-    return coverage * 10 + title_overlap * 2 + (1 if width >= 1200 else 0)
+    tag_overlap = _keywords(_tag_text(item)) & article_keywords
+    phrase_bonus = 0.0
+    # Reward titles that literally contain a multi-word article subject span.
+    for span in re.findall(r"\b[A-Z][A-Za-z0-9]+(?:\s+[A-Z][A-Za-z0-9]+){1,3}\b", article_text or ""):
+        if _contains_phrase(title, span):
+            phrase_bonus += 3.0
+            break
+
+    return (
+        len(distinctive) * 4.0
+        + len(title_overlap) * 2.0
+        + title_precision * 6.0
+        + min(2.0, len(tag_overlap) * 0.25)
+        + phrase_bonus
+        + (1.0 if width >= 1200 else 0.0)
+    )
+
+
+def _candidate_score(
+    item: dict[str, Any],
+    article_keywords: frozenset[str],
+    *,
+    article_text: str = "",
+) -> float:
+    return candidate_title_relevance(item, article_keywords, article_text=article_text)
 
 
 def _normalize_image(item: dict[str, Any], query: str) -> dict[str, Any]:
@@ -205,13 +280,20 @@ def _normalize_image(item: dict[str, Any], query: str) -> dict[str, Any]:
     }
 
 
-def _lookup_openverse_image(clean_query: str, *, timeout: float) -> dict[str, Any]:
+def _lookup_openverse_image(
+    clean_query: str,
+    *,
+    article_keywords: frozenset[str],
+    article_text: str,
+    timeout: float,
+) -> dict[str, Any]:
     """Return one ranked Openverse match for a prepared subject query, or {}."""
     query_keywords = _keywords(clean_query)
-    if not clean_query or not query_keywords:
+    if not clean_query or not query_keywords or not article_keywords:
         return {}
 
-    cache_key = clean_query.lower()
+    topic_fingerprint = ".".join(sorted(article_keywords)[:24])
+    cache_key = f"{clean_query.lower()}::{topic_fingerprint}"
     now = time.monotonic()
     with _cache_lock:
         cached = _image_cache.get(cache_key)
@@ -220,7 +302,7 @@ def _lookup_openverse_image(clean_query: str, *, timeout: float) -> dict[str, An
 
     params = urllib.parse.urlencode({
         "q": clean_query,
-        "page_size": 12,
+        "page_size": 20,
         "license": ",".join(sorted(_ALLOWED_LICENSES)),
         "mature": "false",
         "filter_dead": "true",
@@ -248,7 +330,7 @@ def _lookup_openverse_image(clean_query: str, *, timeout: float) -> dict[str, An
         normalized = _normalize_image(item, clean_query)
         if not normalized:
             continue
-        score = _candidate_score(item, query_keywords)
+        score = _candidate_score(item, article_keywords, article_text=article_text)
         if score >= 0:
             scored.append((score, normalized))
     if not scored:
@@ -262,14 +344,22 @@ def _lookup_openverse_image(clean_query: str, *, timeout: float) -> dict[str, An
     return dict(selected)
 
 
-def find_openverse_image(query: str, *, timeout: float = 4.0) -> dict[str, Any]:
+def find_openverse_image(
+    query: str,
+    *,
+    timeout: float = 4.0,
+    topic: str | None = None,
+) -> dict[str, Any]:
     """Return one relevant, attribution-ready open image or an empty dict.
 
     Search subjects prefer NER spans in this order: PERSON, EVENT, ORG, GPE,
-    PRODUCT, LAW, DATE. Falls back to a prompt phrase when no entity matches.
+    PRODUCT, LAW, DATE. Candidates are accepted only when their titles align
+    with the article topic; otherwise the article publishes without an image.
     """
-    subjects = priority_image_queries(query)
-    if not subjects:
+    article_text = _clean_text(topic or query, 500)
+    article_keywords = _keywords(article_text)
+    subjects = priority_image_queries(article_text or query)
+    if not subjects or not article_keywords:
         return {}
 
     deadline = time.monotonic() + max(1.0, float(timeout))
@@ -280,7 +370,12 @@ def find_openverse_image(query: str, *, timeout: float = 4.0) -> dict[str, Any]:
         # Leave a little budget for later priority subjects when several remain.
         later = len(subjects) - index - 1
         per_try = remaining if later <= 0 else max(0.75, remaining / (later + 1))
-        image = _lookup_openverse_image(subject, timeout=per_try)
+        image = _lookup_openverse_image(
+            subject,
+            article_keywords=article_keywords,
+            article_text=article_text,
+            timeout=per_try,
+        )
         if image:
             return image
     return {}

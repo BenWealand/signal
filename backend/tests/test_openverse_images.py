@@ -9,7 +9,11 @@ from unittest.mock import patch
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.ingest import openverse_images as image_module
-from app.ingest.openverse_images import find_openverse_image, priority_image_queries
+from app.ingest.openverse_images import (
+    candidate_title_relevance,
+    find_openverse_image,
+    priority_image_queries,
+)
 
 
 class FakeResponse:
@@ -26,7 +30,13 @@ class FakeResponse:
         return json.dumps(self.payload).encode("utf-8")
 
 
-def image_result(title: str, *, creator: str = "Jane Photographer", license_code: str = "by") -> dict:
+def image_result(
+    title: str,
+    *,
+    creator: str = "Jane Photographer",
+    license_code: str = "by",
+    tags: list[dict] | None = None,
+) -> dict:
     return {
         "title": title,
         "creator": creator,
@@ -38,7 +48,7 @@ def image_result(title: str, *, creator: str = "Jane Photographer", license_code
         "url": "https://images.example.com/original.jpg",
         "width": 1600,
         "height": 900,
-        "tags": [{"name": "central bank"}],
+        "tags": tags if tags is not None else [{"name": "central bank"}],
     }
 
 
@@ -62,6 +72,45 @@ class OpenverseImagesTest(unittest.TestCase):
             queries,
             ['"Jerome Powell"', '"Federal Reserve"', "Washington", '"March 15"'],
         )
+
+    def test_title_relevance_rejects_offtopic_league_photo(self):
+        article = (
+            "English Football League Playoff Finals Conclude as Premier League "
+            "Golden Boot Finalized"
+        )
+        article_keywords = image_module._keywords(article)
+        bad = image_result(
+            "Lingerie League",
+            tags=[{"name": "football"}, {"name": "league"}],
+        )
+        good = image_result(
+            "English Football League playoff final at Wembley",
+            tags=[{"name": "soccer"}],
+        )
+
+        self.assertLess(candidate_title_relevance(bad, article_keywords, article_text=article), 0)
+        self.assertGreater(candidate_title_relevance(good, article_keywords, article_text=article), 0)
+
+    @patch("app.ingest.openverse_images.extract_entities", return_value=[
+        {"text": "English Football League", "type": "ORG"},
+    ])
+    @patch("app.ingest.openverse_images.urllib.request.urlopen")
+    def test_skips_title_mismatch_even_when_tags_overlap(self, urlopen, _entities):
+        urlopen.return_value = FakeResponse({
+            "results": [
+                image_result(
+                    "Lingerie League",
+                    tags=[{"name": "football"}, {"name": "league"}, {"name": "final"}],
+                ),
+                image_result("Mountain sunset", tags=[{"name": "nature"}]),
+            ]
+        })
+
+        image = find_openverse_image(
+            "English Football League playoff finals Premier League golden boot"
+        )
+
+        self.assertEqual(image, {})
 
     @patch("app.ingest.openverse_images.extract_entities", return_value=[
         {"text": "Federal Reserve", "type": "ORG"},
@@ -107,6 +156,25 @@ class OpenverseImagesTest(unittest.TestCase):
         second = urlopen.call_args_list[1].args[0].full_url
         self.assertIn("%22Jerome+Powell%22", first)
         self.assertIn("%22Federal+Reserve%22", second)
+
+    @patch("app.ingest.openverse_images.extract_entities", return_value=[
+        {"text": "English Football League", "type": "ORG"},
+        {"text": "Premier League", "type": "ORG"},
+    ])
+    @patch("app.ingest.openverse_images.urllib.request.urlopen")
+    def test_prefers_title_that_matches_article_subject(self, urlopen, _entities):
+        urlopen.return_value = FakeResponse({
+            "results": [
+                image_result("Lingerie League", tags=[{"name": "football"}]),
+                image_result("Premier League Golden Boot race", tags=[{"name": "soccer"}]),
+            ]
+        })
+
+        image = find_openverse_image(
+            "English Football League Playoff Finals Conclude as Premier League Golden Boot Finalized"
+        )
+
+        self.assertEqual(image["title"], "Premier League Golden Boot race")
 
     @patch("app.ingest.openverse_images.extract_entities", return_value=[
         {"text": "Federal Reserve", "type": "ORG"},
