@@ -98,11 +98,12 @@ licensed raster image while Gemini writes. The backend streams the Gemini draft
 internally (the reader still waits for the finished article) and looks up images
 from the draft headline, dek, and body. Lookups prefer named entities in order:
 person, event, organization, place (GPE), product, law, then date. Candidates are
-kept only when their titles align with the article text; weak keyword overlaps
-are rejected and the article can publish without an image. Successful lookups
-are cached for six hours and persisted with creator, source, and license
-attribution. No image API key is required. Set `SIGNAL_ARTICLE_IMAGES=false` to
-disable the lookup.
+kept when their titles align with the article text, or when the title contains an
+exact article entity (person, event, organization, place, product, or law) even
+with extra filler words. Weak generic-only overlaps are still rejected and the
+article can publish without an image. Successful lookups are cached for six hours
+and persisted with creator, source, and license attribution. No image API key is
+required. Set `SIGNAL_ARTICLE_IMAGES=false` to disable the lookup.
 
 Prompt filtering:
 

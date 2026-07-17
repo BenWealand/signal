@@ -20,6 +20,9 @@ _ALLOWED_LICENSES = frozenset({"by", "by-sa", "cc0", "pdm"})
 _ALLOWED_FILE_TYPES = frozenset({"jpg", "jpeg", "png", "webp"})
 # Prefer visually concrete subjects first when choosing an Openverse query.
 _IMAGE_ENTITY_PRIORITY = ("PERSON", "EVENT", "ORG", "GPE", "PRODUCT", "LAW", "DATE")
+# Exact title matches for these types are strong enough to keep a candidate
+# even when the filename/title has extra filler words.
+_ENTITY_TITLE_MATCH_TYPES = frozenset({"PERSON", "EVENT", "ORG", "GPE", "PRODUCT", "LAW"})
 _STOPWORDS = frozenset({
     "the", "a", "an", "and", "or", "of", "in", "on", "for", "is", "was",
     "at", "to", "from", "with", "by", "that", "this", "it", "its", "be",
@@ -36,6 +39,7 @@ _WEAK_ALONE_TERMS = frozenset({
     "press", "photo", "photograph", "photography", "image", "picture", "pictures",
     "celebrity", "celebrities", "event", "events", "day", "night", "city", "club",
     "season", "championship", "tournament", "score", "scores", "win", "wins",
+    "official", "portrait", "crop", "cropped", "visit", "meeting", "summit",
 })
 _LOW_VALUE_IMAGE_TERMS = frozenset({
     "logo", "icon", "wordmark", "watermark", "placeholder", "avatar", "emoji",
@@ -176,11 +180,78 @@ def _contains_phrase(haystack: str, needle: str) -> bool:
     return right in left
 
 
+def _normalize_match_text(value: str) -> str:
+    text = re.sub(r"[^a-z0-9]+", " ", (value or "").lower())
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _contains_entity_phrase(title: str, entity: str) -> bool:
+    """True when the image title contains the entity as a whole phrase."""
+    title_norm = f" {_normalize_match_text(title)} "
+    entity_norm = _normalize_match_text(entity)
+    if len(entity_norm) < 3:
+        return False
+    return f" {entity_norm} " in title_norm
+
+
+def _entity_is_specific(entity_text: str) -> bool:
+    keywords = _keywords(entity_text)
+    if not keywords:
+        return False
+    distinctive = keywords - _WEAK_ALONE_TERMS
+    if distinctive:
+        return True
+    # Allow multi-word weak phrases only when they are long enough to be specific
+    # ("Premier League"), but not bare "League".
+    return len(keywords) >= 2 and len(_normalize_match_text(entity_text)) >= 10
+
+
+def article_entity_phrases(article_text: str) -> list[tuple[str, str]]:
+    """Return (type, text) entity phrases usable for exact title matching."""
+    by_type: dict[str, list[str]] = {label: [] for label in _IMAGE_ENTITY_PRIORITY}
+    for entity in extract_entities(article_text or ""):
+        label = str(entity.get("type") or "").upper()
+        if label not in _ENTITY_TITLE_MATCH_TYPES:
+            continue
+        text = _clean_text(entity.get("text"), 120)
+        if not text or not _entity_is_specific(text):
+            continue
+        if text not in by_type[label]:
+            by_type[label].append(text)
+
+    phrases: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for label in _IMAGE_ENTITY_PRIORITY:
+        if label not in _ENTITY_TITLE_MATCH_TYPES:
+            continue
+        for text in by_type[label]:
+            key = _normalize_match_text(text)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            phrases.append((label, text))
+    return phrases
+
+
+def best_entity_title_match(
+    title: str,
+    entity_phrases: list[tuple[str, str]] | None,
+) -> tuple[str, str] | None:
+    """Return the highest-priority article entity found in the image title."""
+    if not title or not entity_phrases:
+        return None
+    for label, text in entity_phrases:
+        if _contains_entity_phrase(title, text):
+            return label, text
+    return None
+
+
 def candidate_title_relevance(
     item: dict[str, Any],
     article_keywords: frozenset[str],
     *,
     article_text: str = "",
+    entity_phrases: list[tuple[str, str]] | None = None,
 ) -> float:
     """Score how well an image title matches the article; -1 means reject."""
     title = _clean_text(item.get("title"))
@@ -193,6 +264,33 @@ def candidate_title_relevance(
     sensitive = title_keywords & _SENSITIVE_TITLE_TERMS
     if sensitive and not (sensitive & article_keywords):
         return -1.0
+
+    phrases = entity_phrases
+    if phrases is None and article_text:
+        phrases = article_entity_phrases(article_text)
+    entity_hit = best_entity_title_match(title, phrases)
+
+    width = _safe_int(item.get("width"))
+    height = _safe_int(item.get("height"))
+    if width and height:
+        if width < 640 or height < 360:
+            return -1.0
+        ratio = width / height
+        if ratio < 1.15 or ratio > 2.6:
+            return -1.0
+
+    # Exact person / org / place / product / event / law match in the title is
+    # enough even when the title also has filler words ("official portrait of …").
+    if entity_hit:
+        label, phrase = entity_hit
+        priority_bonus = max(1, len(_IMAGE_ENTITY_PRIORITY) - _IMAGE_ENTITY_PRIORITY.index(label)) * 3.0
+        phrase_keywords = _keywords(phrase)
+        return (
+            24.0
+            + priority_bonus
+            + len(phrase_keywords) * 2.0
+            + (1.0 if width >= 1200 else 0.0)
+        )
 
     title_overlap = title_keywords & article_keywords
     if not title_overlap:
@@ -210,15 +308,6 @@ def candidate_title_relevance(
     # If half the title is off-topic, demand a distinctive shared term.
     if title_precision < 0.67 and not distinctive:
         return -1.0
-
-    width = _safe_int(item.get("width"))
-    height = _safe_int(item.get("height"))
-    if width and height:
-        if width < 640 or height < 360:
-            return -1.0
-        ratio = width / height
-        if ratio < 1.15 or ratio > 2.6:
-            return -1.0
 
     tag_overlap = _keywords(_tag_text(item)) & article_keywords
     phrase_bonus = 0.0
@@ -243,8 +332,14 @@ def _candidate_score(
     article_keywords: frozenset[str],
     *,
     article_text: str = "",
+    entity_phrases: list[tuple[str, str]] | None = None,
 ) -> float:
-    return candidate_title_relevance(item, article_keywords, article_text=article_text)
+    return candidate_title_relevance(
+        item,
+        article_keywords,
+        article_text=article_text,
+        entity_phrases=entity_phrases,
+    )
 
 
 def _normalize_image(item: dict[str, Any], query: str) -> dict[str, Any]:
@@ -323,6 +418,7 @@ def _lookup_openverse_image(
         logger.warning("Openverse image search failed", extra={"error_type": type(exc).__name__})
         return {}
 
+    entity_phrases = article_entity_phrases(article_text)
     scored: list[tuple[float, dict[str, Any]]] = []
     results = (payload.get("results") or []) if isinstance(payload, dict) else []
     for item in results:
@@ -331,7 +427,12 @@ def _lookup_openverse_image(
         normalized = _normalize_image(item, clean_query)
         if not normalized:
             continue
-        score = _candidate_score(item, article_keywords, article_text=article_text)
+        score = _candidate_score(
+            item,
+            article_keywords,
+            article_text=article_text,
+            entity_phrases=entity_phrases,
+        )
         if score >= 0:
             scored.append((score, normalized))
     if not scored:
