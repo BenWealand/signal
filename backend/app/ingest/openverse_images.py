@@ -449,7 +449,7 @@ def _lookup_openverse_image(
 def find_openverse_image(
     query: str,
     *,
-    timeout: float = 4.0,
+    timeout: float = 8.0,
     topic: str | None = None,
 ) -> dict[str, Any]:
     """Return one relevant, attribution-ready open image or an empty dict.
@@ -564,7 +564,7 @@ class ArticleImagePicker:
         headline: str = "",
         dek: str = "",
         body: str | list[str] = "",
-        wait_seconds: float = 1.0,
+        wait_seconds: float = 4.0,
     ) -> dict[str, Any]:
         """Wait for any in-flight lookup, then one last pass on the finished article."""
         if not self.enabled:
