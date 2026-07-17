@@ -124,6 +124,8 @@ CREATE TABLE IF NOT EXISTS x_article_shares (
   status TEXT NOT NULL CHECK (status IN ('posted', 'dry_run', 'failed')),
   x_post_id TEXT DEFAULT '',
   x_post_url TEXT DEFAULT '',
+  reply_to_post_id TEXT DEFAULT '',
+  reply_url TEXT DEFAULT '',
   error TEXT DEFAULT '',
   created_at TIMESTAMPTZ DEFAULT NOW()
 );

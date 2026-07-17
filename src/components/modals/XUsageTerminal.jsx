@@ -55,7 +55,8 @@ export function XUsageTerminal({ account, onToast }) {
   const [verifyError, setVerifyError] = useState("");
   const [lines, setLines] = useState([]);
   const [status, setStatus] = useState(null);
-  const [query, setQuery] = useState("federal reserve");
+  const [query, setQuery] = useState("");
+  const [replyUrl, setReplyUrl] = useState("");
   const [mode, setMode] = useState("fast");
   const [maxArticles, setMaxArticles] = useState(1);
   const [discoverLimit, setDiscoverLimit] = useState(8);
@@ -259,6 +260,7 @@ export function XUsageTerminal({ account, onToast }) {
         max_articles: maxArticles,
         discover_limit: discoverLimit,
         prompt: query.trim() || undefined,
+        reply_url: replyUrl.trim() || undefined,
         mode,
         dry_run: dryRun,
         auto_post: autoPost,
@@ -317,7 +319,7 @@ export function XUsageTerminal({ account, onToast }) {
       <div className="x-admin-terminal-head">
         <div>
           <strong>X API usage terminal</strong>
-          <em>Promote writes a sourced article, then drafts an X post with a live `/article` link.</em>
+          <em>Add a prompt, an X post link, or both. Promote writes a sourced article and prepares the X post.</em>
         </div>
         <div className="x-admin-badges">
           <span data-on={xc.readConfigured ? "1" : "0"}>read {xc.readConfigured ? "ready" : "off"}</span>
@@ -332,7 +334,7 @@ export function XUsageTerminal({ account, onToast }) {
           aria-label="Article prompt"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Article prompt"
+          placeholder="Article prompt (optional with an X link)"
           onKeyDown={(event) => {
             if (event.key === "Enter") runPromote();
           }}
@@ -349,6 +351,17 @@ export function XUsageTerminal({ account, onToast }) {
         <button type="button" className="x-admin-run" disabled={Boolean(busy)} onClick={runPromote}>
           {busy === "promote" ? "Promoting…" : "Promote"}
         </button>
+        <input
+          className="x-admin-reply-input"
+          type="url"
+          aria-label="Reply to X post"
+          value={replyUrl}
+          onChange={(event) => setReplyUrl(event.target.value)}
+          placeholder="X post link to reply to (optional)"
+          onKeyDown={(event) => {
+            if (event.key === "Enter") runPromote();
+          }}
+        />
       </div>
 
       <div className="x-admin-config">
@@ -437,6 +450,7 @@ export function XUsageTerminal({ account, onToast }) {
 
       <XFeedDraftQueue
         dryRun={dryRun}
+        replyUrl={replyUrl}
         busy={busy}
         setBusy={setBusy}
         push={push}

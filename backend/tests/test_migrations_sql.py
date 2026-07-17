@@ -47,6 +47,14 @@ class MigrationSqlSplitTests(unittest.TestCase):
         self.assertIn("CREATE TABLE IF NOT EXISTS x_article_shares", parts[0])
         self.assertIn("WHERE status = 'posted'", sql)
 
+    def test_x_article_share_reply_migration_adds_target_fields(self):
+        path = Path(__file__).resolve().parents[1] / "app" / "db" / "migrations" / "0006_x_article_share_replies.sql"
+        sql = path.read_text(encoding="utf-8")
+        parts = _split_sql(sql)
+        self.assertEqual(len(parts), 2)
+        self.assertIn("reply_to_post_id", sql)
+        self.assertIn("reply_url", sql)
+
 
 if __name__ == "__main__":
     unittest.main()

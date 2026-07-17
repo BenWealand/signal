@@ -143,21 +143,30 @@ def x_reply_text(article: dict, article_url: str) -> str:
     return f"{teaser}\n\n{url}" if url else teaser
 
 
-def share_intent_url(article_url: str, headline: str = "", reply_text: str = "") -> str:
+def share_intent_url(
+    article_url: str,
+    headline: str = "",
+    reply_text: str = "",
+    in_reply_to_id: str = "",
+) -> str:
     """Browser share intent — no X API required. Prefers full promote draft when provided."""
     from urllib.parse import quote
 
     draft = (reply_text or "").strip()
+    reply_id = (in_reply_to_id or "").strip()
     if draft:
         # Draft already includes the supabase-fast /article/:id link.
-        return f"https://x.com/intent/tweet?text={quote(draft)}"
+        url = f"https://x.com/intent/tweet?text={quote(draft)}"
+        return f"{url}&in_reply_to={quote(reply_id)}" if reply_id else url
 
     text = _clean(f"{headline} — Signal Dispatch" if headline else "Signal Dispatch", 180)
     url = (article_url or "").strip()
     if url:
-        return (
+        intent = (
             "https://x.com/intent/tweet"
             f"?text={quote(text)}"
             f"&url={quote(url)}"
         )
-    return f"https://x.com/intent/tweet?text={quote(text)}"
+        return f"{intent}&in_reply_to={quote(reply_id)}" if reply_id else intent
+    intent = f"https://x.com/intent/tweet?text={quote(text)}"
+    return f"{intent}&in_reply_to={quote(reply_id)}" if reply_id else intent

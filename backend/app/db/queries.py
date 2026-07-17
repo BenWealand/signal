@@ -685,10 +685,12 @@ def list_recent_x_feed_articles(hours: int = 24, limit: int = 100) -> list[dict[
                   ga.*,
                   shared.x_post_id AS shared_x_post_id,
                   shared.x_post_url AS shared_x_post_url,
+                  shared.reply_to_post_id AS shared_reply_to_post_id,
+                  shared.reply_url AS shared_reply_url,
                   shared.created_at AS shared_at
                 FROM generated_articles ga
                 LEFT JOIN LATERAL (
-                  SELECT x_post_id, x_post_url, created_at
+                  SELECT x_post_id, x_post_url, reply_to_post_id, reply_url, created_at
                   FROM x_article_shares
                   WHERE article_id = ga.id AND status = 'posted'
                   ORDER BY created_at DESC
@@ -712,6 +714,8 @@ def list_recent_x_feed_articles(hours: int = 24, limit: int = 100) -> list[dict[
                     "posted": bool(raw.get("shared_x_post_id")),
                     "postId": raw.get("shared_x_post_id") or "",
                     "postUrl": raw.get("shared_x_post_url") or "",
+                    "replyToPostId": raw.get("shared_reply_to_post_id") or "",
+                    "replyUrl": raw.get("shared_reply_url") or "",
                     "postedAt": raw.get("shared_at"),
                 }
                 articles.append(article)
@@ -742,6 +746,8 @@ def record_x_article_share(
     status: str,
     x_post_id: str = "",
     x_post_url: str = "",
+    reply_to_post_id: str = "",
+    reply_url: str = "",
     error: str = "",
 ) -> dict[str, Any]:
     if status not in {"posted", "dry_run", "failed"}:
@@ -751,12 +757,22 @@ def record_x_article_share(
             cur.execute(
                 """
                 INSERT INTO x_article_shares
-                  (article_id, draft_text, status, x_post_id, x_post_url, error)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                  (article_id, draft_text, status, x_post_id, x_post_url,
+                   reply_to_post_id, reply_url, error)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (article_id) WHERE status = 'posted' DO NOTHING
                 RETURNING *
                 """,
-                (article_id, draft_text, status, x_post_id, x_post_url, error),
+                (
+                    article_id,
+                    draft_text,
+                    status,
+                    x_post_id,
+                    x_post_url,
+                    reply_to_post_id,
+                    reply_url,
+                    error,
+                ),
             )
             saved = row_to_dict(cur.fetchone())
             if saved:

@@ -266,6 +266,7 @@ def run_pipeline(
                     pkg.get("article_url") or "",
                     (pkg.get("article") or {}).get("headline") or "",
                     reply_text=pkg.get("reply_text") or "",
+                    in_reply_to_id=str((pkg.get("candidate") or {}).get("post_id") or ""),
                 ),
             }
         )
@@ -308,6 +309,7 @@ def share_existing(
                 article_url,
                 (article or {}).get("headline") or "",
                 reply_text=reply,
+                in_reply_to_id=payload.post_id,
             ),
         },
     )

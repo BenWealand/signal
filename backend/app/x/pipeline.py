@@ -204,6 +204,7 @@ def write_article_for_candidate(
                 article_url,
                 article.get("headline") or "",
                 reply_text=reply,
+                in_reply_to_id=candidate.post_id,
             ),
             "postId": candidate.post_id,
         },
@@ -297,7 +298,11 @@ def run_x_pipeline(
     elif candidates is None:
         candidates, provider = discover_candidates(limit=discover_limit, query=query)
     else:
-        provider = "manual"
+        provider = (
+            "manual-prompt"
+            if candidates and all(candidate.provider == "manual-prompt" for candidate in candidates)
+            else "manual"
+        )
 
     actionable = (
         candidates

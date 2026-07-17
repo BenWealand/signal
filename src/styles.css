@@ -3016,6 +3016,18 @@ a.source-link-title:hover {
   padding: 0 0.7rem;
 }
 
+.x-admin-controls .x-admin-reply-input {
+  grid-column: 1 / -1;
+  border-color: #b9c8bc;
+  background: #f7faf7;
+}
+
+.x-admin-controls .x-admin-reply-input:focus {
+  border-color: #0b5a40;
+  outline: 2px solid rgba(11, 90, 64, 0.12);
+  outline-offset: 0;
+}
+
 .x-admin-controls button {
   min-height: 2.3rem;
   min-width: 0;
@@ -3202,7 +3214,8 @@ a.source-link-title:hover {
 }
 
 .x-admin-feed-row[data-posted="1"] {
-  background: #f5f7f3;
+  background: rgba(36, 142, 91, 0.14);
+  box-shadow: inset 4px 0 0 #248e5b;
 }
 
 .x-admin-feed-row-head {

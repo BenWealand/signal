@@ -13,7 +13,7 @@ from app.x.filter import filter_candidates, is_actionable_candidate
 from app.x.models import XCandidate
 from app.x.pipeline import maybe_share_package, run_x_pipeline, write_article_for_candidate
 from app.processing.article_writer import GeminiArticleUnavailable
-from app.x.reply import article_public_url, build_prompt, x_reply_text
+from app.x.reply import article_public_url, build_prompt, share_intent_url, x_reply_text
 from app.x import reply as reply_mod
 from app.x import client as client_mod
 from app.x import pipeline as pipeline_mod
@@ -107,6 +107,15 @@ class XReplyTests(unittest.TestCase):
         self.assertIn("Investors priced in a cautious hold", text)
         self.assertIn("…", text)
         self.assertIn("/article/write-9", text)
+
+    def test_share_intent_targets_reply_post(self):
+        intent = share_intent_url(
+            "https://signal.example.com/article/write-9",
+            reply_text="Draft with article link",
+            in_reply_to_id="123456",
+        )
+        self.assertIn("in_reply_to=123456", intent)
+        self.assertIn("text=Draft%20with%20article%20link", intent)
 
 
 class XClientTests(unittest.TestCase):
@@ -377,6 +386,45 @@ class XPipelineTests(unittest.TestCase):
         self.assertEqual(result["provider"], "manual-prompt")
         self.assertEqual(result["written"], 1)
         self.assertEqual(prompts, ["federal reserve"])
+
+    def test_manual_prompt_candidate_bypasses_trend_filter(self):
+        prompts = []
+
+        def fake_write(prompt, limit, mode, build_id):
+            prompts.append(prompt)
+            return {
+                "id": "write-reply",
+                "headline": "Fed Update",
+                "body": ["A", "B"],
+                "sourceCount": 3,
+                "summary": "Summary",
+            }
+
+        candidate = XCandidate(
+            topic="Fed",
+            prompt="Fed",
+            post_id="123",
+            trend_url="https://x.com/example/status/123",
+            provider="manual-prompt",
+        )
+        with patch.object(pipeline_mod.queries, "save_generated_article", return_value=None):
+            pipeline_mod.settings = SimpleNamespace(
+                public_article_base_url="https://signal.example.com",
+                x_dry_run=True,
+                x_auto_post=False,
+            )
+            reply_mod.settings = pipeline_mod.settings
+            result = run_x_pipeline(
+                max_articles=1,
+                candidates=[candidate],
+                write_fn=fake_write,
+                dry_run=True,
+                auto_post=False,
+            )
+
+        self.assertEqual(result["provider"], "manual-prompt")
+        self.assertEqual(result["written"], 1)
+        self.assertEqual(prompts, ["Fed"])
 
     def test_write_article_for_candidate_keeps_specific_prompt_clean(self):
         candidate = XCandidate(

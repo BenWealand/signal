@@ -302,7 +302,7 @@ class XClient:
 
     def candidate_from_url(self, url: str) -> XCandidate | None:
         """Extract status id from an x.com/twitter.com URL and look it up."""
-        post_id = _status_id_from_url(url)
+        post_id = status_id_from_url(url)
         if not post_id:
             return None
         return self.lookup_post(post_id)
@@ -437,7 +437,7 @@ class XClient:
         return self.post_tweet(text, in_reply_to_id=(post_id or "").strip() or None, dry_run=dry_run)
 
 
-def _status_id_from_url(url: str) -> str:
+def status_id_from_url(url: str) -> str:
     raw = (url or "").strip()
     if not raw:
         return ""
@@ -457,6 +457,10 @@ def _status_id_from_url(url: str) -> str:
     if len(parts) >= 1 and parts[-1].isdigit():
         return parts[-1]
     return ""
+
+
+# Backwards-compatible alias for existing callers and tests.
+_status_id_from_url = status_id_from_url
 
 
 _client: XClient | None = None

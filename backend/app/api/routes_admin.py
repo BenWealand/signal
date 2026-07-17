@@ -21,7 +21,7 @@ from app.api.routes_articles import (
 from app.auth import VALID_ROLES, public_user_view, require_admin_user
 from app.config import settings
 from app.db import queries
-from app.x.client import XApiError, XApiNotConfigured, get_x_client
+from app.x.client import XApiError, XApiNotConfigured, get_x_client, status_id_from_url
 from app.x.filter import filter_candidates
 from app.x.models import XCandidate
 from app.x.pipeline import discover_candidates, run_x_pipeline
@@ -66,6 +66,7 @@ class AdminRunRequest(BaseModel):
     discover_limit: int = 8
     prompt: str = ""
     query: str = ""
+    reply_url: str = ""
     mode: str = "fast"
     limit: int = 10
     dry_run: bool = True
@@ -90,6 +91,10 @@ class AdminRunRequest(BaseModel):
     def query_size(cls, value: str) -> str:
         return (value or "").strip()[:240]
 
+    @validator("reply_url")
+    def reply_url_size(cls, value: str) -> str:
+        return (value or "").strip()[:500]
+
     @validator("limit")
     def limit_size(cls, value: int) -> int:
         if value < 1 or value > MAX_LIMIT:
@@ -109,6 +114,7 @@ class AdminLookupRequest(BaseModel):
 class AdminFeedShareRequest(BaseModel):
     article_id: str
     dry_run: bool = True
+    reply_url: str = ""
 
     @validator("article_id")
     def article_id_required(cls, value: str) -> str:
@@ -116,6 +122,19 @@ class AdminFeedShareRequest(BaseModel):
         if not cleaned:
             raise ValueError("article_id is required")
         return cleaned[:160]
+
+    @validator("reply_url")
+    def reply_url_size(cls, value: str) -> str:
+        return (value or "").strip()[:500]
+
+
+def _reply_post_id(reply_url: str) -> str:
+    if not reply_url:
+        return ""
+    post_id = status_id_from_url(reply_url)
+    if not post_id:
+        raise HTTPException(status_code=422, detail="Reply URL must be a valid x.com or twitter.com post URL")
+    return post_id
 
 
 @router.get("/admin/me")
@@ -246,14 +265,42 @@ def admin_x_run(
     if payload.max_articles > ARTICLE_RATE_LIMIT:
         raise HTTPException(status_code=422, detail=f"max_articles must be <= {ARTICLE_RATE_LIMIT}")
 
+    direct_prompt = payload.prompt or payload.query
+    manual_candidates: list[XCandidate] | None = None
+    reply_post_id = _reply_post_id(payload.reply_url)
+    if reply_post_id and direct_prompt:
+        manual_candidates = [
+            XCandidate(
+                topic=direct_prompt,
+                prompt=direct_prompt,
+                trend_url=payload.reply_url,
+                post_id=reply_post_id,
+                source="x-agent",
+                tag="x-reply",
+                provider="manual-prompt",
+            )
+        ]
+    elif reply_post_id:
+        try:
+            linked = get_x_client().lookup_post(reply_post_id)
+        except XApiNotConfigured as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except XApiError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        if not linked:
+            raise HTTPException(status_code=404, detail="The linked X post could not be loaded")
+        linked.trend_url = payload.reply_url
+        manual_candidates = [linked]
+
     result = run_x_pipeline(
         max_articles=payload.max_articles,
         discover_limit=payload.discover_limit,
-        direct_prompt=payload.prompt or payload.query,
+        direct_prompt="" if manual_candidates else direct_prompt,
         mode=payload.mode,
         source_limit=payload.limit,
         dry_run=payload.dry_run,
         auto_post=payload.auto_post,
+        candidates=manual_candidates,
         write_fn=lambda prompt, limit, mode, build_id: _write_gemini_article(
             prompt, limit=limit, mode=mode, build_id=build_id
         ),
@@ -271,6 +318,7 @@ def admin_x_run(
                     pkg.get("article_url") or "",
                     (pkg.get("article") or {}).get("headline") or "",
                     reply_text=pkg.get("reply_text") or "",
+                    in_reply_to_id=str((pkg.get("candidate") or {}).get("post_id") or ""),
                 ),
             }
         )
@@ -334,12 +382,20 @@ def admin_x_feed_share(
             "articleId": payload.article_id,
             "postId": existing.get("x_post_id") or "",
             "postUrl": existing.get("x_post_url") or "",
+            "replyToPostId": existing.get("reply_to_post_id") or "",
+            "replyUrl": existing.get("reply_url") or "",
             "message": "This article has already been posted to X.",
         }
 
     url = article_public_url(str(article["id"]))
     text = x_reply_text(article, url)
-    result = get_x_client().post_tweet(text, dry_run=payload.dry_run)
+    reply_post_id = _reply_post_id(payload.reply_url)
+    client = get_x_client()
+    result = (
+        client.reply_to_post(reply_post_id, text, dry_run=payload.dry_run)
+        if reply_post_id
+        else client.post_tweet(text, dry_run=payload.dry_run)
+    )
     share_status = "posted" if result.posted else "dry_run" if result.dry_run and result.ok else "failed"
     queries.record_x_article_share(
         payload.article_id,
@@ -347,6 +403,8 @@ def admin_x_feed_share(
         status=share_status,
         x_post_id=result.post_id,
         x_post_url=result.post_url,
+        reply_to_post_id=reply_post_id,
+        reply_url=payload.reply_url,
         error="" if result.ok else result.message,
     )
     return {
@@ -356,5 +414,7 @@ def admin_x_feed_share(
         "replyText": text,
         "postId": result.post_id,
         "postUrl": result.post_url,
+        "replyToPostId": reply_post_id,
+        "replyUrl": payload.reply_url,
         "message": result.message,
     }
