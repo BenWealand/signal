@@ -70,7 +70,7 @@ set_build_progress = _set_progress
 from app.db import queries
 from app.ingest.article_reader import fetch_readable_article_text
 from app.ingest.gdelt_ingest import fetch_gdelt_articles
-from app.ingest.openverse_images import find_openverse_image
+from app.ingest.openverse_images import ArticleImagePicker
 from app.ingest.rss_ingest import fetch_articles_for_query_fast
 from app.ingest.source_registry import domain_from_url, is_blocked_domain
 from app.ingest.source_ranker import SourceGate, evaluate_source_quality, rank_sources
@@ -543,6 +543,7 @@ def _article_body(
     *,
     generation_mode: str = "thorough",
     build_id: str | None = None,
+    on_chunk=None,
 ) -> tuple[list[str], dict[str, str] | None]:
     """
     Try Gemini first for a polished, grammar-correct article package.
@@ -557,6 +558,7 @@ def _article_body(
             prompt,
             source_articles,
             mode=generation_mode,
+            on_chunk=on_chunk,
         )
         if use_gemini
         else None
@@ -704,15 +706,10 @@ def _article_from_consensus(
         headline if headline.endswith("— Signal Coverage") is False
         else f"Signal tracked {source_count} public sources for: {prompt}."
     )
-    image_executor = None
-    image_future = None
-    if getattr(settings, "article_images_enabled", True):
-        image_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="article-image")
-        image_future = image_executor.submit(
-            find_openverse_image,
-            prompt,
-            timeout=getattr(settings, "article_image_search_timeout_seconds", 4.0),
-        )
+    image_picker = ArticleImagePicker(
+        enabled=getattr(settings, "article_images_enabled", True),
+        search_timeout=getattr(settings, "article_image_search_timeout_seconds", 4.0),
+    )
     try:
         body, gemini_header = _article_body(
             prompt,
@@ -723,31 +720,23 @@ def _article_from_consensus(
             require_gemini=require_gemini,
             generation_mode=generation_mode,
             build_id=build_id,
+            on_chunk=image_picker.on_chunk if image_picker.enabled else None,
         )
     except Exception:
-        if image_future:
-            image_future.cancel()
-        if image_executor:
-            image_executor.shutdown(wait=False, cancel_futures=True)
+        image_picker.shutdown()
         raise
 
-    image: dict = {}
-    if image_future:
-        try:
-            image = image_future.result(
-                timeout=max(0.0, getattr(settings, "article_image_wait_seconds", 1.0))
-            ) or {}
-        except TimeoutError:
-            logger.info("Article image lookup still pending; publishing without an image", extra={"build_id": build_id})
-        except Exception:
-            logger.exception("Article image lookup failed", extra={"build_id": build_id})
-        finally:
-            image_executor.shutdown(wait=False, cancel_futures=True)
     if gemini_header:
         headline = gemini_header["headline"]
         dek = gemini_header["dek"]
         if not supported:
             summary = dek or headline
+    image = image_picker.finalize(
+        headline=headline,
+        dek=dek,
+        body=body,
+        wait_seconds=getattr(settings, "article_image_wait_seconds", 1.0),
+    )
     facts = _facts_from_consensus(source_articles, supported, unique)
     terms = list(dict.fromkeys(re.findall(r"[a-z]{4,}", prompt.lower())))[:5]
     source_quality = source_quality or evaluate_source_quality(source_articles, prompt, gate=THOROUGH_SOURCE_GATE)

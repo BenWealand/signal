@@ -8,6 +8,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from typing import Any
 
 from app.nlp.ner import extract_entities
@@ -379,3 +380,147 @@ def find_openverse_image(
         if image:
             return image
     return {}
+
+
+class ArticleImagePicker:
+    """Kick off Openverse lookups from streamed article text before publish."""
+
+    def __init__(
+        self,
+        *,
+        enabled: bool = True,
+        search_timeout: float = 4.0,
+        min_chars: int = 100,
+    ) -> None:
+        self.enabled = enabled
+        self.search_timeout = max(1.0, float(search_timeout))
+        self.min_chars = max(40, int(min_chars))
+        self._executor: ThreadPoolExecutor | None = None
+        self._future = None
+        self._image: dict[str, Any] = {}
+        self._last_topic = ""
+        self._lock = threading.Lock()
+
+    def _ensure_executor(self) -> ThreadPoolExecutor:
+        if self._executor is None:
+            self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="article-image")
+        return self._executor
+
+    @staticmethod
+    def topic_from_parts(headline: str = "", dek: str = "", body: str = "") -> str:
+        parts = [str(headline or "").strip(), str(dek or "").strip(), str(body or "").strip()]
+        return _clean_text(" ".join(part for part in parts if part), 800)
+
+    def _collect_finished(self) -> None:
+        future = self._future
+        if not future or not future.done():
+            return
+        try:
+            result = future.result(timeout=0) or {}
+        except Exception:
+            result = {}
+        self._future = None
+        if result and not self._image:
+            self._image = dict(result)
+
+    def consider(self, headline: str = "", dek: str = "", body: str = "") -> None:
+        """Start/refresh an image search once enough article draft text exists."""
+        if not self.enabled:
+            return
+        topic = self.topic_from_parts(headline, dek, body)
+        if len(topic) < self.min_chars:
+            return
+        with self._lock:
+            self._collect_finished()
+            if self._image:
+                return
+            if self._future and not self._future.done():
+                return
+            # Avoid re-querying nearly identical draft snapshots.
+            if self._last_topic and topic.startswith(self._last_topic[: max(80, len(self._last_topic) // 2)]):
+                if abs(len(topic) - len(self._last_topic)) < 80 and priority_image_queries(topic) == priority_image_queries(self._last_topic):
+                    return
+            self._last_topic = topic
+            executor = self._ensure_executor()
+            self._future = executor.submit(
+                find_openverse_image,
+                topic,
+                topic=topic,
+                timeout=self.search_timeout,
+            )
+
+    def on_chunk(self, progress: dict[str, Any] | None) -> None:
+        payload = progress or {}
+        self.consider(
+            headline=str(payload.get("headline") or ""),
+            dek=str(payload.get("dek") or ""),
+            body=str(payload.get("draft_text") or ""),
+        )
+
+    def finalize(
+        self,
+        *,
+        headline: str = "",
+        dek: str = "",
+        body: str | list[str] = "",
+        wait_seconds: float = 1.0,
+    ) -> dict[str, Any]:
+        """Wait for any in-flight lookup, then one last pass on the finished article."""
+        if not self.enabled:
+            self.shutdown()
+            return {}
+
+        body_text = body if isinstance(body, str) else " ".join(str(part) for part in body)
+        topic = self.topic_from_parts(headline, dek, body_text)
+        with self._lock:
+            self._collect_finished()
+            if not self._image and self._future:
+                future = self._future
+            else:
+                future = None
+
+        if future:
+            try:
+                result = future.result(timeout=max(0.0, float(wait_seconds))) or {}
+                if result:
+                    with self._lock:
+                        if not self._image:
+                            self._image = dict(result)
+            except TimeoutError:
+                logger.info("Article image lookup still pending; trying a final pass")
+            except Exception:
+                logger.exception("Article image lookup failed")
+
+        with self._lock:
+            image = dict(self._image) if self._image else {}
+
+        if image:
+            self.shutdown()
+            return image
+
+        if topic and len(topic) >= self.min_chars:
+            try:
+                image = find_openverse_image(
+                    topic,
+                    topic=topic,
+                    timeout=min(self.search_timeout, max(1.0, float(wait_seconds) + 1.5)),
+                ) or {}
+            except Exception:
+                logger.exception("Final article image lookup failed")
+                image = {}
+            self.shutdown()
+            return dict(image)
+
+        self.shutdown()
+        return {}
+
+    def shutdown(self) -> None:
+        with self._lock:
+            future = self._future
+            executor = self._executor
+            self._future = None
+            self._executor = None
+        if future and not future.done():
+            future.cancel()
+        if executor:
+            executor.shutdown(wait=False, cancel_futures=True)

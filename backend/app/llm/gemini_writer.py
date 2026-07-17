@@ -232,13 +232,26 @@ def _emit_stream_progress(accumulated: str, on_chunk) -> None:
         return
     package = _parse_package_text(accumulated) or {}
     body = package.get("body") or ""
+    headline = package.get("headline") or ""
+    dek = package.get("dek") or ""
+    # Partial streams often fail the full-package length gates; still surface
+    # tagged fields so image lookup can start before the draft is finished.
+    if not headline:
+        headline_match = re.search(r"<<<HEADLINE>>>\s*(.+)", accumulated)
+        if headline_match:
+            headline = headline_match.group(1).strip().strip('"')
+    if not dek:
+        dek_match = re.search(r"<<<DEK>>>\s*(.+)", accumulated)
+        if dek_match:
+            dek = dek_match.group(1).strip().strip('"')
     if "<<<BODY>>>" in accumulated and not body:
         body = accumulated.split("<<<BODY>>>", 1)[-1].strip()
     on_chunk({
         "draft_text": body or accumulated[-1200:],
-        "headline": package.get("headline") or "",
-        "dek": package.get("dek") or "",
+        "headline": headline,
+        "dek": dek,
     })
+
 
 
 def _call_gemini_package(
@@ -317,8 +330,9 @@ def write_article_package_with_gemini(
     """
     One Gemini call that returns headline + dek + body.
 
-    Fast mode uses the lite model and a smaller source budget. Responses are
-    non-streaming so the UI can show a stable finished article.
+    Fast mode uses the lite model and a smaller source budget. When on_chunk is
+    provided, stream tokens so callers can inspect the draft before publish
+    (for example to pick an article image) without showing a partial article.
     """
     key = settings.gemini_api_key
     if not key:
@@ -346,6 +360,7 @@ def write_article_package_with_gemini(
             "topP": 0.9,
         },
     }).encode("utf-8")
+    use_stream = on_chunk is not None
 
     try:
         text = _call_gemini_package(
@@ -353,8 +368,8 @@ def write_article_package_with_gemini(
             payload=payload,
             key=key,
             timeout=20 if mode == "fast" else 24,
-            stream=False,
-            on_chunk=None,
+            stream=use_stream,
+            on_chunk=on_chunk,
         )
         package = _parse_package_text(text or "")
         if package and package.get("body"):
@@ -397,7 +412,8 @@ def write_article_package_with_gemini(
                         payload=payload,
                         key=key,
                         timeout=30,
-                        stream=False,
+                        stream=use_stream,
+                        on_chunk=on_chunk,
                     )
                     package = _parse_package_text(text or "")
                     if package and package.get("body"):
