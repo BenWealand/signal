@@ -52,6 +52,33 @@ Second paragraph confirming the sourced outcome from multiple public outlets cov
         self.assertIn("Investors digested", package["dek"])
         self.assertIn("First paragraph", package["body"])
 
+    @patch("app.llm.gemini_writer._rate_limited", return_value=False)
+    @patch("app.llm.gemini_writer.settings")
+    @patch("app.llm.gemini_writer.urllib.request.urlopen")
+    def test_suggest_image_queries_prefers_people_phrases(self, urlopen, settings, _rate):
+        from app.llm.gemini_writer import suggest_image_queries_with_gemini
+
+        settings.gemini_api_key = "test-key"
+        settings.gemini_fast_model = "gemini-flash-lite-latest"
+
+        class FakeResp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, *_args):
+                return b'{"candidates":[{"content":{"parts":[{"text":"[\\"Lamine Yamal Spain\\", \\"Argentina World Cup final\\", \\"Spain\\"]"}]}}]}'
+
+        urlopen.return_value = FakeResp()
+        queries = suggest_image_queries_with_gemini(
+            headline="Spain and Argentina Prepare for World Cup Final",
+            dek="Questions emerge regarding Lamine Yamal's training status.",
+            body_paragraphs=["Spain faces Argentina after beating England."],
+        )
+        self.assertEqual(queries, ["Lamine Yamal Spain", "Argentina World Cup final"])
+
 
 if __name__ == "__main__":
     unittest.main()

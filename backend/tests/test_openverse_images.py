@@ -68,10 +68,25 @@ class OpenverseImagesTest(unittest.TestCase):
                 "Jerome Powell spoke at the Federal Reserve in Washington on March 15"
             )
 
-        self.assertEqual(
-            queries,
-            ['"Jerome Powell"', '"Federal Reserve"', "Washington", '"March 15"'],
-        )
+        self.assertEqual(queries[0], '"Jerome Powell"')
+        self.assertEqual(queries[1], '"Federal Reserve"')
+        self.assertTrue(any("Washington" in q and "flag" in q.lower() for q in queries))
+        self.assertNotIn("Washington", queries)
+        self.assertIn('"March 15"', queries)
+
+    def test_expands_bare_country_into_concrete_sports_queries(self):
+        entities = [{"text": "Spain", "type": "GPE"}]
+        article = "Spain faces Argentina in the FIFA World Cup final after the semi-final."
+        with patch("app.ingest.openverse_images.extract_entities", return_value=entities):
+            queries = priority_image_queries(article)
+            preferred = image_module.normalize_image_search_subjects(["Spain"], article)
+
+        self.assertTrue(any("flag" in q.lower() for q in queries))
+        self.assertTrue(any("football" in q.lower() or "team" in q.lower() for q in queries))
+        self.assertNotIn("Spain", queries)
+        self.assertNotIn('"Spain"', queries)
+        self.assertEqual(preferred, queries[: len(preferred)])
+        self.assertTrue(any("flag" in q.lower() for q in preferred))
 
     def test_title_relevance_rejects_offtopic_league_photo(self):
         article = (
@@ -105,8 +120,8 @@ class OpenverseImagesTest(unittest.TestCase):
             ),
             (
                 "Flood barriers rose along the Seine as Paris prepared for spring runoff.",
-                [{"text": "Paris", "type": "GPE"}],
-                "Sunset over Paris from the Left Bank overlook",
+                [{"text": "Paris", "type": "GPE"}, {"text": "Seine", "type": "GPE"}],
+                "Flood barriers on the Seine in Paris",
             ),
             (
                 "Apple unveiled a thinner iPhone prototype during its spring product event.",
@@ -123,6 +138,32 @@ class OpenverseImagesTest(unittest.TestCase):
                         article_text=article,
                     )
                 self.assertGreater(score, 0)
+
+    def test_rejects_bare_country_title_for_sports_article(self):
+        article = (
+            "Spain and Argentina Prepare for 2026 FIFA World Cup Final in New Jersey. "
+            "Spain faces Argentina in the World Cup final as questions emerge regarding "
+            "Lamine Yamal's training status."
+        )
+        entities = [
+            {"text": "Lamine Yamal", "type": "PERSON"},
+            {"text": "Spain", "type": "GPE"},
+            {"text": "Argentina", "type": "GPE"},
+            {"text": "New Jersey", "type": "GPE"},
+        ]
+        with patch("app.ingest.openverse_images.extract_entities", return_value=entities):
+            bare = candidate_title_relevance(
+                image_result("Spain"),
+                image_module._keywords(article),
+                article_text=article,
+            )
+            player = candidate_title_relevance(
+                image_result("Lamine Yamal training with Spain"),
+                image_module._keywords(article),
+                article_text=article,
+            )
+        self.assertLess(bare, 0)
+        self.assertGreater(player, 0)
 
     def test_exact_entity_match_still_rejects_sensitive_offtopic_titles(self):
         article = "English Football League clubs prepared for the playoff finals."
@@ -289,6 +330,45 @@ class OpenverseImagesTest(unittest.TestCase):
             wait_seconds=1.0,
         )
         self.assertEqual(image["title"], "Jerome Powell at the Federal Reserve")
+
+    @patch(
+        "app.llm.gemini_writer.suggest_image_queries_with_gemini",
+        return_value=["Lamine Yamal Spain", "Argentina World Cup final"],
+    )
+    @patch("app.ingest.openverse_images.find_openverse_image")
+    def test_finalize_uses_gemini_people_first_queries(self, find_image, _suggest):
+        find_image.side_effect = [
+            {},
+            {
+                "url": "https://images.example.com/yamal.jpg",
+                "title": "Lamine Yamal Spain",
+                "creator": "Example Photographer",
+                "license": "BY",
+            },
+        ]
+        picker = image_module.ArticleImagePicker(enabled=True, search_timeout=2.0, min_chars=40)
+        picker.on_chunk({
+            "headline": "Spain and Argentina Prepare for World Cup Final",
+            "dek": "Questions emerge regarding Lamine Yamal's training status.",
+            "draft_text": "Spain faces Argentina after the semi-final in Atlanta.",
+        })
+        for _ in range(50):
+            if find_image.called:
+                break
+            __import__("time").sleep(0.02)
+        image = picker.finalize(
+            headline="Spain and Argentina Prepare for World Cup Final",
+            dek="Questions emerge regarding Lamine Yamal's training status.",
+            body=["Spain faces Argentina after the semi-final in Atlanta."],
+            wait_seconds=1.0,
+        )
+
+        self.assertEqual(image["title"], "Lamine Yamal Spain")
+        final_call = find_image.call_args_list[-1]
+        self.assertEqual(
+            final_call.kwargs.get("preferred_queries"),
+            ["Lamine Yamal Spain", "Argentina World Cup final"],
+        )
 
 
 if __name__ == "__main__":

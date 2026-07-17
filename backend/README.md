@@ -96,14 +96,19 @@ SIGNAL_ARTICLE_IMAGE_WAIT=4
 Article images use Openverse's anonymous API to select one relevant, openly
 licensed raster image while Gemini writes. The backend streams the Gemini draft
 internally (the reader still waits for the finished article) and looks up images
-from the draft headline, dek, and body. Lookups prefer named entities in order:
-person, event, organization, place (GPE), product, law, then date. Candidates are
-kept when their titles align with the article text, or when the title contains an
-exact article entity (person, event, organization, place, product, or law) even
-with extra filler words. Weak generic-only overlaps are still rejected and the
-article can publish without an image. Successful lookups are cached for six hours
-and persisted with creator, source, and license attribution. No image API key is
-required. Set `SIGNAL_ARTICLE_IMAGES=false` to disable the lookup.
+from the draft headline, dek, and body. Before the final Openverse search, Gemini
+suggests people-first image queries (named players/officials before teams/events,
+never bare countries). Countries/cities are still used, but expanded into concrete
+visuals such as flags, national teams, or leaders. Lookups then prefer those
+suggestions, then named entities in order: person, event, organization, place
+(GPE), product, law, then date. Candidates are kept when their titles align with
+the article text, or when the title contains an exact article entity (person,
+event, organization, place, product, or law) even with extra filler words. Bare
+place-only titles like "Spain" are rejected in favor of more specific visuals.
+Weak generic-only overlaps are still rejected and the article can publish without
+an image. Successful lookups are cached for six hours and persisted with creator,
+source, and license attribution. No image API key is required. Set
+`SIGNAL_ARTICLE_IMAGES=false` to disable the lookup.
 
 Prompt filtering:
 
