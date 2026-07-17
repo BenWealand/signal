@@ -466,8 +466,8 @@ def save_generated_article(article: dict[str, Any]) -> str:
                 (id, owner_user_id, source, tag, trend_url, prompt, headline, dek, summary, body, facts,
                  terms, sources, source_links, consensus, source_count, denied_for_bias,
                  fairness_score, accuracy_score, score_metadata, generation_mode, source_quality,
-                 consensus_level, used_live_sources, fallback_reason, section, status, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 consensus_level, used_live_sources, fallback_reason, image, section, status, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(id) DO UPDATE SET
                   owner_user_id = COALESCE(generated_articles.owner_user_id, EXCLUDED.owner_user_id),
                   source = EXCLUDED.source,
@@ -493,6 +493,7 @@ def save_generated_article(article: dict[str, Any]) -> str:
                   consensus_level = EXCLUDED.consensus_level,
                   used_live_sources = EXCLUDED.used_live_sources,
                   fallback_reason = EXCLUDED.fallback_reason,
+                  image = EXCLUDED.image,
                   section = EXCLUDED.section,
                   status = EXCLUDED.status
                 """,
@@ -522,6 +523,7 @@ def save_generated_article(article: dict[str, Any]) -> str:
                     article.get("consensus_level", ""),
                     1 if article.get("used_live_sources") else 0,
                     article.get("fallback_reason", ""),
+                    json.dumps(article.get("image") or {}),
                     section,
                     article.get("status", "published"),
                     article.get("createdAt"),
@@ -541,6 +543,7 @@ _GENERATED_ARTICLE_METADATA_COLUMNS = {
     "consensus_level": "TEXT DEFAULT ''",
     "used_live_sources": "SMALLINT DEFAULT 0",
     "fallback_reason": "TEXT DEFAULT ''",
+    "image": "TEXT DEFAULT '{}'",
     "section": "TEXT DEFAULT ''",
 }
 
@@ -589,6 +592,7 @@ def _decode_generated_article(row: Any) -> dict[str, Any]:
         "consensus_level": item.get("consensus_level", ""),
         "used_live_sources": bool(item.get("used_live_sources", 0)),
         "fallback_reason": item.get("fallback_reason", ""),
+        "image": _json_loads(item.get("image"), {}),
         "section": str(item.get("section") or "").lower(),
         "status": item["status"],
         "createdAt": item["created_at"],

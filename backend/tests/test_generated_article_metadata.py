@@ -36,6 +36,7 @@ class GeneratedArticleMetadataTest(unittest.TestCase):
             "consensus_level": "moderate",
             "used_live_sources": 1,
             "fallback_reason": "",
+            "image": '{"url":"https://images.example.com/fed.jpg","license":"CC0"}',
             "status": "published",
             "created_at": "2026-05-29T12:00:00Z",
         })
@@ -46,6 +47,7 @@ class GeneratedArticleMetadataTest(unittest.TestCase):
         self.assertEqual(decoded["consensus"][0]["status"], "supported")
         self.assertTrue(decoded["used_live_sources"])
         self.assertIn("accuracyScore", decoded["scoreMetadata"])
+        self.assertEqual(decoded["image"]["license"], "CC0")
 
 
 if __name__ == "__main__":

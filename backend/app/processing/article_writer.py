@@ -70,6 +70,7 @@ set_build_progress = _set_progress
 from app.db import queries
 from app.ingest.article_reader import fetch_readable_article_text
 from app.ingest.gdelt_ingest import fetch_gdelt_articles
+from app.ingest.openverse_images import find_openverse_image
 from app.ingest.rss_ingest import fetch_articles_for_query_fast
 from app.ingest.source_registry import domain_from_url, is_blocked_domain
 from app.ingest.source_ranker import SourceGate, evaluate_source_quality, rank_sources
@@ -703,16 +704,45 @@ def _article_from_consensus(
         headline if headline.endswith("— Signal Coverage") is False
         else f"Signal tracked {source_count} public sources for: {prompt}."
     )
-    body, gemini_header = _article_body(
-        prompt,
-        source_articles,
-        supported,
-        unique,
-        use_gemini=use_gemini or require_gemini,
-        require_gemini=require_gemini,
-        generation_mode=generation_mode,
-        build_id=build_id,
-    )
+    image_executor = None
+    image_future = None
+    if getattr(settings, "article_images_enabled", True):
+        image_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="article-image")
+        image_future = image_executor.submit(
+            find_openverse_image,
+            prompt,
+            timeout=getattr(settings, "article_image_search_timeout_seconds", 4.0),
+        )
+    try:
+        body, gemini_header = _article_body(
+            prompt,
+            source_articles,
+            supported,
+            unique,
+            use_gemini=use_gemini or require_gemini,
+            require_gemini=require_gemini,
+            generation_mode=generation_mode,
+            build_id=build_id,
+        )
+    except Exception:
+        if image_future:
+            image_future.cancel()
+        if image_executor:
+            image_executor.shutdown(wait=False, cancel_futures=True)
+        raise
+
+    image: dict = {}
+    if image_future:
+        try:
+            image = image_future.result(
+                timeout=max(0.0, getattr(settings, "article_image_wait_seconds", 1.0))
+            ) or {}
+        except TimeoutError:
+            logger.info("Article image lookup still pending; publishing without an image", extra={"build_id": build_id})
+        except Exception:
+            logger.exception("Article image lookup failed", extra={"build_id": build_id})
+        finally:
+            image_executor.shutdown(wait=False, cancel_futures=True)
     if gemini_header:
         headline = gemini_header["headline"]
         dek = gemini_header["dek"]
@@ -751,6 +781,7 @@ def _article_from_consensus(
             for a in source_articles
             if a.get("url") and a.get("title") and _is_mostly_latin(a.get("title", ""))
         ],
+        "image": image,
         "consensus": consensus,
         "generation_mode": generation_mode,
         "source_quality": source_quality,

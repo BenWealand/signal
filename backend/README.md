@@ -88,7 +88,15 @@ SUMMARY_MODEL=gpt-4o-mini
 USE_LLM_CLAIMS=false
 PROMPT_BLACKLIST=
 PROMPT_BLACKLIST_REGEX=
+SIGNAL_ARTICLE_IMAGES=true
+SIGNAL_ARTICLE_IMAGE_TIMEOUT=4
+SIGNAL_ARTICLE_IMAGE_WAIT=1
 ```
+
+Article images use Openverse's anonymous API to select one relevant, openly
+licensed raster image while Gemini writes. Successful lookups are cached for
+six hours and persisted with creator, source, and license attribution. No image
+API key is required. Set `SIGNAL_ARTICLE_IMAGES=false` to disable the lookup.
 
 Prompt filtering:
 

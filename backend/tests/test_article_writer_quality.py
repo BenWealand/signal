@@ -11,6 +11,17 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from app.processing.article_writer import GeminiArticleUnavailable, write_article_from_prompt
 
 
+ARTICLE_IMAGE = {
+    "url": "https://images.example.com/senate.jpg",
+    "title": "United States Capitol",
+    "creator": "Example Photographer",
+    "license": "CC0",
+    "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "sourceUrl": "https://example.com/senate-image",
+    "provider": "Openverse",
+}
+
+
 def source(url: str, title: str, text: str, *, name: str = "Outlet") -> dict:
     return {
         "source_name": name,
@@ -27,6 +38,7 @@ def source(url: str, title: str, text: str, *, name: str = "Outlet") -> dict:
 
 
 class ArticleWriterQualityTest(unittest.TestCase):
+    @patch("app.processing.article_writer.find_openverse_image", return_value=ARTICLE_IMAGE)
     @patch("app.processing.article_writer.queries.save_generated_article", return_value="saved")
     @patch("app.llm.gemini_writer.write_article_package_with_gemini")
     @patch("app.processing.article_writer._cached_articles_for_prompt", return_value=[])
@@ -39,6 +51,7 @@ class ArticleWriterQualityTest(unittest.TestCase):
         _cached,
         write_gemini,
         _save,
+        _find_image,
     ):
         text = "The Senate passed the budget bill by a 54-46 vote. " * 6
         gemini_body = (
@@ -68,9 +81,11 @@ class ArticleWriterQualityTest(unittest.TestCase):
         self.assertGreaterEqual(article["source_quality"]["usable_source_count"], 2)
         self.assertTrue(article["consensus"])
         self.assertIn("scoreMetadata", article)
+        self.assertEqual(article["image"], ARTICLE_IMAGE)
         write_gemini.assert_called_once()
         self.assertEqual(write_gemini.call_args.kwargs.get("mode"), "fast")
 
+    @patch("app.processing.article_writer.find_openverse_image", return_value={})
     @patch("app.processing.article_writer.queries.save_generated_article", return_value="saved")
     @patch("app.llm.gemini_writer.write_article_package_with_gemini")
     @patch("app.processing.article_writer.fetch_gdelt_articles")
@@ -83,6 +98,7 @@ class ArticleWriterQualityTest(unittest.TestCase):
         fetch_gdelt,
         write_gemini,
         _save,
+        _find_image,
     ):
         text = "Cabinet officials briefed lawmakers on the semiconductor export controls. " * 5
         cached.return_value = [
@@ -108,7 +124,7 @@ class ArticleWriterQualityTest(unittest.TestCase):
     @patch("app.processing.article_writer.queries.save_generated_article", return_value="saved")
     @patch("app.processing.article_writer._cached_articles_for_prompt", return_value=[])
     @patch("app.processing.article_writer.fetch_gdelt_articles", return_value=[])
-    @patch("app.processing.article_writer.fetch_articles_for_query")
+    @patch("app.processing.article_writer.fetch_articles_for_query_fast")
     def test_thorough_mode_does_not_save_quality_gate_fallback(
         self,
         fetch_rss,

@@ -44,6 +44,7 @@ export function decodeGeneratedArticleRow(row) {
     consensus_level: row.consensus_level || row.consensusLevel || "",
     used_live_sources: Boolean(row.used_live_sources ?? row.usedLiveSources),
     fallback_reason: row.fallback_reason || row.fallbackReason || "",
+    image: parseJsonField(row.image, {}),
     section: String(row.section || "").toLowerCase(),
     status: row.status || "published",
     createdAt: row.created_at || row.createdAt || null,

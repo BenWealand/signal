@@ -64,6 +64,9 @@ class Settings:
     thorough_enrich_limit: int = int(os.getenv("SIGNAL_THOROUGH_ENRICH_LIMIT", "6"))
     thorough_enrich_timeout_seconds: int = int(os.getenv("SIGNAL_THOROUGH_ENRICH_TIMEOUT", "5"))
     thorough_max_candidates: int = int(os.getenv("SIGNAL_THOROUGH_MAX_CANDIDATES", "10"))
+    article_images_enabled: bool = os.getenv("SIGNAL_ARTICLE_IMAGES", "true").lower() != "false"
+    article_image_search_timeout_seconds: float = float(os.getenv("SIGNAL_ARTICLE_IMAGE_TIMEOUT", "4"))
+    article_image_wait_seconds: float = float(os.getenv("SIGNAL_ARTICLE_IMAGE_WAIT", "1"))
     # X / Twitter workflow — credentials are optional until you implement app/x/client.py
     x_api_bearer_token: str = os.getenv("X_API_BEARER_TOKEN", "")
     x_api_key: str = os.getenv("X_API_KEY", "")

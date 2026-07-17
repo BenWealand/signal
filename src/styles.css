@@ -1183,6 +1183,33 @@ a {
   font-weight: 800;
 }
 
+.article-lead-image {
+  width: min(100%, 55rem);
+  margin: 1.4rem 0 1.65rem;
+}
+
+.article-lead-image img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+  background: #e9ece6;
+}
+
+.article-lead-image figcaption {
+  margin-top: 0.45rem;
+  color: #666d63;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.article-lead-image figcaption a {
+  color: #0b5a40;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
 .sourced-fact {
   position: relative;
   z-index: 2;

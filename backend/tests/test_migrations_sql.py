@@ -55,6 +55,13 @@ class MigrationSqlSplitTests(unittest.TestCase):
         self.assertIn("reply_to_post_id", sql)
         self.assertIn("reply_url", sql)
 
+    def test_generated_article_image_migration_adds_metadata_field(self):
+        path = Path(__file__).resolve().parents[1] / "app" / "db" / "migrations" / "0007_generated_article_images.sql"
+        sql = path.read_text(encoding="utf-8")
+        parts = _split_sql(sql)
+        self.assertEqual(len(parts), 1)
+        self.assertIn("ADD COLUMN IF NOT EXISTS image", sql)
+
 
 if __name__ == "__main__":
     unittest.main()

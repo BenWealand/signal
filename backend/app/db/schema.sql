@@ -112,6 +112,7 @@ CREATE TABLE IF NOT EXISTS generated_articles (
   consensus_level TEXT DEFAULT '',
   used_live_sources SMALLINT DEFAULT 0,
   fallback_reason TEXT DEFAULT '',
+  image TEXT DEFAULT '{}',
   section TEXT DEFAULT '',
   status TEXT DEFAULT 'published',
   created_at TIMESTAMPTZ DEFAULT NOW()

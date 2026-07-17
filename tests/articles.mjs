@@ -26,6 +26,7 @@ const row = {
   consensus_level: "high",
   used_live_sources: 1,
   fallback_reason: "",
+  image: '{"url":"https://images.example.com/fed.jpg","license":"CC0"}',
   section: "markets",
   status: "published",
   created_at: "2026-07-12T00:00:00Z",
@@ -38,6 +39,7 @@ assert.deepEqual(decoded.body, ["Paragraph one.", "Paragraph two."]);
 assert.deepEqual(decoded.terms, ["fed", "rates"]);
 assert.equal(decoded.sourceCount, 12);
 assert.equal(decoded.used_live_sources, true);
+assert.equal(decoded.image.license, "CC0");
 assert.equal(decodeGeneratedArticleRow(null), null);
 
 console.log("article decode helpers ok");

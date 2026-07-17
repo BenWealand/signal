@@ -161,6 +161,7 @@ export function ArticleScreen({
         <span>{draft.source ? `Filed from ${draft.source}` : "Signal analysis"}</span>
         <h1>{draft.headline}</h1>
         <p className="dek">{draft.dek}</p>
+        <ArticleImage image={draft.image} headline={draft.headline} />
         {draft.body?.length ? (
           draft.body.map((paragraph, index) => (
             <p key={`${draft.id || draft.headline}-${index}`}>
@@ -272,6 +273,47 @@ export function ArticleScreen({
         </div>
       </section>
     </section>
+  );
+}
+
+function ArticleImage({ image, headline }) {
+  const [failed, setFailed] = useState(false);
+  const url = String(image?.url || "").trim();
+
+  useEffect(() => {
+    setFailed(false);
+  }, [url]);
+
+  if (!url || failed) return null;
+  const title = image?.title || image?.alt || headline;
+  const creator = image?.creator || "Unknown creator";
+  const license = image?.license || "Open license";
+
+  return (
+    <figure className="article-lead-image">
+      <img
+        src={url}
+        alt={image?.alt || `Image related to ${headline}`}
+        decoding="async"
+        fetchPriority="high"
+        referrerPolicy="no-referrer"
+        onError={() => setFailed(true)}
+      />
+      <figcaption>
+        {image?.sourceUrl ? (
+          <a href={image.sourceUrl} target="_blank" rel="noopener noreferrer">{title}</a>
+        ) : title}
+        <span> by </span>
+        {image?.creatorUrl ? (
+          <a href={image.creatorUrl} target="_blank" rel="noopener noreferrer">{creator}</a>
+        ) : creator}
+        <span> | </span>
+        {image?.licenseUrl ? (
+          <a href={image.licenseUrl} target="_blank" rel="noopener noreferrer">{license}</a>
+        ) : license}
+        <span> via {image?.provider || "Openverse"}</span>
+      </figcaption>
+    </figure>
   );
 }
 
