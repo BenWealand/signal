@@ -196,6 +196,56 @@ class OpenverseImagesTest(unittest.TestCase):
             self.assertEqual(find_openverse_image("Supreme Court ethics rules"), {})
         warning.assert_called()
 
+    @patch("app.ingest.openverse_images.find_openverse_image")
+    def test_article_image_picker_uses_streamed_article_text(self, find_image):
+        find_image.return_value = {
+            "url": "https://images.example.com/wembley.jpg",
+            "title": "English Football League playoff final at Wembley",
+            "creator": "Example Photographer",
+            "license": "BY",
+        }
+        picker = image_module.ArticleImagePicker(enabled=True, search_timeout=2.0, min_chars=40)
+        picker.on_chunk({
+            "headline": "English Football League Playoff Finals Conclude",
+            "dek": "Promotions are settled across the leagues.",
+            "draft_text": "Hull City secured promotion after the English Football League playoff final.",
+        })
+        image = picker.finalize(wait_seconds=1.0)
+
+        self.assertEqual(image["title"], "English Football League playoff final at Wembley")
+        find_image.assert_called()
+        topic = find_image.call_args.kwargs.get("topic") or find_image.call_args.args[0]
+        self.assertIn("English Football League Playoff Finals Conclude", topic)
+        self.assertIn("Hull City secured promotion", topic)
+        self.assertNotEqual(topic, "english football")
+
+    @patch("app.ingest.openverse_images.find_openverse_image")
+    def test_article_image_picker_finalize_after_hit_does_not_deadlock(self, find_image):
+        find_image.return_value = {
+            "url": "https://images.example.com/powell.jpg",
+            "title": "Jerome Powell at the Federal Reserve",
+            "creator": "Example Photographer",
+            "license": "BY",
+        }
+        picker = image_module.ArticleImagePicker(enabled=True, search_timeout=2.0, min_chars=40)
+        picker.on_chunk({
+            "headline": "Powell Signals Steady Rates",
+            "dek": "The Federal Reserve held its policy stance.",
+            "draft_text": "Jerome Powell said the Federal Reserve would keep rates steady for now.",
+        })
+        # Ensure the background lookup finished so finalize takes the cached-hit path.
+        for _ in range(50):
+            if find_image.called:
+                break
+            __import__("time").sleep(0.02)
+        image = picker.finalize(
+            headline="Powell Signals Steady Rates",
+            dek="The Federal Reserve held its policy stance.",
+            body="Jerome Powell said the Federal Reserve would keep rates steady for now.",
+            wait_seconds=1.0,
+        )
+        self.assertEqual(image["title"], "Jerome Powell at the Federal Reserve")
+
 
 if __name__ == "__main__":
     unittest.main()

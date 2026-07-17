@@ -38,7 +38,7 @@ def source(url: str, title: str, text: str, *, name: str = "Outlet") -> dict:
 
 
 class ArticleWriterQualityTest(unittest.TestCase):
-    @patch("app.processing.article_writer.find_openverse_image", return_value=ARTICLE_IMAGE)
+    @patch("app.ingest.openverse_images.find_openverse_image", return_value=ARTICLE_IMAGE)
     @patch("app.processing.article_writer.queries.save_generated_article", return_value="saved")
     @patch("app.llm.gemini_writer.write_article_package_with_gemini")
     @patch("app.processing.article_writer._cached_articles_for_prompt", return_value=[])
@@ -51,7 +51,7 @@ class ArticleWriterQualityTest(unittest.TestCase):
         _cached,
         write_gemini,
         _save,
-        _find_image,
+        find_image,
     ):
         text = "The Senate passed the budget bill by a 54-46 vote. " * 6
         gemini_body = (
@@ -84,8 +84,13 @@ class ArticleWriterQualityTest(unittest.TestCase):
         self.assertEqual(article["image"], ARTICLE_IMAGE)
         write_gemini.assert_called_once()
         self.assertEqual(write_gemini.call_args.kwargs.get("mode"), "fast")
+        self.assertTrue(callable(write_gemini.call_args.kwargs.get("on_chunk")))
+        find_image.assert_called()
+        image_topic = find_image.call_args.kwargs.get("topic") or find_image.call_args.args[0]
+        self.assertIn("Senate Passes Budget Bill", image_topic)
+        self.assertIn("Gemini wrote the first sourced draft paragraph", image_topic)
 
-    @patch("app.processing.article_writer.find_openverse_image", return_value={})
+    @patch("app.ingest.openverse_images.find_openverse_image", return_value={})
     @patch("app.processing.article_writer.queries.save_generated_article", return_value="saved")
     @patch("app.llm.gemini_writer.write_article_package_with_gemini")
     @patch("app.processing.article_writer.fetch_gdelt_articles")
@@ -98,7 +103,7 @@ class ArticleWriterQualityTest(unittest.TestCase):
         fetch_gdelt,
         write_gemini,
         _save,
-        _find_image,
+        find_image,
     ):
         text = "Cabinet officials briefed lawmakers on the semiconductor export controls. " * 5
         cached.return_value = [
@@ -118,6 +123,9 @@ class ArticleWriterQualityTest(unittest.TestCase):
         self.assertEqual(article["generation_mode"], "fast")
         self.assertFalse(article["used_live_sources"])
         fetch_rss.assert_not_called()
+        find_image.assert_called()
+        image_topic = find_image.call_args.kwargs.get("topic") or find_image.call_args.args[0]
+        self.assertIn("Export Controls Tighten Around Chip Tools", image_topic)
         fetch_gdelt.assert_not_called()
         write_gemini.assert_called_once()
 

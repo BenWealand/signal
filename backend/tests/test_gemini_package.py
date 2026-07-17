@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from app.llm.gemini_writer import _parse_package_text
+from app.llm.gemini_writer import _emit_stream_progress, _parse_package_text
 
 
 class GeminiPackageParseTest(unittest.TestCase):
@@ -25,6 +25,21 @@ Second paragraph confirming the sourced outcome from multiple public outlets cov
         self.assertEqual(package["headline"], "Senate Passes Budget Bill Overnight")
         self.assertIn("Lawmakers approved", package["dek"])
         self.assertIn("First paragraph", package["body"])
+
+    def test_stream_progress_exposes_partial_headline_before_body_is_long(self):
+        chunks: list[dict] = []
+        partial = (
+            "<<<HEADLINE>>>\n"
+            "Senate Passes Budget Bill Overnight\n"
+            "<<<DEK>>>\n"
+            "Lawmakers approved the package after a late floor fight.\n"
+            "<<<BODY>>>\n"
+            "Short lead."
+        )
+        _emit_stream_progress(partial, chunks.append)
+        self.assertEqual(chunks[-1]["headline"], "Senate Passes Budget Bill Overnight")
+        self.assertIn("Lawmakers approved", chunks[-1]["dek"])
+        self.assertIn("Short lead", chunks[-1]["draft_text"])
 
     def test_parses_json_package(self):
         text = """{
