@@ -113,6 +113,80 @@ def _format_entity_query(value: str) -> str:
     return f'"{subject}"' if len(meaningful) >= 2 else subject
 
 
+_SPORTS_CONTEXT = frozenset({
+    "football", "soccer", "fifa", "world", "cup", "match", "matches", "team",
+    "teams", "player", "players", "goal", "tournament", "league", "final",
+    "finals", "playoff", "playoffs", "olympic", "olympics", "cricket", "rugby",
+    "tennis", "basketball", "baseball", "hockey", "stadium", "coach",
+})
+_POLITICS_CONTEXT = frozenset({
+    "president", "prime", "minister", "election", "parliament", "congress",
+    "government", "vote", "summit", "diplomat", "sanctions", "leader",
+    "cabinet", "senate", "policy", "campaign",
+})
+
+
+def _looks_like_bare_place_query(value: str) -> bool:
+    cleaned = _clean_text(value, 80)
+    words = [w for w in cleaned.split() if w.lower().strip("\"'") not in _STOPWORDS]
+    return 1 <= len(words) <= 2
+
+
+def concrete_place_queries(place: str, article_text: str = "") -> list[str]:
+    """Expand a bare country/city into photographic Openverse queries."""
+    name = _clean_text(place, 80).strip('"')
+    if not name:
+        return []
+    article_kw = _keywords(article_text)
+    raw: list[str] = []
+    if article_kw & _SPORTS_CONTEXT:
+        raw.extend([
+            f"{name} national football team",
+            f"{name} football players",
+            f"{name} flag",
+        ])
+    elif article_kw & _POLITICS_CONTEXT:
+        raw.extend([
+            f"{name} prime minister",
+            f"{name} president",
+            f"{name} flag",
+        ])
+    else:
+        raw.extend([
+            f"{name} flag",
+            f"{name} leader",
+            f"{name} national team",
+        ])
+
+    queries: list[str] = []
+    for item in raw:
+        formatted = _format_entity_query(item) or item
+        if formatted and formatted not in queries:
+            queries.append(formatted)
+    return queries[:3]
+
+
+def normalize_image_search_subjects(
+    raw_queries: list[str],
+    article_text: str = "",
+) -> list[str]:
+    """Turn broad place queries into concrete photographic subjects."""
+    subjects: list[str] = []
+    for raw in raw_queries:
+        cleaned = _clean_text(raw, 100)
+        if not cleaned:
+            continue
+        if _looks_like_bare_place_query(cleaned):
+            for item in concrete_place_queries(cleaned, article_text):
+                if item not in subjects:
+                    subjects.append(item)
+            continue
+        formatted = _format_entity_query(cleaned) or cleaned
+        if formatted and formatted not in subjects:
+            subjects.append(formatted)
+    return subjects
+
+
 def priority_image_queries(text: str) -> list[str]:
     """Ordered Openverse subjects: people → event → org → place → product → law → date."""
     by_type: dict[str, list[str]] = {label: [] for label in _IMAGE_ENTITY_PRIORITY}
@@ -120,27 +194,38 @@ def priority_image_queries(text: str) -> list[str]:
         label = str(entity.get("type") or "").upper()
         if label not in by_type:
             continue
-        query = _format_entity_query(str(entity.get("text") or ""))
+        entity_text = str(entity.get("text") or "")
+        if label == "GPE":
+            for query in concrete_place_queries(entity_text, text or ""):
+                if query not in by_type[label]:
+                    by_type[label].append(query)
+            continue
+        query = _format_entity_query(entity_text)
         if query and query not in by_type[label]:
             by_type[label].append(query)
 
     subjects: list[str] = []
     for label in _IMAGE_ENTITY_PRIORITY:
-        for query in by_type[label][:1]:
+        limit = 3 if label == "GPE" else 1
+        for query in by_type[label][:limit]:
             if query not in subjects:
                 subjects.append(query)
 
     fallback = _search_query(text or "")
     if fallback and fallback not in subjects:
-        fallback_keywords = _keywords(fallback)
-        covered: set[str] = set()
-        for subject in subjects:
-            covered |= _keywords(subject)
-        uncovered = fallback_keywords - covered
-        # Keep the prompt phrase only when it adds real topical terms we do not
-        # already plan to search, or when NER found nothing usable.
-        if not subjects or len(uncovered) >= 2:
-            subjects.append(fallback)
+        bare = fallback.strip('"')
+        if _looks_like_bare_place_query(bare):
+            for query in concrete_place_queries(bare, text or ""):
+                if query not in subjects:
+                    subjects.append(query)
+        else:
+            fallback_keywords = _keywords(fallback)
+            covered: set[str] = set()
+            for subject in subjects:
+                covered |= _keywords(subject)
+            uncovered = fallback_keywords - covered
+            if not subjects or len(uncovered) >= 2:
+                subjects.append(fallback)
     return subjects
 
 
@@ -496,10 +581,10 @@ def find_openverse_image(
     article_text = _clean_text(topic or query, 500)
     article_keywords = _keywords(article_text)
     subjects: list[str] = []
-    for raw in preferred_queries or []:
-        formatted = _format_entity_query(str(raw or "")) or _clean_text(raw, 80)
-        if formatted and formatted not in subjects:
-            subjects.append(formatted)
+    preferred = normalize_image_search_subjects(list(preferred_queries or []), article_text)
+    for subject in preferred:
+        if subject not in subjects:
+            subjects.append(subject)
     for subject in priority_image_queries(article_text or query):
         if subject not in subjects:
             subjects.append(subject)

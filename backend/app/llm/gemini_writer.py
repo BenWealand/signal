@@ -583,9 +583,9 @@ Suggest {limit} short image search queries for openly licensed photos.
 
 Rules:
 1. Prefer named people in the story first (athletes, officials, coaches, speakers).
-2. Next prefer specific teams, matches, or named events — never a bare country or city alone.
-3. Queries must be photographic and concrete (2-6 words). No quotation marks.
-4. Do NOT suggest landmarks, walls, buildings, maps, flags, or generic travel photos unless the article is about that place itself.
+2. Next prefer specific teams, matches, or named events.
+3. Countries and cities are allowed, but NEVER as a bare place name. Always pair them with a concrete visual subject such as "flag", "national football team", "prime minister", "president", or another specific photographic subject grounded in the article.
+4. Queries must be photographic and concrete (2-6 words). No quotation marks.
 5. Do NOT invent names that are not in the article.
 6. Return strict JSON only: an array of {limit} strings. No markdown, no explanation."""
 

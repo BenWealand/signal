@@ -68,10 +68,25 @@ class OpenverseImagesTest(unittest.TestCase):
                 "Jerome Powell spoke at the Federal Reserve in Washington on March 15"
             )
 
-        self.assertEqual(
-            queries,
-            ['"Jerome Powell"', '"Federal Reserve"', "Washington", '"March 15"'],
-        )
+        self.assertEqual(queries[0], '"Jerome Powell"')
+        self.assertEqual(queries[1], '"Federal Reserve"')
+        self.assertTrue(any("Washington" in q and "flag" in q.lower() for q in queries))
+        self.assertNotIn("Washington", queries)
+        self.assertIn('"March 15"', queries)
+
+    def test_expands_bare_country_into_concrete_sports_queries(self):
+        entities = [{"text": "Spain", "type": "GPE"}]
+        article = "Spain faces Argentina in the FIFA World Cup final after the semi-final."
+        with patch("app.ingest.openverse_images.extract_entities", return_value=entities):
+            queries = priority_image_queries(article)
+            preferred = image_module.normalize_image_search_subjects(["Spain"], article)
+
+        self.assertTrue(any("flag" in q.lower() for q in queries))
+        self.assertTrue(any("football" in q.lower() or "team" in q.lower() for q in queries))
+        self.assertNotIn("Spain", queries)
+        self.assertNotIn('"Spain"', queries)
+        self.assertEqual(preferred, queries[: len(preferred)])
+        self.assertTrue(any("flag" in q.lower() for q in preferred))
 
     def test_title_relevance_rejects_offtopic_league_photo(self):
         article = (
