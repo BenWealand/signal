@@ -1,3 +1,5 @@
+import { publicSiteOrigin } from "./siteUrl.js";
+
 const META_ATTR = "data-signal-share-meta";
 
 function upsertMeta(kind, key, content) {
@@ -28,7 +30,7 @@ function upsertLink(rel, href) {
 }
 
 /** Keep document share metadata in sync with the open article (helps in-app browsers). */
-export function applyArticleShareMeta(article, { origin = window.location.origin } = {}) {
+export function applyArticleShareMeta(article, { origin = publicSiteOrigin() } = {}) {
   if (typeof document === "undefined" || !article) return;
 
   const title = String(article.headline || "Signal Dispatch").trim() || "Signal Dispatch";
@@ -37,7 +39,7 @@ export function applyArticleShareMeta(article, { origin = window.location.origin
   ).trim();
   const pageUrl = article.id
     ? `${origin}/article/${encodeURIComponent(String(article.id))}`
-    : window.location.href;
+    : `${origin}/`;
   const imageUrl = String(article.image?.url || "").trim();
   const imageAlt = String(article.image?.alt || article.image?.title || title).trim();
 

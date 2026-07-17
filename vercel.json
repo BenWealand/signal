@@ -3,13 +3,6 @@
   "rewrites": [
     {
       "source": "/article/:id",
-      "has": [
-        {
-          "type": "header",
-          "key": "user-agent",
-          "value": "(?i).*(bot|crawl|slurp|facebookexternalhit|facebot|twitterbot|linkedinbot|slackbot|discordbot|whatsapp|telegram|skypeuripreview|embedly|quora link preview|pinterest|redditbot|applebot|vkshare|bitlybot|nuzzel|tumblr).*"
-        }
-      ],
       "destination": "/api/article-og?id=:id"
     },
     {
