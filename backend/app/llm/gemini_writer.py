@@ -548,6 +548,107 @@ Rules:
         return None
 
 
+def suggest_image_queries_with_gemini(
+    headline: str,
+    dek: str = "",
+    body_paragraphs: list[str] | None = None,
+    *,
+    max_queries: int = 3,
+) -> list[str] | None:
+    """
+    Ask Gemini for concrete, people-first Openverse search queries for an article.
+
+    Returns short photographic search phrases, or None when Gemini is unavailable.
+    """
+    key = settings.gemini_api_key
+    if not key:
+        return None
+    if _rate_limited():
+        return None
+
+    body = "\n\n".join(p.strip() for p in (body_paragraphs or []) if p and p.strip())
+    body_block = body[:1800]
+    model = _active_model("fast")
+    _clear_last_error()
+    limit = max(1, min(int(max_queries), 4))
+
+    prompt = f"""You are a photo editor choosing Openverse search queries for a news article.
+
+Headline: {headline}
+Summary: {dek}
+Article body:
+{body_block}
+
+Suggest {limit} short image search queries for openly licensed photos.
+
+Rules:
+1. Prefer named people in the story first (athletes, officials, coaches, speakers).
+2. Next prefer specific teams, matches, or named events — never a bare country or city alone.
+3. Queries must be photographic and concrete (2-6 words). No quotation marks.
+4. Do NOT suggest landmarks, walls, buildings, maps, flags, or generic travel photos unless the article is about that place itself.
+5. Do NOT invent names that are not in the article.
+6. Return strict JSON only: an array of {limit} strings. No markdown, no explanation."""
+
+    payload = json.dumps({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": 0.2,
+            "maxOutputTokens": 180,
+            "topP": 0.8,
+        },
+    }).encode("utf-8")
+
+    url = f"{_API_BASE}/{urllib.parse.quote(model, safe='')}:generateContent"
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "x-goog-api-key": key,
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            raw = resp.read().decode("utf-8", errors="ignore")
+        data = json.loads(raw)
+        parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        text = parts[0].get("text", "").strip() if parts else ""
+        if text.startswith("```"):
+            text = text.strip("`").removeprefix("json").strip()
+        parsed = json.loads(text)
+        if not isinstance(parsed, list):
+            raise ValueError("Gemini image queries were not a JSON array")
+        queries: list[str] = []
+        for item in parsed:
+            cleaned = re.sub(r"\s+", " ", str(item).strip().strip('"').strip())
+            words = cleaned.split()
+            if not (2 <= len(words) <= 8):
+                continue
+            lowered = cleaned.lower()
+            if lowered in {q.lower() for q in queries}:
+                continue
+            # Reject bare place-only suggestions like "Spain" or "New Jersey".
+            if len(words) <= 2 and not any(ch.islower() for ch in cleaned.replace(" ", "")):
+                # All-title-case short phrases can still be people ("Lamine Yamal")
+                pass
+            if len(words) == 1:
+                continue
+            queries.append(cleaned)
+        return queries[:limit] or None
+    except urllib.error.HTTPError as exc:
+        if exc.code == 429:
+            _record_429()
+        _set_last_error(kind="image_query_http", model=model, http_status=exc.code, message=str(exc))
+        print(f"[Gemini] Image-query generation HTTP {exc.code}: {exc}", file=sys.stderr)
+        return None
+    except Exception as exc:
+        _set_last_error(kind="image_query_request", model=model, message=str(exc))
+        print(f"[Gemini] Image-query generation failed: {exc}", file=sys.stderr)
+        return None
+
+
 def write_article_header_with_gemini(
     query: str,
     body_paragraphs: list[str],

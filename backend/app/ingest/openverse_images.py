@@ -236,14 +236,40 @@ def article_entity_phrases(article_text: str) -> list[tuple[str, str]]:
 def best_entity_title_match(
     title: str,
     entity_phrases: list[tuple[str, str]] | None,
+    *,
+    article_keywords: frozenset[str] | None = None,
 ) -> tuple[str, str] | None:
     """Return the highest-priority article entity found in the image title."""
     if not title or not entity_phrases:
         return None
+    title_keywords = _keywords(title)
     for label, text in entity_phrases:
-        if _contains_entity_phrase(title, text):
-            return label, text
+        if not _contains_entity_phrase(title, text):
+            continue
+        phrase_keywords = _keywords(text)
+        # Bare country/city titles ("Spain") are too weak even with an exact GPE hit.
+        if label == "GPE":
+            extra = (title_keywords - phrase_keywords) & (article_keywords or frozenset())
+            if not (extra - _WEAK_ALONE_TERMS):
+                continue
+        return label, text
     return None
+
+
+def _is_place_only_title(
+    title_keywords: frozenset[str],
+    entity_phrases: list[tuple[str, str]] | None,
+) -> bool:
+    """True when the title is basically just a place name from the article."""
+    if not title_keywords or not entity_phrases:
+        return False
+    place_keywords: set[str] = set()
+    for label, text in entity_phrases:
+        if label == "GPE":
+            place_keywords |= _keywords(text)
+    if not place_keywords:
+        return False
+    return not (title_keywords - place_keywords - _WEAK_ALONE_TERMS)
 
 
 def candidate_title_relevance(
@@ -268,7 +294,15 @@ def candidate_title_relevance(
     phrases = entity_phrases
     if phrases is None and article_text:
         phrases = article_entity_phrases(article_text)
-    entity_hit = best_entity_title_match(title, phrases)
+
+    if _is_place_only_title(title_keywords, phrases):
+        return -1.0
+
+    entity_hit = best_entity_title_match(
+        title,
+        phrases,
+        article_keywords=article_keywords,
+    )
 
     width = _safe_int(item.get("width"))
     height = _safe_int(item.get("height"))
@@ -451,16 +485,24 @@ def find_openverse_image(
     *,
     timeout: float = 8.0,
     topic: str | None = None,
+    preferred_queries: list[str] | None = None,
 ) -> dict[str, Any]:
     """Return one relevant, attribution-ready open image or an empty dict.
 
-    Search subjects prefer NER spans in this order: PERSON, EVENT, ORG, GPE,
-    PRODUCT, LAW, DATE. Candidates are accepted only when their titles align
+    preferred_queries (for example Gemini people-first suggestions) are tried
+    before NER subjects. Candidates are accepted only when their titles align
     with the article topic; otherwise the article publishes without an image.
     """
     article_text = _clean_text(topic or query, 500)
     article_keywords = _keywords(article_text)
-    subjects = priority_image_queries(article_text or query)
+    subjects: list[str] = []
+    for raw in preferred_queries or []:
+        formatted = _format_entity_query(str(raw or "")) or _clean_text(raw, 80)
+        if formatted and formatted not in subjects:
+            subjects.append(formatted)
+    for subject in priority_image_queries(article_text or query):
+        if subject not in subjects:
+            subjects.append(subject)
     if not subjects or not article_keywords:
         return {}
 
@@ -600,11 +642,26 @@ class ArticleImagePicker:
             return image
 
         if topic and len(topic) >= self.min_chars:
+            preferred: list[str] = []
+            try:
+                from app.llm.gemini_writer import suggest_image_queries_with_gemini
+
+                body_parts = body if isinstance(body, list) else [body_text]
+                preferred = suggest_image_queries_with_gemini(
+                    headline=headline,
+                    dek=dek,
+                    body_paragraphs=[str(part) for part in body_parts if str(part).strip()],
+                    max_queries=3,
+                ) or []
+            except Exception:
+                logger.exception("Gemini image-subject suggestion failed")
+                preferred = []
             try:
                 image = find_openverse_image(
                     topic,
                     topic=topic,
-                    timeout=min(self.search_timeout, max(1.0, float(wait_seconds) + 1.5)),
+                    preferred_queries=preferred,
+                    timeout=min(self.search_timeout, max(2.0, float(wait_seconds) + 3.0)),
                 ) or {}
             except Exception:
                 logger.exception("Final article image lookup failed")
