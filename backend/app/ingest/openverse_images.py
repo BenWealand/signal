@@ -124,18 +124,67 @@ _POLITICS_CONTEXT = frozenset({
     "government", "vote", "summit", "diplomat", "sanctions", "leader",
     "cabinet", "senate", "policy", "campaign",
 })
+_BROAD_TOPIC_TERMS = frozenset({
+    "economy", "economies", "markets", "market", "politics", "political",
+    "technology", "tech", "climate", "health", "healthcare", "education",
+    "sports", "sport", "business", "finance", "financial", "rates", "interest",
+    "budget", "policy", "news", "update", "updates", "crisis", "conflict",
+    "war", "country", "city", "world", "global", "national", "international",
+    "inflation", "recession", "trade", "energy", "oil", "gas", "banking",
+    "stocks", "crypto", "ai", "artificial", "intelligence", "football",
+    "soccer", "baseball", "basketball", "hockey", "tennis", "change", "changes",
+    "issue", "issues", "industry", "sector", "sectors", "story", "report",
+    "coverage", "analysis", "review", "briefing", "developments", "development",
+})
+_GENERIC_IMAGE_TERMS = _BROAD_TOPIC_TERMS | _WEAK_ALONE_TERMS | _STOPWORDS
+
+
+_PLACE_NAME_PREFIXES = frozenset({
+    "new", "north", "south", "east", "west", "saudi", "united", "hong", "sri",
+    "el", "la", "las", "los", "san", "santa", "st", "saint",
+})
 
 
 def _looks_like_bare_place_query(value: str) -> bool:
+    """True for bare place names that need concrete visual expansion.
+
+    Single tokens ("Spain") and common place compounds ("New Jersey", "South Korea")
+    count. Two-token people names ("Jerome Powell") do not — those are already
+    specific enough for Openverse.
+    """
     cleaned = _clean_text(value, 80)
     words = [w for w in cleaned.split() if w.lower().strip("\"'") not in _STOPWORDS]
-    return 1 <= len(words) <= 2
+    if len(words) == 1:
+        return True
+    if len(words) == 2 and words[0].lower().strip("\"'") in _PLACE_NAME_PREFIXES:
+        return True
+    return False
+
+
+def _is_broad_image_query(value: str) -> bool:
+    """Reject topic-only searches that are too vague for Openverse."""
+    cleaned = _clean_text(value, 100).strip('"')
+    keywords = _keywords(cleaned)
+    if not keywords:
+        return True
+    # Every content word is a generic theme/weak sports word ("interest rates").
+    if keywords <= _GENERIC_IMAGE_TERMS:
+        return True
+    words = [w for w in cleaned.split() if w.lower().strip("\"'") not in _STOPWORDS]
+    # Single-token queries are almost always too broad ("Spain", "economy").
+    # Multi-word proper names ("Jerome Powell") and concrete visuals pass.
+    if len(words) == 1:
+        return True
+    return False
 
 
 def concrete_place_queries(place: str, article_text: str = "") -> list[str]:
     """Expand a bare country/city into photographic Openverse queries."""
     name = _clean_text(place, 80).strip('"')
     if not name:
+        return []
+    # Topic words are not places — do not invent "economy flag" style queries.
+    if _keywords(name) <= _GENERIC_IMAGE_TERMS:
         return []
     article_kw = _keywords(article_text)
     raw: list[str] = []
@@ -161,7 +210,7 @@ def concrete_place_queries(place: str, article_text: str = "") -> list[str]:
     queries: list[str] = []
     for item in raw:
         formatted = _format_entity_query(item) or item
-        if formatted and formatted not in queries:
+        if formatted and formatted not in queries and not _is_broad_image_query(formatted):
             queries.append(formatted)
     return queries[:3]
 
@@ -170,11 +219,13 @@ def normalize_image_search_subjects(
     raw_queries: list[str],
     article_text: str = "",
 ) -> list[str]:
-    """Turn broad place queries into concrete photographic subjects."""
+    """Turn broad queries into concrete photographic subjects when possible."""
     subjects: list[str] = []
     for raw in raw_queries:
         cleaned = _clean_text(raw, 100)
         if not cleaned:
+            continue
+        if _keywords(cleaned) <= _GENERIC_IMAGE_TERMS:
             continue
         if _looks_like_bare_place_query(cleaned):
             for item in concrete_place_queries(cleaned, article_text):
@@ -182,7 +233,9 @@ def normalize_image_search_subjects(
                     subjects.append(item)
             continue
         formatted = _format_entity_query(cleaned) or cleaned
-        if formatted and formatted not in subjects:
+        if not formatted or _is_broad_image_query(formatted):
+            continue
+        if formatted not in subjects:
             subjects.append(formatted)
     return subjects
 
@@ -201,14 +254,14 @@ def priority_image_queries(text: str) -> list[str]:
                     by_type[label].append(query)
             continue
         query = _format_entity_query(entity_text)
-        if query and query not in by_type[label]:
+        if query and not _is_broad_image_query(query) and query not in by_type[label]:
             by_type[label].append(query)
 
     subjects: list[str] = []
     for label in _IMAGE_ENTITY_PRIORITY:
         limit = 3 if label == "GPE" else 1
         for query in by_type[label][:limit]:
-            if query not in subjects:
+            if query not in subjects and not _is_broad_image_query(query):
                 subjects.append(query)
 
     fallback = _search_query(text or "")
@@ -216,9 +269,9 @@ def priority_image_queries(text: str) -> list[str]:
         bare = fallback.strip('"')
         if _looks_like_bare_place_query(bare):
             for query in concrete_place_queries(bare, text or ""):
-                if query not in subjects:
+                if query not in subjects and not _is_broad_image_query(query):
                     subjects.append(query)
-        else:
+        elif not _is_broad_image_query(fallback):
             fallback_keywords = _keywords(fallback)
             covered: set[str] = set()
             for subject in subjects:
@@ -227,6 +280,28 @@ def priority_image_queries(text: str) -> list[str]:
             if not subjects or len(uncovered) >= 2:
                 subjects.append(fallback)
     return subjects
+
+
+def image_still_fits_article(image: dict[str, Any], article_text: str) -> bool:
+    """Quick safeguard: keep an already-chosen image only if it still matches."""
+    if not image:
+        return False
+    topic = _clean_text(article_text, 800)
+    article_keywords = _keywords(topic)
+    if not article_keywords:
+        return False
+    score = candidate_title_relevance(
+        {
+            "title": image.get("title") or image.get("alt") or "",
+            "tags": [],
+            "width": 1600,
+            "height": 900,
+        },
+        article_keywords,
+        article_text=topic,
+        entity_phrases=article_entity_phrases(topic),
+    )
+    return score >= 0
 
 
 def _valid_http_url(value: Any) -> str:
@@ -571,23 +646,27 @@ def find_openverse_image(
     timeout: float = 8.0,
     topic: str | None = None,
     preferred_queries: list[str] | None = None,
+    preferred_only: bool = False,
 ) -> dict[str, Any]:
     """Return one relevant, attribution-ready open image or an empty dict.
 
-    preferred_queries (for example Gemini people-first suggestions) are tried
-    before NER subjects. Candidates are accepted only when their titles align
-    with the article topic; otherwise the article publishes without an image.
+    preferred_queries (for example Gemini-specific suggestions) are tried
+    before NER subjects. Broad topic-only queries are skipped. Candidates are
+    accepted only when their titles align with the article topic; otherwise the
+    article publishes without an image.
     """
     article_text = _clean_text(topic or query, 500)
     article_keywords = _keywords(article_text)
     subjects: list[str] = []
     preferred = normalize_image_search_subjects(list(preferred_queries or []), article_text)
     for subject in preferred:
-        if subject not in subjects:
+        if subject not in subjects and not _is_broad_image_query(subject):
             subjects.append(subject)
-    for subject in priority_image_queries(article_text or query):
-        if subject not in subjects:
-            subjects.append(subject)
+    # Fall back to specific NER subjects when Gemini gave nothing usable.
+    if not (preferred_only and preferred):
+        for subject in priority_image_queries(article_text or query):
+            if subject not in subjects and not _is_broad_image_query(subject):
+                subjects.append(subject)
     if not subjects or not article_keywords:
         return {}
 
@@ -611,7 +690,7 @@ def find_openverse_image(
 
 
 class ArticleImagePicker:
-    """Kick off Openverse lookups from streamed article text before publish."""
+    """Choose a concrete Openverse image from the prompt early; finalize only checks fit."""
 
     def __init__(
         self,
@@ -626,7 +705,9 @@ class ArticleImagePicker:
         self._executor: ThreadPoolExecutor | None = None
         self._future = None
         self._image: dict[str, Any] = {}
-        self._last_topic = ""
+        self._prompt = ""
+        self._gemini_queries: list[str] = []
+        self._primed = False
         self._lock = threading.Lock()
 
     def _ensure_executor(self) -> ThreadPoolExecutor:
@@ -651,39 +732,53 @@ class ArticleImagePicker:
         if result and not self._image:
             self._image = dict(result)
 
-    def consider(self, headline: str = "", dek: str = "", body: str = "") -> None:
-        """Start/refresh an image search once enough article draft text exists."""
+    def _search_from_prompt(self) -> dict[str, Any]:
+        """Ask Gemini for specific queries from the user prompt, then search Openverse."""
+        preferred: list[str] = []
+        try:
+            from app.llm.gemini_writer import suggest_image_queries_with_gemini
+
+            preferred = suggest_image_queries_with_gemini(
+                headline=self._prompt,
+                dek="",
+                body_paragraphs=[],
+                topic=self._prompt,
+                max_queries=3,
+            ) or []
+        except Exception:
+            logger.exception("Gemini prompt image-subject suggestion failed")
+            preferred = []
+        self._gemini_queries = list(preferred)
+        return find_openverse_image(
+            self._prompt,
+            topic=self._prompt,
+            preferred_queries=preferred,
+            preferred_only=bool(preferred),
+            timeout=self.search_timeout,
+        ) or {}
+
+    def prime_from_prompt(self, prompt: str) -> None:
+        """Start Gemini-led image selection from the user prompt before writing."""
         if not self.enabled:
             return
-        topic = self.topic_from_parts(headline, dek, body)
-        if len(topic) < self.min_chars:
+        cleaned = _clean_text(prompt, 500)
+        if len(cleaned) < 8:
             return
         with self._lock:
-            self._collect_finished()
-            if self._image:
+            if self._primed or self._image:
                 return
-            if self._future and not self._future.done():
-                return
-            # Avoid re-querying nearly identical draft snapshots.
-            if self._last_topic and topic.startswith(self._last_topic[: max(80, len(self._last_topic) // 2)]):
-                if abs(len(topic) - len(self._last_topic)) < 80 and priority_image_queries(topic) == priority_image_queries(self._last_topic):
-                    return
-            self._last_topic = topic
+            self._primed = True
+            self._prompt = cleaned
             executor = self._ensure_executor()
-            self._future = executor.submit(
-                find_openverse_image,
-                topic,
-                topic=topic,
-                timeout=self.search_timeout,
-            )
+            self._future = executor.submit(self._search_from_prompt)
 
     def on_chunk(self, progress: dict[str, Any] | None) -> None:
-        payload = progress or {}
-        self.consider(
-            headline=str(payload.get("headline") or ""),
-            dek=str(payload.get("dek") or ""),
-            body=str(payload.get("draft_text") or ""),
-        )
+        """Streaming drafts are not used for broad Openverse searches.
+
+        The image should already be chosen from the prompt via Gemini. Chunks are
+        ignored here so we never query vague mid-article topics.
+        """
+        return
 
     def finalize(
         self,
@@ -693,13 +788,13 @@ class ArticleImagePicker:
         body: str | list[str] = "",
         wait_seconds: float = 4.0,
     ) -> dict[str, Any]:
-        """Wait for any in-flight lookup, then one last pass on the finished article."""
+        """Wait for the prompt-time lookup, then only re-search if needed."""
         if not self.enabled:
             self.shutdown()
             return {}
 
         body_text = body if isinstance(body, str) else " ".join(str(part) for part in body)
-        topic = self.topic_from_parts(headline, dek, body_text)
+        topic = self.topic_from_parts(headline, dek, body_text) or self._prompt
         with self._lock:
             self._collect_finished()
             if not self._image and self._future:
@@ -715,47 +810,62 @@ class ArticleImagePicker:
                         if not self._image:
                             self._image = dict(result)
             except TimeoutError:
-                logger.info("Article image lookup still pending; trying a final pass")
+                logger.info("Article image lookup still pending; running safeguard pass")
             except Exception:
                 logger.exception("Article image lookup failed")
 
         with self._lock:
             image = dict(self._image) if self._image else {}
+            prior_queries = list(self._gemini_queries)
+
+        # Safeguard: keep the prompt-chosen image when it still fits the article.
+        if image and image_still_fits_article(image, topic or self._prompt):
+            self.shutdown()
+            return image
+
+        if image and topic and not image_still_fits_article(image, topic):
+            logger.info("Prompt-chosen article image failed article fit check; re-searching")
+            image = {}
 
         if image:
             self.shutdown()
             return image
 
-        if topic and len(topic) >= self.min_chars:
-            preferred: list[str] = []
-            try:
-                from app.llm.gemini_writer import suggest_image_queries_with_gemini
-
-                body_parts = body if isinstance(body, list) else [body_text]
-                preferred = suggest_image_queries_with_gemini(
-                    headline=headline,
-                    dek=dek,
-                    body_paragraphs=[str(part) for part in body_parts if str(part).strip()],
-                    max_queries=3,
-                ) or []
-            except Exception:
-                logger.exception("Gemini image-subject suggestion failed")
-                preferred = []
-            try:
-                image = find_openverse_image(
-                    topic,
-                    topic=topic,
-                    preferred_queries=preferred,
-                    timeout=min(self.search_timeout, max(2.0, float(wait_seconds) + 3.0)),
-                ) or {}
-            except Exception:
-                logger.exception("Final article image lookup failed")
-                image = {}
+        if not topic or len(topic) < min(self.min_chars, 40):
             self.shutdown()
-            return dict(image)
+            return {}
 
+        preferred = list(prior_queries)
+        try:
+            from app.llm.gemini_writer import suggest_image_queries_with_gemini
+
+            body_parts = body if isinstance(body, list) else [body_text]
+            article_queries = suggest_image_queries_with_gemini(
+                headline=headline or self._prompt,
+                dek=dek,
+                body_paragraphs=[str(part) for part in body_parts if str(part).strip()],
+                topic=self._prompt or headline,
+                max_queries=3,
+            ) or []
+            for query in article_queries:
+                if query not in preferred:
+                    preferred.append(query)
+        except Exception:
+            logger.exception("Gemini image-subject safeguard suggestion failed")
+
+        try:
+            image = find_openverse_image(
+                topic,
+                topic=topic,
+                preferred_queries=preferred,
+                preferred_only=bool(preferred),
+                timeout=min(self.search_timeout, max(2.0, float(wait_seconds) + 3.0)),
+            ) or {}
+        except Exception:
+            logger.exception("Safeguard article image lookup failed")
+            image = {}
         self.shutdown()
-        return {}
+        return dict(image)
 
     def shutdown(self) -> None:
         with self._lock:

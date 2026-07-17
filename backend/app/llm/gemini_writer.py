@@ -549,16 +549,19 @@ Rules:
 
 
 def suggest_image_queries_with_gemini(
-    headline: str,
+    headline: str = "",
     dek: str = "",
     body_paragraphs: list[str] | None = None,
     *,
+    topic: str = "",
     max_queries: int = 3,
 ) -> list[str] | None:
     """
-    Ask Gemini for concrete, people-first Openverse search queries for an article.
+    Ask Gemini for concrete photographic Openverse search queries.
 
-    Returns short photographic search phrases, or None when Gemini is unavailable.
+    Prefer calling this early with the user topic/prompt so an image can be
+    chosen before the article finishes. Queries must be specific — people first,
+    then named teams/events/objects — never broad topic words alone.
     """
     key = settings.gemini_api_key
     if not key:
@@ -571,23 +574,26 @@ def suggest_image_queries_with_gemini(
     model = _active_model("fast")
     _clear_last_error()
     limit = max(1, min(int(max_queries), 4))
+    topic_line = (topic or headline or "").strip()
 
-    prompt = f"""You are a photo editor choosing Openverse search queries for a news article.
+    prompt = f"""You are a photo editor choosing Openverse search queries for a news story.
 
+User topic / prompt: {topic_line}
 Headline: {headline}
 Summary: {dek}
 Article body:
-{body_block}
+{body_block or "(not written yet — choose from the user topic/prompt only)"}
 
-Suggest {limit} short image search queries for openly licensed photos.
+Suggest {limit} short image search queries for openly licensed photos that would clearly illustrate THIS story.
 
 Rules:
-1. Prefer named people in the story first (athletes, officials, coaches, speakers).
-2. Next prefer specific teams, matches, or named events.
-3. Countries and cities are allowed, but NEVER as a bare place name. Always pair them with a concrete visual subject such as "flag", "national football team", "prime minister", "president", or another specific photographic subject grounded in the article.
-4. Queries must be photographic and concrete (2-6 words). No quotation marks.
-5. Do NOT invent names that are not in the article.
-6. Return strict JSON only: an array of {limit} strings. No markdown, no explanation."""
+1. Prefer named people first (athletes, officials, executives, speakers) when the topic names them.
+2. Otherwise choose a specific named team, product, building, event, landmark, or object.
+3. Every query must be concrete and photographic (2-6 words). A reader should be able to picture the photo.
+4. NEVER return a broad/generic query. Reject examples like "Spain", "economy", "interest rates", "climate change", "technology", "football", or any other topic-only phrase.
+5. If a country/city/company is relevant, pair it with a concrete visual subject grounded in the topic (flag, national team, leader/president/CEO, stadium, product, protest, etc.).
+6. Do NOT invent names or details that are not in the topic/article.
+7. Return strict JSON only: an array of {limit} strings. No markdown, no explanation."""
 
     payload = json.dumps({
         "contents": [{"parts": [{"text": prompt}]}],
@@ -629,10 +635,6 @@ Rules:
             lowered = cleaned.lower()
             if lowered in {q.lower() for q in queries}:
                 continue
-            # Reject bare place-only suggestions like "Spain" or "New Jersey".
-            if len(words) <= 2 and not any(ch.islower() for ch in cleaned.replace(" ", "")):
-                # All-title-case short phrases can still be people ("Lamine Yamal")
-                pass
             if len(words) == 1:
                 continue
             queries.append(cleaned)
