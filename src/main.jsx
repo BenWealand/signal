@@ -32,6 +32,7 @@ import { SectionScreen } from "./screens/Section.jsx";
 import { SavedScreen } from "./screens/Saved.jsx";
 import { syncAccountWithBackend } from "./lib/auth.js";
 import { fetchSharedArticle, readArticleSessionCache, writeArticleSessionCache } from "./lib/articles.js";
+import { applyArticleShareMeta } from "./lib/articleMeta.js";
 import "./styles.css";
 
 const OFFLINE_PREVIEW_DELAY_MS = Number(import.meta.env.VITE_SIGNAL_OFFLINE_PREVIEW_DELAY_MS || 7200);
@@ -442,7 +443,7 @@ function App() {
       await navigator.share({ title: draft.headline, text: shareText, url });
       return;
     }
-    await navigator.clipboard.writeText(shareText);
+    await navigator.clipboard.writeText(`${shareText}\n${url}`);
     showToast("Share text copied.");
   };
 
@@ -497,6 +498,11 @@ function App() {
 
   const showBuild = phase === "building";
   const showArticle = activeScreen === "Article" && phase === "complete" && Boolean(externalDraft);
+
+  useEffect(() => {
+    if (!showArticle || !draft?.headline) return;
+    applyArticleShareMeta(draft);
+  }, [showArticle, draft]);
 
   return (
     <section className="hero-shell">

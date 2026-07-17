@@ -2,7 +2,18 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "rewrites": [
     {
-      "source": "/((?!assets/|generated-articles\\.json|.*\\..*).*)",
+      "source": "/article/:id",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": "(?i).*(bot|crawl|slurp|facebookexternalhit|facebot|twitterbot|linkedinbot|slackbot|discordbot|whatsapp|telegram|skypeuripreview|embedly|quora link preview|pinterest|redditbot|applebot|vkshare|bitlybot|nuzzel|tumblr).*"
+        }
+      ],
+      "destination": "/api/article-og?id=:id"
+    },
+    {
+      "source": "/((?!assets/|api/|generated-articles\\.json|.*\\..*).*)",
       "destination": "/index.html"
     }
   ]

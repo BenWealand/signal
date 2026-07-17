@@ -311,7 +311,6 @@ function ArticleImage({ image, headline }) {
         {image?.licenseUrl ? (
           <a href={image.licenseUrl} target="_blank" rel="noopener noreferrer">{license}</a>
         ) : license}
-        <span> via {image?.provider || "Openverse"}</span>
       </figcaption>
     </figure>
   );
