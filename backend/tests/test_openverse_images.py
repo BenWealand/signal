@@ -281,8 +281,12 @@ class OpenverseImagesTest(unittest.TestCase):
             self.assertEqual(find_openverse_image("Supreme Court ethics rules"), {})
         warning.assert_called()
 
+    @patch(
+        "app.llm.gemini_writer.suggest_image_queries_with_gemini",
+        return_value=["Hull City Wembley", "English Football League final"],
+    )
     @patch("app.ingest.openverse_images.find_openverse_image")
-    def test_article_image_picker_uses_streamed_article_text(self, find_image):
+    def test_article_image_picker_primes_from_prompt(self, find_image, _suggest):
         find_image.return_value = {
             "url": "https://images.example.com/wembley.jpg",
             "title": "English Football League playoff final at Wembley",
@@ -290,22 +294,41 @@ class OpenverseImagesTest(unittest.TestCase):
             "license": "BY",
         }
         picker = image_module.ArticleImagePicker(enabled=True, search_timeout=2.0, min_chars=40)
+        picker.prime_from_prompt("English Football League playoff finals and Hull City promotion")
+        # Streaming chunks must not trigger broad mid-article Openverse searches.
         picker.on_chunk({
             "headline": "English Football League Playoff Finals Conclude",
             "dek": "Promotions are settled across the leagues.",
             "draft_text": "Hull City secured promotion after the English Football League playoff final.",
         })
-        image = picker.finalize(wait_seconds=1.0)
+        for _ in range(50):
+            if find_image.called:
+                break
+            __import__("time").sleep(0.02)
+        image = picker.finalize(
+            headline="English Football League Playoff Finals Conclude",
+            dek="Promotions are settled across the leagues.",
+            body="Hull City secured promotion after the English Football League playoff final.",
+            wait_seconds=1.0,
+        )
 
         self.assertEqual(image["title"], "English Football League playoff final at Wembley")
         find_image.assert_called()
-        topic = find_image.call_args.kwargs.get("topic") or find_image.call_args.args[0]
-        self.assertIn("English Football League Playoff Finals Conclude", topic)
-        self.assertIn("Hull City secured promotion", topic)
-        self.assertNotEqual(topic, "english football")
+        first_call = find_image.call_args_list[0]
+        self.assertEqual(
+            first_call.kwargs.get("preferred_queries"),
+            ["Hull City Wembley", "English Football League final"],
+        )
+        self.assertTrue(first_call.kwargs.get("preferred_only"))
+        # on_chunk should not have started additional searches beyond the prime.
+        self.assertEqual(find_image.call_count, 1)
 
+    @patch(
+        "app.llm.gemini_writer.suggest_image_queries_with_gemini",
+        return_value=["Jerome Powell Federal Reserve"],
+    )
     @patch("app.ingest.openverse_images.find_openverse_image")
-    def test_article_image_picker_finalize_after_hit_does_not_deadlock(self, find_image):
+    def test_article_image_picker_finalize_after_hit_does_not_deadlock(self, find_image, _suggest):
         find_image.return_value = {
             "url": "https://images.example.com/powell.jpg",
             "title": "Jerome Powell at the Federal Reserve",
@@ -313,11 +336,7 @@ class OpenverseImagesTest(unittest.TestCase):
             "license": "BY",
         }
         picker = image_module.ArticleImagePicker(enabled=True, search_timeout=2.0, min_chars=40)
-        picker.on_chunk({
-            "headline": "Powell Signals Steady Rates",
-            "dek": "The Federal Reserve held its policy stance.",
-            "draft_text": "Jerome Powell said the Federal Reserve would keep rates steady for now.",
-        })
+        picker.prime_from_prompt("Jerome Powell Federal Reserve interest rates")
         # Ensure the background lookup finished so finalize takes the cached-hit path.
         for _ in range(50):
             if find_image.called:
@@ -330,6 +349,7 @@ class OpenverseImagesTest(unittest.TestCase):
             wait_seconds=1.0,
         )
         self.assertEqual(image["title"], "Jerome Powell at the Federal Reserve")
+        self.assertEqual(find_image.call_count, 1)
 
     @patch(
         "app.llm.gemini_writer.suggest_image_queries_with_gemini",
@@ -347,11 +367,7 @@ class OpenverseImagesTest(unittest.TestCase):
             },
         ]
         picker = image_module.ArticleImagePicker(enabled=True, search_timeout=2.0, min_chars=40)
-        picker.on_chunk({
-            "headline": "Spain and Argentina Prepare for World Cup Final",
-            "dek": "Questions emerge regarding Lamine Yamal's training status.",
-            "draft_text": "Spain faces Argentina after the semi-final in Atlanta.",
-        })
+        picker.prime_from_prompt("Spain Argentina World Cup final Lamine Yamal")
         for _ in range(50):
             if find_image.called:
                 break
@@ -365,10 +381,42 @@ class OpenverseImagesTest(unittest.TestCase):
 
         self.assertEqual(image["title"], "Lamine Yamal Spain")
         final_call = find_image.call_args_list[-1]
-        self.assertEqual(
-            final_call.kwargs.get("preferred_queries"),
-            ["Lamine Yamal Spain", "Argentina World Cup final"],
+        preferred = final_call.kwargs.get("preferred_queries") or []
+        self.assertIn("Lamine Yamal Spain", preferred)
+        self.assertIn("Argentina World Cup final", preferred)
+
+    def test_rejects_broad_topic_image_queries(self):
+        self.assertTrue(image_module._is_broad_image_query("economy"))
+        self.assertTrue(image_module._is_broad_image_query("interest rates"))
+        self.assertTrue(image_module._is_broad_image_query("climate change"))
+        self.assertTrue(image_module._is_broad_image_query("Spain"))
+        self.assertFalse(image_module._is_broad_image_query("Jerome Powell"))
+        self.assertFalse(image_module._is_broad_image_query("Spain national football team"))
+        subjects = image_module.normalize_image_search_subjects(
+            ["economy", "interest rates", "Jerome Powell Federal Reserve"],
+            "Jerome Powell discussed interest rates at the Federal Reserve",
         )
+        self.assertEqual(subjects, ['"Jerome Powell Federal Reserve"'])
+
+    def test_image_still_fits_article_safeguard(self):
+        good = {
+            "title": "Jerome Powell at the Federal Reserve",
+            "alt": "Jerome Powell at the Federal Reserve",
+        }
+        bad = {
+            "title": "Lingerie League",
+            "alt": "Lingerie League",
+        }
+        article = "Jerome Powell said the Federal Reserve would keep rates steady."
+        with patch(
+            "app.ingest.openverse_images.extract_entities",
+            return_value=[
+                {"text": "Jerome Powell", "type": "PERSON"},
+                {"text": "Federal Reserve", "type": "ORG"},
+            ],
+        ):
+            self.assertTrue(image_module.image_still_fits_article(good, article))
+            self.assertFalse(image_module.image_still_fits_article(bad, article))
 
 
 if __name__ == "__main__":

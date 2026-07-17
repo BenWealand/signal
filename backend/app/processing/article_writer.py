@@ -710,6 +710,8 @@ def _article_from_consensus(
         enabled=getattr(settings, "article_images_enabled", True),
         search_timeout=getattr(settings, "article_image_search_timeout_seconds", 8.0),
     )
+    # Choose a concrete Openverse subject from the prompt before/while writing.
+    image_picker.prime_from_prompt(prompt)
     try:
         body, gemini_header = _article_body(
             prompt,

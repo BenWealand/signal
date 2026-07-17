@@ -94,21 +94,23 @@ SIGNAL_ARTICLE_IMAGE_WAIT=4
 ```
 
 Article images use Openverse's anonymous API to select one relevant, openly
-licensed raster image while Gemini writes. The backend streams the Gemini draft
-internally (the reader still waits for the finished article) and looks up images
-from the draft headline, dek, and body. Before the final Openverse search, Gemini
-suggests people-first image queries (named players/officials before teams/events,
-never bare countries). Countries/cities are still used, but expanded into concrete
-visuals such as flags, national teams, or leaders. Lookups then prefer those
+licensed raster image. Gemini proposes specific photographic search queries from
+the user prompt early (before/while the article writes), so the image is usually
+already chosen by publish time. Queries must be concrete — named people first,
+then named teams, products, events, or objects — never broad topic phrases like
+"economy", "interest rates", or a bare country name. Countries/cities are
+expanded into concrete visuals such as flags, national teams, or leaders. Mid-
+stream draft text is not used for broad Openverse searches. At the end, a quick
+fit check keeps the prompt-chosen image when it still matches the finished
+article; only then does a safeguard re-search run. Lookups prefer Gemini
 suggestions, then named entities in order: person, event, organization, place
 (GPE), product, law, then date. Candidates are kept when their titles align with
 the article text, or when the title contains an exact article entity (person,
 event, organization, place, product, or law) even with extra filler words. Bare
-place-only titles like "Spain" are rejected in favor of more specific visuals.
-Weak generic-only overlaps are still rejected and the article can publish without
-an image. Successful lookups are cached for six hours and persisted with creator,
-source, and license attribution. No image API key is required. Set
-`SIGNAL_ARTICLE_IMAGES=false` to disable the lookup.
+place-only titles like "Spain" and weak generic-only overlaps are rejected; the
+article can publish without an image. Successful lookups are cached for six hours
+and persisted with creator, source, and license attribution. No image API key is
+required. Set `SIGNAL_ARTICLE_IMAGES=false` to disable the lookup.
 
 Prompt filtering:
 

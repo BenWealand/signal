@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -76,9 +77,15 @@ Second paragraph confirming the sourced outcome from multiple public outlets cov
             headline="Spain and Argentina Prepare for World Cup Final",
             dek="Questions emerge regarding Lamine Yamal's training status.",
             body_paragraphs=["Spain faces Argentina after beating England."],
+            topic="Spain Argentina World Cup final Lamine Yamal",
         )
         self.assertEqual(queries, ["Lamine Yamal Spain", "Argentina World Cup final"])
-
+        request = urlopen.call_args.args[0]
+        body = json.loads(request.data.decode("utf-8"))
+        prompt_text = body["contents"][0]["parts"][0]["text"]
+        self.assertIn("User topic / prompt:", prompt_text)
+        self.assertIn("NEVER return a broad/generic query", prompt_text)
+        self.assertIn("interest rates", prompt_text)
 
 if __name__ == "__main__":
     unittest.main()
