@@ -131,10 +131,15 @@ _BROAD_TOPIC_TERMS = frozenset({
     "budget", "policy", "news", "update", "updates", "crisis", "conflict",
     "war", "country", "city", "world", "global", "national", "international",
     "inflation", "recession", "trade", "energy", "oil", "gas", "banking",
-    "stocks", "crypto", "ai", "artificial", "intelligence", "football",
+    "stocks", "stock", "crypto", "ai", "artificial", "intelligence", "football",
     "soccer", "baseball", "basketball", "hockey", "tennis", "change", "changes",
     "issue", "issues", "industry", "sector", "sectors", "story", "report",
     "coverage", "analysis", "review", "briefing", "developments", "development",
+    "athletics", "leagues", "league", "championships", "championship", "olympic",
+    "olympics", "games", "semiconductor", "semiconductors", "cybersecurity",
+    "diplomacy", "affairs", "legislation", "government", "congress", "senate",
+    "renewable", "weather", "environment", "breaking", "latest", "public",
+    "impact", "policy", "updates",
 })
 _GENERIC_IMAGE_TERMS = _BROAD_TOPIC_TERMS | _WEAK_ALONE_TERMS | _STOPWORDS
 
@@ -176,6 +181,27 @@ def _is_broad_image_query(value: str) -> bool:
     if len(words) == 1:
         return True
     return False
+
+
+def is_broad_topic_prompt(value: str) -> bool:
+    """True for keyword-bag desk prompts that are too vague to image directly.
+
+    Section auto-generation historically used bags like
+    \"stock market economy financial inflation interest rates\". Those should
+    not drive Openverse search; prefer concrete source headlines or the
+    finished article instead.
+    """
+    cleaned = _clean_text(value, 300)
+    if not cleaned:
+        return True
+    if _is_broad_image_query(cleaned):
+        return True
+    keywords = _keywords(cleaned)
+    if len(keywords) < 3:
+        return False
+    generic = keywords & _GENERIC_IMAGE_TERMS
+    # Mostly theme/weak words with little distinctive subject content.
+    return (len(generic) / len(keywords)) >= 0.6
 
 
 def concrete_place_queries(place: str, article_text: str = "") -> list[str]:
@@ -690,7 +716,7 @@ def find_openverse_image(
 
 
 class ArticleImagePicker:
-    """Choose a concrete Openverse image from the prompt early; finalize only checks fit."""
+    """Choose a concrete Openverse image early; finalize only checks fit."""
 
     def __init__(
         self,
@@ -708,6 +734,7 @@ class ArticleImagePicker:
         self._prompt = ""
         self._gemini_queries: list[str] = []
         self._primed = False
+        self._deferred = False
         self._lock = threading.Lock()
 
     def _ensure_executor(self) -> ThreadPoolExecutor:
@@ -719,6 +746,18 @@ class ArticleImagePicker:
     def topic_from_parts(headline: str = "", dek: str = "", body: str = "") -> str:
         parts = [str(headline or "").strip(), str(dek or "").strip(), str(body or "").strip()]
         return _clean_text(" ".join(part for part in parts if part), 800)
+
+    @staticmethod
+    def _topic_for_image_search(prompt: str, source_hints: list[str] | None = None) -> str:
+        cleaned = _clean_text(prompt, 500)
+        hints = [
+            _clean_text(hint, 160)
+            for hint in (source_hints or [])
+            if _clean_text(hint, 160) and not is_broad_topic_prompt(_clean_text(hint, 160))
+        ]
+        if hints and (not cleaned or is_broad_topic_prompt(cleaned)):
+            return " ".join(hints[:3])
+        return cleaned
 
     def _collect_finished(self) -> None:
         future = self._future
@@ -733,7 +772,7 @@ class ArticleImagePicker:
             self._image = dict(result)
 
     def _search_from_prompt(self) -> dict[str, Any]:
-        """Ask Gemini for specific queries from the user prompt, then search Openverse."""
+        """Ask Gemini for specific queries from the topic, then search Openverse."""
         preferred: list[str] = []
         try:
             from app.llm.gemini_writer import suggest_image_queries_with_gemini
@@ -757,18 +796,33 @@ class ArticleImagePicker:
             timeout=self.search_timeout,
         ) or {}
 
-    def prime_from_prompt(self, prompt: str) -> None:
-        """Start Gemini-led image selection from the user prompt before writing."""
+    def prime_from_prompt(
+        self,
+        prompt: str,
+        *,
+        source_hints: list[str] | None = None,
+    ) -> None:
+        """Start Gemini-led image selection before writing.
+
+        User prompts and concrete desk headlines are searched immediately. Broad
+        keyword-bag prompts (common for auto section generation) are deferred
+        unless concrete source headlines are available to search instead.
+        """
         if not self.enabled:
             return
-        cleaned = _clean_text(prompt, 500)
-        if len(cleaned) < 8:
+        topic = self._topic_for_image_search(prompt, source_hints)
+        if len(topic) < 8:
             return
         with self._lock:
             if self._primed or self._image:
                 return
             self._primed = True
-            self._prompt = cleaned
+            self._prompt = topic
+            # Defer Openverse until finalize when we still only have a broad bag.
+            if is_broad_topic_prompt(topic):
+                self._deferred = True
+                return
+            self._deferred = False
             executor = self._ensure_executor()
             self._future = executor.submit(self._search_from_prompt)
 
@@ -797,6 +851,7 @@ class ArticleImagePicker:
         topic = self.topic_from_parts(headline, dek, body_text) or self._prompt
         with self._lock:
             self._collect_finished()
+            deferred = self._deferred
             if not self._image and self._future:
                 future = self._future
             else:
@@ -819,7 +874,7 @@ class ArticleImagePicker:
             prior_queries = list(self._gemini_queries)
 
         # Safeguard: keep the prompt-chosen image when it still fits the article.
-        if image and image_still_fits_article(image, topic or self._prompt):
+        if image and not deferred and image_still_fits_article(image, topic or self._prompt):
             self.shutdown()
             return image
 
@@ -827,7 +882,7 @@ class ArticleImagePicker:
             logger.info("Prompt-chosen article image failed article fit check; re-searching")
             image = {}
 
-        if image:
+        if image and not deferred:
             self.shutdown()
             return image
 
@@ -844,7 +899,7 @@ class ArticleImagePicker:
                 headline=headline or self._prompt,
                 dek=dek,
                 body_paragraphs=[str(part) for part in body_parts if str(part).strip()],
-                topic=self._prompt or headline,
+                topic=headline or self._prompt,
                 max_queries=3,
             ) or []
             for query in article_queries:
