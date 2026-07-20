@@ -77,6 +77,20 @@ class SectionFastGenerationTest(unittest.TestCase):
 
         self.assertEqual(save_article.call_count, 2)
 
+    def test_section_prompts_skip_broad_keyword_bags(self):
+        with patch.object(
+            routes_news.queries,
+            "list_section_generation_prompts",
+            return_value=[
+                "stock market economy financial inflation interest rates",
+                "Jerome Powell signals steady Federal Reserve policy path",
+                "climate change environment renewable energy weather",
+            ],
+        ):
+            prompts = routes_news._section_prompts("markets", 5)
+
+        self.assertEqual(prompts, ["Jerome Powell signals steady Federal Reserve policy path"])
+
 
 if __name__ == "__main__":
     unittest.main()

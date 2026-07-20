@@ -710,8 +710,15 @@ def _article_from_consensus(
         enabled=getattr(settings, "article_images_enabled", True),
         search_timeout=getattr(settings, "article_image_search_timeout_seconds", 8.0),
     )
-    # Choose a concrete Openverse subject from the prompt before/while writing.
-    image_picker.prime_from_prompt(prompt)
+    # Choose a concrete Openverse subject early. For auto/desk keyword-bag prompts,
+    # fall back to concrete source headlines so images work the same way as
+    # user-prompted articles.
+    source_hints = [
+        str(article.get("title") or "").strip()
+        for article in source_articles
+        if str(article.get("title") or "").strip()
+    ][:5]
+    image_picker.prime_from_prompt(prompt, source_hints=source_hints)
     try:
         body, gemini_header = _article_body(
             prompt,

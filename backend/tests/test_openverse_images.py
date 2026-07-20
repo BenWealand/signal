@@ -398,6 +398,75 @@ class OpenverseImagesTest(unittest.TestCase):
         )
         self.assertEqual(subjects, ['"Jerome Powell Federal Reserve"'])
 
+    def test_broad_topic_prompt_detection(self):
+        self.assertTrue(
+            image_module.is_broad_topic_prompt(
+                "stock market economy financial inflation interest rates"
+            )
+        )
+        self.assertFalse(
+            image_module.is_broad_topic_prompt(
+                "Central bank rate path draws market reaction"
+            )
+        )
+
+    @patch(
+        "app.llm.gemini_writer.suggest_image_queries_with_gemini",
+        return_value=["Jerome Powell Federal Reserve"],
+    )
+    @patch("app.ingest.openverse_images.find_openverse_image")
+    def test_broad_auto_prompt_uses_source_hints_for_images(self, find_image, _suggest):
+        find_image.return_value = {
+            "url": "https://images.example.com/powell.jpg",
+            "title": "Jerome Powell at the Federal Reserve",
+            "creator": "Example Photographer",
+            "license": "BY",
+        }
+        picker = image_module.ArticleImagePicker(enabled=True, search_timeout=2.0, min_chars=40)
+        picker.prime_from_prompt(
+            "stock market economy financial inflation interest rates",
+            source_hints=["Jerome Powell signals steady rates at Federal Reserve"],
+        )
+        for _ in range(50):
+            if find_image.called:
+                break
+            __import__("time").sleep(0.02)
+        image = picker.finalize(
+            headline="Powell Signals Steady Rates",
+            dek="The Federal Reserve held its policy stance.",
+            body="Jerome Powell said the Federal Reserve would keep rates steady for now.",
+            wait_seconds=1.0,
+        )
+        self.assertEqual(image["title"], "Jerome Powell at the Federal Reserve")
+        first_topic = find_image.call_args_list[0].kwargs.get("topic") or ""
+        self.assertIn("Jerome Powell", first_topic)
+        self.assertNotIn("inflation interest rates", first_topic)
+
+    @patch(
+        "app.llm.gemini_writer.suggest_image_queries_with_gemini",
+        return_value=["Hull City Wembley"],
+    )
+    @patch("app.ingest.openverse_images.find_openverse_image")
+    def test_deferred_broad_prompt_selects_image_from_finished_article(self, find_image, suggest):
+        find_image.return_value = {
+            "url": "https://images.example.com/wembley.jpg",
+            "title": "Hull City Wembley",
+            "creator": "Example Photographer",
+            "license": "BY",
+        }
+        picker = image_module.ArticleImagePicker(enabled=True, search_timeout=2.0, min_chars=40)
+        picker.prime_from_prompt("sports athletics leagues championships olympic games")
+        self.assertFalse(find_image.called)
+        image = picker.finalize(
+            headline="Hull City Secures Promotion at Wembley",
+            dek="Playoff final settles the championship race.",
+            body="Hull City secured promotion after the English Football League playoff final.",
+            wait_seconds=1.0,
+        )
+        self.assertEqual(image["title"], "Hull City Wembley")
+        suggest.assert_called()
+        find_image.assert_called()
+
     def test_image_still_fits_article_safeguard(self):
         good = {
             "title": "Jerome Powell at the Federal Reserve",

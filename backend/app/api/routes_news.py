@@ -9,6 +9,7 @@ from app import cache
 from app.config import settings
 from app.db import queries
 from app.db.connection import get_connection
+from app.ingest.openverse_images import is_broad_topic_prompt
 from app.processing.article_writer import write_article_from_prompt
 from app.ingest.rss_ingest import fetch_section_rss, fetch_all_rss_fast, SECTION_FEEDS
 from app.observability import log_event
@@ -213,19 +214,17 @@ def rss_status():
 
 def _section_prompts(section: str, count: int) -> list[str]:
     slug = section.lower().replace(" ", "-")
-    base = SECTION_PROMPTS.get(slug, slug.replace("-", " "))
+    # Prefer concrete desk headlines/cluster labels. Skip broad SECTION_PROMPTS
+    # keyword bags — they produce vague articles and block specific Openverse images.
     candidates = queries.list_section_generation_prompts(slug, limit=count * 4)
-    candidates.extend([
-        f"{base} latest developments",
-        f"{base} breaking updates",
-        f"{base} policy and public impact",
-    ])
     prompts: list[str] = []
     seen: set[str] = set()
     for prompt in candidates:
         cleaned = " ".join(str(prompt).strip().split())
         key = cleaned.lower()
         if not cleaned or key in seen:
+            continue
+        if is_broad_topic_prompt(cleaned):
             continue
         seen.add(key)
         prompts.append(cleaned)
