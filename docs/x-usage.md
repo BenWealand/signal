@@ -163,6 +163,12 @@ Success shape:
 
 **Do not share until `status` is `ready_to_post` (or `shared`).**
 
+Gemini requirement: X promote/write uses the same `write_article_from_prompt`
+path as regular article generation. Both require a usable Gemini draft
+(`require_gemini=True`). There is no stricter X-only gate — if Gemini cannot
+return a package with a usable body, both surfaces fail with
+`Gemini did not return a usable article draft` / `gemini_article_unavailable`.
+
 ### 5. Full automation — `POST /agents/x/run`
 
 Discovers topics, filters, writes up to `max_articles`, returns share packages.
