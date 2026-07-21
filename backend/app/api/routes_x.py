@@ -17,10 +17,10 @@ from app.api.routes_articles import (
     _check_article_rate_limit,
     _client_rate_key,
     _require_signal_agent_token,
-    _write_gemini_article,
 )
 from app.config import settings
 from app.db import queries
+from app.processing.article_writer import write_article_from_prompt
 from app.x.client import XApiError, XApiNotConfigured, get_x_client
 from app.x.filter import filter_candidates
 from app.x.models import XCandidate, XSharePackage
@@ -250,9 +250,7 @@ def run_pipeline(
         dry_run=payload.dry_run,
         auto_post=payload.auto_post,
         candidates=manual,
-        write_fn=lambda prompt, limit, mode, build_id: _write_gemini_article(
-            prompt, limit=limit, mode=mode, build_id=build_id
-        ),
+        write_fn=write_article_from_prompt,
     )
     packages = []
     for pkg in result.get("packages") or []:

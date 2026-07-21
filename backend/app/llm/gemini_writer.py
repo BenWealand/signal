@@ -651,6 +651,153 @@ Rules:
         return None
 
 
+def match_x_posts_to_articles_with_gemini(
+    posts: list[dict],
+    articles: list[dict],
+) -> list[dict] | None:
+    """
+    Match X posts to already-written Signal articles.
+
+    Returns a list of {postId, articleId, confidence, reason} dicts, or None when
+    Gemini is unavailable.
+    """
+    key = settings.gemini_api_key
+    if not key:
+        return None
+    if _rate_limited():
+        return None
+    if not posts or not articles:
+        return []
+
+    post_lines = []
+    for post in posts[:40]:
+        post_id = str(post.get("postId") or "").strip()
+        text = re.sub(r"\s+", " ", str(post.get("text") or post.get("topic") or "")).strip()[:280]
+        author = str(post.get("author") or "").strip()
+        if not post_id:
+            continue
+        post_lines.append(f"- postId={post_id} author=@{author or 'unknown'} text={text or '(empty)'}")
+
+    article_lines = []
+    for article in articles[:80]:
+        article_id = str(article.get("id") or "").strip()
+        headline = str(article.get("headline") or "").strip()
+        if not article_id or not headline:
+            continue
+        dek = str(article.get("dek") or "").strip()[:160]
+        section = str(article.get("section") or "latest")
+        article_lines.append(f"- articleId={article_id} section={section} headline={headline} dek={dek}")
+
+    if not post_lines or not article_lines:
+        return []
+
+    model = _active_model("fast")
+    _clear_last_error()
+    prompt = f"""You are matching X/Twitter posts to already-written Signal news articles.
+
+X posts:
+{chr(10).join(post_lines)}
+
+Ready Signal articles:
+{chr(10).join(article_lines)}
+
+For EACH post, choose the single best matching article, or none if no article clearly covers the same story.
+Rules:
+1. Prefer topical overlap of people, orgs, events, and places.
+2. Do not invent articleIds. Only use ids from the article list.
+3. One article should not be reused for multiple posts unless it is clearly the only fit.
+4. confidence is a number from 0 to 1.
+5. Return strict JSON only: an array of objects with keys postId, articleId, confidence, reason.
+6. If unmatched, set articleId to "" and confidence to 0."""
+
+    payload = json.dumps({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": 0.1,
+            "maxOutputTokens": 1200,
+            "topP": 0.8,
+        },
+    }).encode("utf-8")
+
+    url = f"{_API_BASE}/{urllib.parse.quote(model, safe='')}:generateContent"
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "x-goog-api-key": key,
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            raw = resp.read().decode("utf-8", errors="ignore")
+        data = json.loads(raw)
+        parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        text = parts[0].get("text", "").strip() if parts else ""
+        if text.startswith("```"):
+            text = text.strip("`").removeprefix("json").strip()
+        parsed = json.loads(text)
+        if not isinstance(parsed, list):
+            raise ValueError("Gemini match payload was not a JSON array")
+        valid_articles = {str(item.get("id") or "") for item in articles}
+        valid_posts = {str(item.get("postId") or "") for item in posts}
+        results: list[dict] = []
+        used_articles: set[str] = set()
+        for item in parsed:
+            if not isinstance(item, dict):
+                continue
+            post_id = str(item.get("postId") or "").strip()
+            article_id = str(item.get("articleId") or "").strip()
+            if post_id not in valid_posts:
+                continue
+            if article_id and article_id not in valid_articles:
+                article_id = ""
+            if article_id and article_id in used_articles:
+                article_id = ""
+            if article_id:
+                used_articles.add(article_id)
+            try:
+                confidence = float(item.get("confidence") or 0)
+            except (TypeError, ValueError):
+                confidence = 0.0
+            confidence = max(0.0, min(1.0, confidence))
+            if not article_id:
+                confidence = 0.0
+            results.append(
+                {
+                    "postId": post_id,
+                    "articleId": article_id,
+                    "confidence": confidence,
+                    "reason": str(item.get("reason") or "").strip()[:160],
+                }
+            )
+        # Ensure every post appears once.
+        seen_posts = {row["postId"] for row in results}
+        for post_id in valid_posts:
+            if post_id not in seen_posts:
+                results.append(
+                    {
+                        "postId": post_id,
+                        "articleId": "",
+                        "confidence": 0.0,
+                        "reason": "no match returned",
+                    }
+                )
+        return results
+    except urllib.error.HTTPError as exc:
+        if exc.code == 429:
+            _record_429()
+        _set_last_error(kind="x_match_http", model=model, http_status=exc.code, message=str(exc))
+        print(f"[Gemini] X-match HTTP {exc.code}: {exc}", file=sys.stderr)
+        return None
+    except Exception as exc:
+        _set_last_error(kind="x_match_request", model=model, message=str(exc))
+        print(f"[Gemini] X-match failed: {exc}", file=sys.stderr)
+        return None
+
+
 def write_article_header_with_gemini(
     query: str,
     body_paragraphs: list[str],
