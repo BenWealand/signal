@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { apiGet, apiPost, getAccessToken, hasApiBase } from "../../api/client.js";
 import { isAdminAccount } from "../../lib/admin.js";
 import { XFeedDraftQueue } from "./XFeedDraftQueue.jsx";
+import { XUrlMatchQueue } from "./XUrlMatchQueue.jsx";
 
 function stamp() {
   return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -319,7 +320,7 @@ export function XUsageTerminal({ account, onToast }) {
       <div className="x-admin-terminal-head">
         <div>
           <strong>X API usage terminal</strong>
-          <em>Add a prompt, an X post link, or both. Promote writes a sourced article and prepares the X post.</em>
+          <em>Add a prompt, an X post link, or both. Promote writes a sourced article the same way as regular article generation. Paste many X links below to match them to ready articles.</em>
         </div>
         <div className="x-admin-badges">
           <span data-on={xc.readConfigured ? "1" : "0"}>read {xc.readConfigured ? "ready" : "off"}</span>
@@ -447,6 +448,14 @@ export function XUsageTerminal({ account, onToast }) {
           <pre>{lastDraft.reply}</pre>
         </div>
       ) : null}
+
+      <XUrlMatchQueue
+        dryRun={dryRun}
+        busy={busy}
+        setBusy={setBusy}
+        push={push}
+        onToast={onToastRef.current}
+      />
 
       <XFeedDraftQueue
         dryRun={dryRun}

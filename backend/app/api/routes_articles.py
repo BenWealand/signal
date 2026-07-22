@@ -453,7 +453,7 @@ def generate_x_article_reply(
             logger.info("X lookup enrichment skipped for article-reply", exc_info=True)
 
     def _writer(prompt: str, limit: int, mode: str, build_id: str) -> dict:
-        return _write_gemini_article(prompt, limit=limit, mode=mode, build_id=build_id)
+        return write_article_from_prompt(prompt, limit=limit, mode=mode, build_id=build_id)
 
     package = write_article_for_candidate(
         candidate,

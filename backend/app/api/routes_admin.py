@@ -16,13 +16,14 @@ from app.api.routes_articles import (
     MAX_PROMPT_CHARS,
     _check_article_rate_limit,
     _client_rate_key,
-    _write_gemini_article,
 )
 from app.auth import VALID_ROLES, public_user_view, require_admin_user
 from app.config import settings
 from app.db import queries
+from app.processing.article_writer import write_article_from_prompt
 from app.x.client import XApiError, XApiNotConfigured, get_x_client, status_id_from_url
 from app.x.filter import filter_candidates
+from app.x.match import match_x_urls_to_articles
 from app.x.models import XCandidate
 from app.x.pipeline import discover_candidates, run_x_pipeline
 from app.x.reply import article_public_url, share_intent_url, x_reply_text
@@ -126,6 +127,22 @@ class AdminFeedShareRequest(BaseModel):
     @validator("reply_url")
     def reply_url_size(cls, value: str) -> str:
         return (value or "").strip()[:500]
+
+
+class AdminMatchUrlsRequest(BaseModel):
+    urls: str
+    hours: int = 72
+
+    @validator("urls")
+    def urls_required(cls, value: str) -> str:
+        cleaned = (value or "").strip()
+        if not cleaned:
+            raise ValueError("urls text is required")
+        return cleaned[:20_000]
+
+    @validator("hours")
+    def hours_size(cls, value: int) -> int:
+        return min(max(int(value or 72), 1), 168)
 
 
 def _reply_post_id(reply_url: str) -> str:
@@ -301,9 +318,8 @@ def admin_x_run(
         dry_run=payload.dry_run,
         auto_post=payload.auto_post,
         candidates=manual_candidates,
-        write_fn=lambda prompt, limit, mode, build_id: _write_gemini_article(
-            prompt, limit=limit, mode=mode, build_id=build_id
-        ),
+        # Same writer path as regular article generation (no extra Gemini gate).
+        write_fn=write_article_from_prompt,
     )
     packages = []
     for pkg in result.get("packages") or []:
@@ -360,6 +376,22 @@ def admin_x_feed_drafts(
         "unposted": sum(1 for item in drafts if not item["xShare"].get("posted")),
         "drafts": drafts,
     }
+
+
+@router.post("/admin/x/match-urls")
+def admin_x_match_urls(
+    payload: AdminMatchUrlsRequest,
+    authorization: str = Header(default=""),
+):
+    """Match pasted X URLs to already-written Signal articles for reply/post."""
+    _require_admin(authorization)
+    try:
+        result = match_x_urls_to_articles(payload.urls, hours=payload.hours)
+    except XApiNotConfigured as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except XApiError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return result
 
 
 @router.post("/admin/x/feed-share")
