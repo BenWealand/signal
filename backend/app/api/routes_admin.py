@@ -22,6 +22,7 @@ from app.config import settings
 from app.db import queries
 from app.processing.article_writer import write_article_from_prompt
 from app.x.client import XApiError, XApiNotConfigured, get_x_client, status_id_from_url
+from app.x.craft import craft_article_from_x_urls
 from app.x.filter import filter_candidates
 from app.x.match import match_x_urls_to_articles
 from app.x.models import XCandidate
@@ -143,6 +144,37 @@ class AdminMatchUrlsRequest(BaseModel):
     @validator("hours")
     def hours_size(cls, value: int) -> int:
         return min(max(int(value or 72), 1), 168)
+
+
+class AdminCraftUrlsRequest(BaseModel):
+    urls: str
+    prompt: str = ""
+    mode: str = "fast"
+    limit: int = 10
+
+    @validator("urls")
+    def urls_required(cls, value: str) -> str:
+        cleaned = (value or "").strip()
+        if not cleaned:
+            raise ValueError("urls text is required")
+        return cleaned[:20_000]
+
+    @validator("prompt")
+    def prompt_size(cls, value: str) -> str:
+        return (value or "").strip()[:MAX_PROMPT_CHARS]
+
+    @validator("mode")
+    def mode_value(cls, value: str) -> str:
+        cleaned = (value or "fast").strip().lower()
+        if cleaned not in {"fast", "thorough"}:
+            raise ValueError("mode must be fast or thorough")
+        return cleaned
+
+    @validator("limit")
+    def limit_size(cls, value: int) -> int:
+        if value < 1 or value > MAX_LIMIT:
+            raise ValueError(f"limit must be between 1 and {MAX_LIMIT}")
+        return value
 
 
 def _reply_post_id(reply_url: str) -> str:
@@ -394,6 +426,36 @@ def admin_x_match_urls(
     return result
 
 
+@router.post("/admin/x/craft-from-urls")
+def admin_x_craft_from_urls(
+    request: Request,
+    payload: AdminCraftUrlsRequest,
+    authorization: str = Header(default=""),
+):
+    """Paste many X links, write one article, return per-post Open-in-X drafts."""
+    _require_admin(authorization)
+    _check_article_rate_limit(_client_rate_key(request, "admin-x-craft"))
+    try:
+        result = craft_article_from_x_urls(
+            payload.urls,
+            focus=payload.prompt,
+            mode=payload.mode,
+            source_limit=payload.limit,
+            write_fn=write_article_from_prompt,
+        )
+    except XApiNotConfigured as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except XApiError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    if result.get("status") == "blocked":
+        raise HTTPException(status_code=422, detail=result.get("error") or "prompt_blocked")
+    if result.get("status") == "empty":
+        raise HTTPException(status_code=422, detail=result.get("error") or "No X post URLs found")
+    if result.get("status") == "error":
+        raise HTTPException(status_code=502, detail=result.get("error") or "article_write_failed")
+    return result
+
+
 @router.post("/admin/x/feed-share")
 def admin_x_feed_share(
     payload: AdminFeedShareRequest,
@@ -407,7 +469,8 @@ def admin_x_feed_share(
     if article.get("generation_mode") not in {"fast", "thorough"}:
         raise HTTPException(status_code=422, detail="Only Gemini feed articles can be posted")
 
-    existing = queries.get_posted_x_share(payload.article_id)
+    reply_post_id = _reply_post_id(payload.reply_url)
+    existing = queries.get_posted_x_share(payload.article_id, reply_to_post_id=reply_post_id)
     if existing and not payload.dry_run:
         return {
             "status": "already_posted",
@@ -416,12 +479,11 @@ def admin_x_feed_share(
             "postUrl": existing.get("x_post_url") or "",
             "replyToPostId": existing.get("reply_to_post_id") or "",
             "replyUrl": existing.get("reply_url") or "",
-            "message": "This article has already been posted to X.",
+            "message": "This article has already been posted to that X target.",
         }
 
     url = article_public_url(str(article["id"]))
     text = x_reply_text(article, url)
-    reply_post_id = _reply_post_id(payload.reply_url)
     client = get_x_client()
     result = (
         client.reply_to_post(reply_post_id, text, dry_run=payload.dry_run)

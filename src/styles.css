@@ -3218,6 +3218,23 @@ a.source-link-title:hover {
   outline-offset: 1px;
 }
 
+.x-admin-multi-focus {
+  width: 100%;
+  min-height: 2.3rem;
+  margin: 0.45rem 0 0;
+  padding: 0 0.85rem;
+  border: 1px solid rgba(20, 28, 18, 0.14);
+  border-radius: 10px;
+  background: #ffffff;
+  color: inherit;
+  font: inherit;
+}
+
+.x-admin-multi-focus:focus {
+  outline: 2px solid rgba(60, 110, 70, 0.35);
+  outline-offset: 1px;
+}
+
 .x-admin-match-meta {
   margin: 0.35rem 0 0.55rem;
   color: #66715f;

@@ -728,18 +728,34 @@ def list_recent_x_feed_articles(hours: int = 24, limit: int = 100) -> list[dict[
             return articles
 
 
-def get_posted_x_share(article_id: str) -> dict[str, Any]:
+def get_posted_x_share(article_id: str, reply_to_post_id: str = "") -> dict[str, Any]:
+    reply_id = (reply_to_post_id or "").strip()
     with get_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT * FROM x_article_shares
-                WHERE article_id = %s AND status = 'posted'
-                ORDER BY created_at DESC
-                LIMIT 1
-                """,
-                (article_id,),
-            )
+            if reply_id:
+                cur.execute(
+                    """
+                    SELECT * FROM x_article_shares
+                    WHERE article_id = %s
+                      AND status = 'posted'
+                      AND COALESCE(reply_to_post_id, '') = %s
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (article_id, reply_id),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT * FROM x_article_shares
+                    WHERE article_id = %s
+                      AND status = 'posted'
+                      AND COALESCE(reply_to_post_id, '') = ''
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (article_id,),
+                )
             return row_to_dict(cur.fetchone())
 
 
@@ -756,6 +772,7 @@ def record_x_article_share(
 ) -> dict[str, Any]:
     if status not in {"posted", "dry_run", "failed"}:
         raise ValueError("Invalid X article share status")
+    reply_id = (reply_to_post_id or "").strip()
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -764,7 +781,8 @@ def record_x_article_share(
                   (article_id, draft_text, status, x_post_id, x_post_url,
                    reply_to_post_id, reply_url, error)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (article_id) WHERE status = 'posted' DO NOTHING
+                ON CONFLICT (article_id, reply_to_post_id) WHERE status = 'posted'
+                DO NOTHING
                 RETURNING *
                 """,
                 (
@@ -773,7 +791,7 @@ def record_x_article_share(
                     status,
                     x_post_id,
                     x_post_url,
-                    reply_to_post_id,
+                    reply_id,
                     reply_url,
                     error,
                 ),
@@ -781,16 +799,7 @@ def record_x_article_share(
             saved = row_to_dict(cur.fetchone())
             if saved:
                 return saved
-            cur.execute(
-                """
-                SELECT * FROM x_article_shares
-                WHERE article_id = %s AND status = 'posted'
-                ORDER BY created_at DESC
-                LIMIT 1
-                """,
-                (article_id,),
-            )
-            return row_to_dict(cur.fetchone())
+            return get_posted_x_share(article_id, reply_to_post_id=reply_id)
 
 
 def delete_generated_article(article_id: str) -> int:
