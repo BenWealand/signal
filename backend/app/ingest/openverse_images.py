@@ -716,13 +716,13 @@ def find_openverse_image(
 
 
 class ArticleImagePicker:
-    """Choose a concrete Openverse image early; finalize only checks fit."""
+    """Pick an Openverse image from Gemini ideas after the article is written."""
 
     def __init__(
         self,
         *,
         enabled: bool = True,
-        search_timeout: float = 8.0,
+        search_timeout: float = 16.0,
         min_chars: int = 100,
     ) -> None:
         self.enabled = enabled
@@ -772,7 +772,7 @@ class ArticleImagePicker:
             self._image = dict(result)
 
     def _search_from_prompt(self) -> dict[str, Any]:
-        """Ask Gemini for specific queries from the topic, then search Openverse."""
+        """Optional warm-up search from the topic while the article writes."""
         preferred: list[str] = []
         try:
             from app.llm.gemini_writer import suggest_image_queries_with_gemini
@@ -802,11 +802,10 @@ class ArticleImagePicker:
         *,
         source_hints: list[str] | None = None,
     ) -> None:
-        """Start Gemini-led image selection before writing.
+        """Optionally warm up Openverse while the article writes.
 
-        User prompts and concrete desk headlines are searched immediately. Broad
-        keyword-bag prompts (common for auto section generation) are deferred
-        unless concrete source headlines are available to search instead.
+        The authoritative pick still happens in finalize() after Gemini reads the
+        finished article and proposes its top image ideas.
         """
         if not self.enabled:
             return
@@ -827,11 +826,7 @@ class ArticleImagePicker:
             self._future = executor.submit(self._search_from_prompt)
 
     def on_chunk(self, progress: dict[str, Any] | None) -> None:
-        """Streaming drafts are not used for broad Openverse searches.
-
-        The image should already be chosen from the prompt via Gemini. Chunks are
-        ignored here so we never query vague mid-article topics.
-        """
+        """Streaming drafts are not used for Openverse searches."""
         return
 
     def finalize(
@@ -840,9 +835,9 @@ class ArticleImagePicker:
         headline: str = "",
         dek: str = "",
         body: str | list[str] = "",
-        wait_seconds: float = 4.0,
+        wait_seconds: float = 8.0,
     ) -> dict[str, Any]:
-        """Wait for the prompt-time lookup, then only re-search if needed."""
+        """After the article is written: Gemini top-5 ideas, then try each."""
         if not self.enabled:
             self.shutdown()
             return {}
@@ -851,73 +846,82 @@ class ArticleImagePicker:
         topic = self.topic_from_parts(headline, dek, body_text) or self._prompt
         with self._lock:
             self._collect_finished()
-            deferred = self._deferred
             if not self._image and self._future:
                 future = self._future
             else:
                 future = None
 
+        # Don't block long on the warm-up; the finished-article pass is primary.
         if future:
             try:
-                result = future.result(timeout=max(0.0, float(wait_seconds))) or {}
+                result = future.result(timeout=min(1.0, max(0.0, float(wait_seconds)))) or {}
                 if result:
                     with self._lock:
                         if not self._image:
                             self._image = dict(result)
             except TimeoutError:
-                logger.info("Article image lookup still pending; running safeguard pass")
+                logger.info("Warm-up article image still pending; continuing with finished-article ideas")
             except Exception:
-                logger.exception("Article image lookup failed")
+                logger.exception("Warm-up article image lookup failed")
 
         with self._lock:
-            image = dict(self._image) if self._image else {}
-            prior_queries = list(self._gemini_queries)
-
-        # Safeguard: keep the prompt-chosen image when it still fits the article.
-        if image and not deferred and image_still_fits_article(image, topic or self._prompt):
-            self.shutdown()
-            return image
-
-        if image and topic and not image_still_fits_article(image, topic):
-            logger.info("Prompt-chosen article image failed article fit check; re-searching")
-            image = {}
-
-        if image and not deferred:
-            self.shutdown()
-            return image
+            warm_image = dict(self._image) if self._image else {}
 
         if not topic or len(topic) < min(self.min_chars, 40):
             self.shutdown()
-            return {}
+            return warm_image if warm_image and image_still_fits_article(warm_image, topic or self._prompt) else {}
 
-        preferred = list(prior_queries)
+        body_parts = body if isinstance(body, list) else [body_text]
+        article_queries: list[str] = []
         try:
             from app.llm.gemini_writer import suggest_image_queries_with_gemini
 
-            body_parts = body if isinstance(body, list) else [body_text]
             article_queries = suggest_image_queries_with_gemini(
                 headline=headline or self._prompt,
                 dek=dek,
                 body_paragraphs=[str(part) for part in body_parts if str(part).strip()],
                 topic=headline or self._prompt,
-                max_queries=3,
+                max_queries=5,
             ) or []
-            for query in article_queries:
-                if query not in preferred:
-                    preferred.append(query)
+            self._gemini_queries = list(article_queries)
         except Exception:
-            logger.exception("Gemini image-subject safeguard suggestion failed")
+            logger.exception("Gemini finished-article image ideas failed")
+            article_queries = []
 
+        image: dict[str, Any] = {}
+        if article_queries:
+            try:
+                image = find_openverse_image(
+                    topic,
+                    topic=topic,
+                    preferred_queries=article_queries,
+                    preferred_only=True,
+                    timeout=self.search_timeout,
+                ) or {}
+            except Exception:
+                logger.exception("Finished-article Openverse search failed")
+                image = {}
+
+        if image:
+            self.shutdown()
+            return dict(image)
+
+        # Warm-up fallback only if it still matches the finished article.
+        if warm_image and image_still_fits_article(warm_image, topic):
+            self.shutdown()
+            return warm_image
+
+        # Last resort: NER subjects from the finished article.
         try:
             image = find_openverse_image(
                 topic,
                 topic=topic,
-                preferred_queries=preferred,
-                preferred_only=bool(preferred),
-                timeout=min(self.search_timeout, max(2.0, float(wait_seconds) + 3.0)),
+                preferred_queries=article_queries or None,
+                preferred_only=False,
+                timeout=max(2.0, float(wait_seconds)),
             ) or {}
         except Exception:
-            logger.exception("Safeguard article image lookup failed")
+            logger.exception("Fallback article image lookup failed")
             image = {}
         self.shutdown()
         return dict(image)

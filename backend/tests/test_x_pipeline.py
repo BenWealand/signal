@@ -246,6 +246,8 @@ class XPipelineTests(unittest.TestCase):
             self.assertEqual(package.status, "ready_to_post")
             self.assertTrue(package.article_url.endswith("/article/write-1"))
             self.assertIn("Senate Budget Vote", package.reply_text)
+            self.assertEqual(package.article.get("source"), "Signal desk")
+            self.assertNotEqual(package.article.get("source"), "x-agent")
 
     def test_run_pipeline_with_manual_candidates(self):
         candidate = XCandidate(topic="Climate insurance coastal markets pressure")

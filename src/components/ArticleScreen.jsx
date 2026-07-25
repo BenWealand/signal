@@ -34,6 +34,14 @@ function writeCachedFollowUps(key, prompts) {
   }
 }
 
+function articleByline(draft) {
+  const source = String(draft?.source || "").trim();
+  if (!source) return "Signal analysis";
+  // Admin/X pipeline used to stamp "x-agent" — keep the public byline clean.
+  if (/^(x-agent|openclaw-x|openclaw)$/i.test(source)) return "Signal analysis";
+  return `Filed from ${source}`;
+}
+
 export function ArticleScreen({
   draft,
   prompt,
@@ -158,7 +166,7 @@ export function ArticleScreen({
       </div>
 
       <article className="article-reader">
-        <span>{draft.source ? `Filed from ${draft.source}` : "Signal analysis"}</span>
+        <span>{articleByline(draft)}</span>
         <h1>{draft.headline}</h1>
         <p className="dek">{draft.dek}</p>
         <ArticleImage image={draft.image} headline={draft.headline} />

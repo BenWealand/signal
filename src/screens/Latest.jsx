@@ -3,6 +3,14 @@ import { SECTION_NAMES } from "../lib/constants.js";
 import { dedupeStories } from "../utils/articleNormalize.js";
 import { EmptyState, LoadingState, ScreenShell } from "./shared.jsx";
 
+function publicArticleSource(article) {
+  const section = String(article.section || "").trim();
+  if (section) return section;
+  const source = String(article.source || "").trim();
+  if (/^(x-agent|openclaw-x|openclaw)$/i.test(source)) return "news desk";
+  return source || "news desk";
+}
+
 function articleTimestamp(article) {
   return String(article.createdAt || article.updated_at || article.created_at || "");
 }
@@ -49,7 +57,7 @@ export function LatestScreen({ commandArticles, onOpenArticle, loading = false, 
             return (
               <article className="section-card" key={article.id} onClick={() => onOpenArticle(article)}>
                 <div className="section-card-eyebrow">
-                  <span>{article.section || article.source || "news desk"}</span>
+                  <span>{publicArticleSource(article)}</span>
                   <em>{article.sourceCount} sources</em>
                 </div>
                 <h3>{article.headline}</h3>

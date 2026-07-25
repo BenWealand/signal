@@ -283,10 +283,10 @@ class OpenverseImagesTest(unittest.TestCase):
 
     @patch(
         "app.llm.gemini_writer.suggest_image_queries_with_gemini",
-        return_value=["Hull City Wembley", "English Football League final"],
+        return_value=["Hull City Wembley", "English Football League final", "Wembley Stadium playoff", "Hull City promotion", "Championship final crowd"],
     )
     @patch("app.ingest.openverse_images.find_openverse_image")
-    def test_article_image_picker_primes_from_prompt(self, find_image, _suggest):
+    def test_article_image_picker_primes_from_prompt(self, find_image, suggest):
         find_image.return_value = {
             "url": "https://images.example.com/wembley.jpg",
             "title": "English Football League playoff final at Wembley",
@@ -314,18 +314,20 @@ class OpenverseImagesTest(unittest.TestCase):
 
         self.assertEqual(image["title"], "English Football League playoff final at Wembley")
         find_image.assert_called()
-        first_call = find_image.call_args_list[0]
-        self.assertEqual(
-            first_call.kwargs.get("preferred_queries"),
-            ["Hull City Wembley", "English Football League final"],
-        )
-        self.assertTrue(first_call.kwargs.get("preferred_only"))
-        # on_chunk should not have started additional searches beyond the prime.
-        self.assertEqual(find_image.call_count, 1)
+        # Finished-article pass asks Gemini for top 5 ideas and searches those.
+        final_call = find_image.call_args_list[-1]
+        preferred = final_call.kwargs.get("preferred_queries") or []
+        self.assertEqual(preferred[0], "Hull City Wembley")
+        self.assertTrue(final_call.kwargs.get("preferred_only"))
+        suggest.assert_called()
+        self.assertEqual(suggest.call_args.kwargs.get("max_queries"), 5)
+        # Warm-up + finished-article search; on_chunk must not add more.
+        self.assertGreaterEqual(find_image.call_count, 1)
+        self.assertLessEqual(find_image.call_count, 2)
 
     @patch(
         "app.llm.gemini_writer.suggest_image_queries_with_gemini",
-        return_value=["Jerome Powell Federal Reserve"],
+        return_value=["Jerome Powell Federal Reserve", "Federal Reserve building", "Jerome Powell podium", "FOMC meeting", "US central bank"],
     )
     @patch("app.ingest.openverse_images.find_openverse_image")
     def test_article_image_picker_finalize_after_hit_does_not_deadlock(self, find_image, _suggest):
@@ -337,7 +339,6 @@ class OpenverseImagesTest(unittest.TestCase):
         }
         picker = image_module.ArticleImagePicker(enabled=True, search_timeout=2.0, min_chars=40)
         picker.prime_from_prompt("Jerome Powell Federal Reserve interest rates")
-        # Ensure the background lookup finished so finalize takes the cached-hit path.
         for _ in range(50):
             if find_image.called:
                 break
@@ -349,16 +350,16 @@ class OpenverseImagesTest(unittest.TestCase):
             wait_seconds=1.0,
         )
         self.assertEqual(image["title"], "Jerome Powell at the Federal Reserve")
-        self.assertEqual(find_image.call_count, 1)
+        self.assertGreaterEqual(find_image.call_count, 1)
 
     @patch(
         "app.llm.gemini_writer.suggest_image_queries_with_gemini",
-        return_value=["Lamine Yamal Spain", "Argentina World Cup final"],
+        return_value=["Lamine Yamal Spain", "Argentina World Cup final", "Spain national team", "Atlanta stadium", "World Cup trophy"],
     )
     @patch("app.ingest.openverse_images.find_openverse_image")
-    def test_finalize_uses_gemini_people_first_queries(self, find_image, _suggest):
+    def test_finalize_uses_gemini_people_first_queries(self, find_image, suggest):
         find_image.side_effect = [
-            {},
+            {},  # warm-up miss
             {
                 "url": "https://images.example.com/yamal.jpg",
                 "title": "Lamine Yamal Spain",
@@ -384,6 +385,8 @@ class OpenverseImagesTest(unittest.TestCase):
         preferred = final_call.kwargs.get("preferred_queries") or []
         self.assertIn("Lamine Yamal Spain", preferred)
         self.assertIn("Argentina World Cup final", preferred)
+        self.assertEqual(suggest.call_args.kwargs.get("max_queries"), 5)
+        self.assertTrue(final_call.kwargs.get("preferred_only"))
 
     def test_rejects_broad_topic_image_queries(self):
         self.assertTrue(image_module._is_broad_image_query("economy"))
@@ -412,7 +415,7 @@ class OpenverseImagesTest(unittest.TestCase):
 
     @patch(
         "app.llm.gemini_writer.suggest_image_queries_with_gemini",
-        return_value=["Jerome Powell Federal Reserve"],
+        return_value=["Jerome Powell Federal Reserve", "Federal Reserve chair", "FOMC meeting", "US interest rates podium", "Federal Reserve building"],
     )
     @patch("app.ingest.openverse_images.find_openverse_image")
     def test_broad_auto_prompt_uses_source_hints_for_images(self, find_image, _suggest):
@@ -444,7 +447,7 @@ class OpenverseImagesTest(unittest.TestCase):
 
     @patch(
         "app.llm.gemini_writer.suggest_image_queries_with_gemini",
-        return_value=["Hull City Wembley"],
+        return_value=["Hull City Wembley", "Championship playoff final", "Wembley Stadium", "Hull City promotion", "English Football League"],
     )
     @patch("app.ingest.openverse_images.find_openverse_image")
     def test_deferred_broad_prompt_selects_image_from_finished_article(self, find_image, suggest):
@@ -465,7 +468,9 @@ class OpenverseImagesTest(unittest.TestCase):
         )
         self.assertEqual(image["title"], "Hull City Wembley")
         suggest.assert_called()
+        self.assertEqual(suggest.call_args.kwargs.get("max_queries"), 5)
         find_image.assert_called()
+        self.assertTrue(find_image.call_args.kwargs.get("preferred_only"))
 
     def test_image_still_fits_article_safeguard(self):
         good = {

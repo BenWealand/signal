@@ -89,31 +89,31 @@ USE_LLM_CLAIMS=false
 PROMPT_BLACKLIST=
 PROMPT_BLACKLIST_REGEX=
 SIGNAL_ARTICLE_IMAGES=true
-SIGNAL_ARTICLE_IMAGE_TIMEOUT=8
-SIGNAL_ARTICLE_IMAGE_WAIT=4
+SIGNAL_ARTICLE_IMAGE_TIMEOUT=16
+SIGNAL_ARTICLE_IMAGE_WAIT=8
 ```
 
 Article images use Openverse's anonymous API to select one relevant, openly
-licensed raster image. Gemini proposes specific photographic search queries from
-the user prompt early (before/while the article writes), so the image is usually
-already chosen by publish time. Auto-generated desk/section articles use the same
-path: when the internal topic is a broad keyword bag, the picker primes from
-concrete source headlines or waits for the finished article instead of searching
-vague topics. Queries must be concrete — named people first, then named teams,
-products, events, or objects — never broad topic phrases like "economy",
+licensed raster image. After the article finishes writing, Gemini reads the
+finished story and proposes its top 5 photographic search ideas (ranked by
+relevance). Signal then tries those ideas against Openverse, with a longer
+timeout before publishing with no image. An optional warm-up may start from the
+prompt while writing, but the finished-article Gemini pass is authoritative.
+Auto-generated desk/section articles use the same path: when the internal topic
+is a broad keyword bag, warm-up uses concrete source headlines or waits for the
+finished article. Queries must be concrete — named people first, then named
+teams, products, events, or objects — never broad topic phrases like "economy",
 "interest rates", or a bare country name. Countries/cities are expanded into
 concrete visuals such as flags, national teams, or leaders. Mid-stream draft text
-is not used for broad Openverse searches. At the end, a quick fit check keeps the
-prompt-chosen image when it still matches the finished article; only then does a
-safeguard re-search run. Lookups prefer Gemini suggestions, then named entities in
-order: person, event, organization, place (GPE), product, law, then date.
-Candidates are kept when their titles align with the article text, or when the
-title contains an exact article entity (person, event, organization, place,
-product, or law) even with extra filler words. Bare place-only titles like
-"Spain" and weak generic-only overlaps are rejected; the article can publish
-without an image. Successful lookups are cached for six hours and persisted with
-creator, source, and license attribution. No image API key is required. Set
-`SIGNAL_ARTICLE_IMAGES=false` to disable the lookup.
+is not used for Openverse searches. Lookups prefer Gemini's finished-article
+ideas, then named entities in order: person, event, organization, place (GPE),
+product, law, then date. Candidates are kept when their titles align with the
+article text, or when the title contains an exact article entity (person, event,
+organization, place, product, or law) even with extra filler words. Bare
+place-only titles like "Spain" and weak generic-only overlaps are rejected; the
+article can publish without an image. Successful lookups are cached for six hours
+and persisted with creator, source, and license attribution. No image API key is
+required. Set `SIGNAL_ARTICLE_IMAGES=false` to disable the lookup.
 
 Prompt filtering:
 

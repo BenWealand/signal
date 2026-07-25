@@ -708,11 +708,12 @@ def _article_from_consensus(
     )
     image_picker = ArticleImagePicker(
         enabled=getattr(settings, "article_images_enabled", True),
-        search_timeout=getattr(settings, "article_image_search_timeout_seconds", 8.0),
+        search_timeout=getattr(settings, "article_image_search_timeout_seconds", 16.0),
     )
-    # Choose a concrete Openverse subject early. For auto/desk keyword-bag prompts,
-    # fall back to concrete source headlines so images work the same way as
-    # user-prompted articles.
+    # Warm up Openverse while Gemini writes. The authoritative pick still happens
+    # after the finished article: Gemini proposes its top 5 image ideas, then we
+    # try those against Openverse. For auto/desk keyword-bag prompts, fall back to
+    # concrete source headlines so warm-up works the same way as user prompts.
     source_hints = [
         str(article.get("title") or "").strip()
         for article in source_articles
@@ -744,7 +745,7 @@ def _article_from_consensus(
         headline=headline,
         dek=dek,
         body=body,
-        wait_seconds=getattr(settings, "article_image_wait_seconds", 4.0),
+        wait_seconds=getattr(settings, "article_image_wait_seconds", 8.0),
     )
     facts = _facts_from_consensus(source_articles, supported, unique)
     terms = list(dict.fromkeys(re.findall(r"[a-z]{4,}", prompt.lower())))[:5]
