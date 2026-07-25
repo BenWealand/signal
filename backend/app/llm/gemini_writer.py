@@ -554,14 +554,14 @@ def suggest_image_queries_with_gemini(
     body_paragraphs: list[str] | None = None,
     *,
     topic: str = "",
-    max_queries: int = 3,
+    max_queries: int = 5,
 ) -> list[str] | None:
     """
     Ask Gemini for concrete photographic Openverse search queries.
 
-    Prefer calling this early with the user topic/prompt so an image can be
-    chosen before the article finishes. Queries must be specific — people first,
-    then named teams/events/objects — never broad topic words alone.
+    Prefer calling this after the article is finished so queries reflect the
+    final story. Ranked ideas should be specific — people first, then named
+    teams/events/objects — never broad topic words alone.
     """
     key = settings.gemini_api_key
     if not key:
@@ -570,13 +570,14 @@ def suggest_image_queries_with_gemini(
         return None
 
     body = "\n\n".join(p.strip() for p in (body_paragraphs or []) if p and p.strip())
-    body_block = body[:1800]
+    body_block = body[:3200]
     model = _active_model("fast")
     _clear_last_error()
-    limit = max(1, min(int(max_queries), 4))
+    limit = max(1, min(int(max_queries), 5))
     topic_line = (topic or headline or "").strip()
+    finished = bool(body_block.strip())
 
-    prompt = f"""You are a photo editor choosing Openverse search queries for a news story.
+    prompt = f"""You are a photo editor choosing the best Openverse search queries for a news story.
 
 User topic / prompt: {topic_line}
 Headline: {headline}
@@ -584,22 +585,23 @@ Summary: {dek}
 Article body:
 {body_block or "(not written yet — choose from the user topic/prompt only)"}
 
-Suggest {limit} short image search queries for openly licensed photos that would clearly illustrate THIS story.
+{"Read the finished article carefully. Suggest your TOP " + str(limit) + " best image ideas, ranked by relevance to this specific story (best first)." if finished else f"Suggest {limit} short image search queries for openly licensed photos that would clearly illustrate THIS story."}
 
 Rules:
-1. Prefer named people first (athletes, officials, executives, speakers) when the topic names them.
-2. Otherwise choose a specific named team, product, building, event, landmark, or object.
+1. Prefer named people first (athletes, officials, executives, speakers) when the article names them.
+2. Otherwise choose a specific named team, product, building, event, landmark, or object that appears in the article.
 3. Every query must be concrete and photographic (2-6 words). A reader should be able to picture the photo.
 4. NEVER return a broad/generic query. Reject examples like "Spain", "economy", "interest rates", "climate change", "technology", "football", or any other topic-only phrase.
-5. If a country/city/company is relevant, pair it with a concrete visual subject grounded in the topic (flag, national team, leader/president/CEO, stadium, product, protest, etc.).
+5. If a country/city/company is relevant, pair it with a concrete visual subject grounded in the article (flag, national team, leader/president/CEO, stadium, product, protest, etc.).
 6. Do NOT invent names or details that are not in the topic/article.
-7. Return strict JSON only: an array of {limit} strings. No markdown, no explanation."""
+7. Rank by relevance: idea #1 must be the single best illustration of the article.
+8. Return strict JSON only: an array of exactly {limit} strings, best first. No markdown, no explanation."""
 
     payload = json.dumps({
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
             "temperature": 0.2,
-            "maxOutputTokens": 180,
+            "maxOutputTokens": 220,
             "topP": 0.8,
         },
     }).encode("utf-8")
@@ -616,7 +618,7 @@ Rules:
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=15) as resp:
             raw = resp.read().decode("utf-8", errors="ignore")
         data = json.loads(raw)
         parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])

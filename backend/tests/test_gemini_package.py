@@ -86,6 +86,9 @@ Second paragraph confirming the sourced outcome from multiple public outlets cov
         self.assertIn("User topic / prompt:", prompt_text)
         self.assertIn("NEVER return a broad/generic query", prompt_text)
         self.assertIn("interest rates", prompt_text)
+        self.assertIn("TOP 5", prompt_text)
+        self.assertIn("Rank by relevance", prompt_text)
+        self.assertEqual(urlopen.call_args.kwargs.get("timeout"), 15)
 
 if __name__ == "__main__":
     unittest.main()

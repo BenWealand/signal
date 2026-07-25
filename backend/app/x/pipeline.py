@@ -183,7 +183,8 @@ def write_article_for_candidate(
         )
 
     article["buildId"] = build_id
-    article["source"] = candidate.source or "x-agent"
+    # Public byline should read like a normal Signal article, not "x-agent".
+    article["source"] = "Signal desk"
     article["trendUrl"] = candidate.trend_url
     article["tag"] = candidate.tag or "x-trend"
     article["ownerUserId"] = None
