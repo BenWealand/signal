@@ -179,10 +179,18 @@ export function XUsageTerminal({ account, onToast, verifyAdminAccess = true }) {
       const data = await apiGet("/admin/x/status");
       setStatus(data);
       const xc = data.xClient || {};
+      const gemini = data.gemini || {};
       push(
         `status ok — read=${xc.readConfigured ? "yes" : "no"} write=${xc.writeConfigured ? "yes" : "no"} dryRun=${xc.dryRunDefault ? "on" : "off"}`,
         "ok",
       );
+      push(
+        `gemini ${gemini.configured ? "ready" : "not configured"} — fast=${gemini.fastModel || "unset"} thorough=${gemini.thoroughModel || "unset"}`,
+        gemini.configured ? "ok" : "error",
+      );
+      if (gemini.lastErrorMessage) {
+        push(`gemini last error: ${gemini.lastErrorMessage}`, "warn");
+      }
     } catch (error) {
       push(`status failed: ${error?.detail || error?.message || "unknown error"}`, "error");
       if (!quietToast) onToastRef.current?.("Admin X status failed — check the terminal log.");

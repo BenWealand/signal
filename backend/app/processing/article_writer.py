@@ -550,7 +550,10 @@ def _article_body(
     Returns (body_paragraphs, optional_header_package).
     When Gemini is required, fail without saving a generated article.
     """
-    from app.llm.gemini_writer import write_article_package_with_gemini
+    from app.llm.gemini_writer import (
+        describe_last_gemini_error,
+        write_article_package_with_gemini,
+    )
 
     # ── Gemini path ───────────────────────────────────────────────────────────
     package = (
@@ -576,7 +579,7 @@ def _article_body(
             return paragraphs, header if header["headline"] and header["dek"] else None
 
     if require_gemini:
-        raise GeminiArticleUnavailable("Gemini did not return a usable article draft")
+        raise GeminiArticleUnavailable(describe_last_gemini_error())
 
     # ── Rule-based fallback ───────────────────────────────────────────────────
     prompt_kw = _prompt_keywords(prompt)

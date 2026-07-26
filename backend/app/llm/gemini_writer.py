@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import collections
 import json
+import logging
+import random
 import re
 import sys
 import threading
@@ -11,6 +13,8 @@ import urllib.parse
 import urllib.request
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 _API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
@@ -52,6 +56,7 @@ _RETIRED_MODELS = frozenset({
 })
 _MODEL_ALIAS_FALLBACK = "gemini-flash-latest"       # always points at the current flash model
 _MODEL_LITE_FALLBACK  = "gemini-flash-lite-latest"  # separate quota bucket for 429 retries / fast mode
+_RETRYABLE_HTTP_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
 
 
 def _active_model(mode: str = "thorough") -> str:
@@ -92,6 +97,80 @@ def _clear_last_error() -> None:
 def get_last_gemini_error() -> dict[str, object] | None:
     with _last_error_lock:
         return dict(_last_error) if _last_error else None
+
+
+def describe_last_gemini_error() -> str:
+    """Return a safe, actionable explanation for the most recent failed write."""
+    error = get_last_gemini_error()
+    if not error:
+        return "Gemini did not return an article."
+
+    kind = str(error.get("kind") or "")
+    attempted = error.get("attempted_models")
+    attempt_count = len(attempted) if isinstance(attempted, list) else 1
+    attempt_note = f" after trying {attempt_count} models" if attempt_count > 1 else ""
+    message = re.sub(r"\s+", " ", str(error.get("message") or "")).strip()[:240]
+
+    if kind == "http":
+        status = int(error.get("http_status") or 0)
+        if status == 429:
+            return f"Gemini rate-limited this request{attempt_note} (HTTP 429). Try again after one minute."
+        if status in _RETRYABLE_HTTP_STATUSES:
+            detail = f": {message}" if message else ""
+            return f"Gemini is temporarily unavailable{attempt_note} (HTTP {status}{detail}). Try again shortly."
+        detail = f": {message}" if message else ""
+        return f"Gemini rejected the article request{attempt_note} (HTTP {status}{detail})."
+    if kind == "response":
+        return f"Gemini returned an incomplete article package{attempt_note}. Please retry the request."
+    if kind == "rate_limit":
+        return "Signal's Gemini request limit was reached. Try again after one minute."
+    if kind == "config":
+        return "Gemini is not configured on the backend."
+    if kind == "input":
+        return "No accessible source material was available for Gemini."
+    if kind == "request":
+        detail = f": {message}" if message else ""
+        return f"Gemini could not be reached{attempt_note}{detail}."
+    return message or "Gemini did not return an article."
+
+
+def _alternate_model(model: str, http_status: int | None = None) -> str:
+    """Choose a genuinely different Flash capacity pool for one bounded retry."""
+    if http_status == 404 and model != _MODEL_ALIAS_FALLBACK:
+        return _MODEL_ALIAS_FALLBACK
+    if "lite" in model.lower():
+        return _MODEL_ALIAS_FALLBACK
+    return _MODEL_LITE_FALLBACK
+
+
+def _http_error_details(exc: urllib.error.HTTPError, model: str) -> dict[str, object]:
+    body: dict[str, object] = {}
+    try:
+        body = json.loads(exc.read().decode("utf-8", errors="ignore"))
+    except Exception:
+        body = {}
+    details = body.get("error", {}) if isinstance(body, dict) else {}
+    reason = None
+    if isinstance(details, dict):
+        for item in details.get("details") or []:
+            if isinstance(item, dict) and item.get("reason"):
+                reason = item.get("reason")
+                break
+    message = details.get("message", str(exc)) if isinstance(details, dict) else str(exc)
+    status = details.get("status") if isinstance(details, dict) else None
+    return {
+        "kind": "http",
+        "model": model,
+        "http_status": exc.code,
+        "api_status": status,
+        "reason": reason,
+        "message": message,
+    }
+
+
+def _sleep_before_retry() -> None:
+    """Use a short bounded backoff so transient provider capacity can recover."""
+    time.sleep(1.0 + random.uniform(0.0, 0.35))
 
 
 def _rate_limited() -> bool:
@@ -349,89 +428,112 @@ def write_article_package_with_gemini(
         _set_last_error(kind="input", message="No source material was available for Gemini")
         return None
 
-    model = _active_model(mode)
+    primary_model = _active_model(mode)
     _clear_last_error()
     prompt = _package_prompt(query, source_block, n_sources, mode)
     payload = json.dumps({
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
-            "temperature": 0.25,
             "maxOutputTokens": 1400 if mode == "fast" else 1600,
-            "topP": 0.9,
         },
     }).encode("utf-8")
     use_stream = on_chunk is not None
 
-    try:
-        text = _call_gemini_package(
-            model=model,
-            payload=payload,
-            key=key,
-            timeout=20 if mode == "fast" else 24,
-            stream=use_stream,
-            on_chunk=on_chunk,
-        )
-        package = _parse_package_text(text or "")
-        if package and package.get("body"):
-            return package
+    models = [primary_model, _alternate_model(primary_model)]
+    attempted_models: list[str] = []
+    attempt_errors: list[dict[str, object]] = []
 
-        _set_last_error(kind="response", model=model, message="Gemini returned an unusable article package")
-        return None
-
-    except urllib.error.HTTPError as exc:
-        body: dict[str, object] = {}
+    for attempt_index, model in enumerate(models):
+        if model in attempted_models:
+            continue
+        attempted_models.append(model)
         try:
-            body = json.loads(exc.read().decode("utf-8", errors="ignore"))
-        except Exception:
-            body = {}
-        details = body.get("error", {}) if isinstance(body, dict) else {}
-        reason = None
-        if isinstance(details, dict):
-            for item in details.get("details") or []:
-                if isinstance(item, dict) and item.get("reason"):
-                    reason = item.get("reason")
-                    break
-        message = details.get("message", str(exc)) if isinstance(details, dict) else str(exc)
-        status = details.get("status") if isinstance(details, dict) else None
-        _set_last_error(
-            kind="http",
-            model=model,
-            http_status=exc.code,
-            api_status=status,
-            reason=reason,
-            message=message,
-        )
-        if exc.code in (404, 429):
-            fallback_model = _MODEL_ALIAS_FALLBACK if exc.code == 404 else _MODEL_LITE_FALLBACK
-            print(f"[Gemini] HTTP {exc.code} detail — status: {status}, message: {str(message)[:200]}", file=sys.stderr)
-            if model != fallback_model:
-                print(f"[Gemini] Trying fallback model {fallback_model}…", file=sys.stderr)
-                try:
-                    text = _call_gemini_package(
-                        model=fallback_model,
-                        payload=payload,
-                        key=key,
-                        timeout=30,
-                        stream=use_stream,
-                        on_chunk=on_chunk,
+            text = _call_gemini_package(
+                model=model,
+                payload=payload,
+                key=key,
+                timeout=(20 if mode == "fast" else 24) if attempt_index == 0 else 30,
+                stream=use_stream,
+                on_chunk=on_chunk,
+            )
+            package = _parse_package_text(text or "")
+            if package and package.get("body"):
+                if attempt_index:
+                    logger.info(
+                        "Gemini article model failover succeeded primary=%s fallback=%s",
+                        primary_model,
+                        model,
                     )
-                    package = _parse_package_text(text or "")
-                    if package and package.get("body"):
-                        print(f"[Gemini] Fallback to {fallback_model} succeeded.", file=sys.stderr)
-                        _set_last_error(kind="fallback", model=fallback_model, original_model=model, original_http_status=exc.code)
-                        return package
-                except Exception as fe:
-                    print(f"[Gemini] Fallback also failed: {fe}", file=sys.stderr)
-            if exc.code == 429:
+                _clear_last_error()
+                return package
+
+            error = {
+                "kind": "response",
+                "model": model,
+                "message": "Gemini returned an unusable article package",
+            }
+            attempt_errors.append(error)
+            _set_last_error(
+                **error,
+                attempted_models=list(attempted_models),
+                attempt_errors=list(attempt_errors),
+            )
+            logger.warning("Gemini returned an unusable article package model=%s", model)
+            if attempt_index == 0:
+                logger.info("Retrying Gemini article with alternate model=%s", models[1])
+                continue
+            return None
+        except urllib.error.HTTPError as exc:
+            error = _http_error_details(exc, model)
+            attempt_errors.append(error)
+            _set_last_error(
+                **error,
+                attempted_models=list(attempted_models),
+                attempt_errors=list(attempt_errors),
+            )
+            logger.warning(
+                "Gemini article request failed model=%s http_status=%s api_status=%s message=%s",
+                model,
+                exc.code,
+                error.get("api_status"),
+                str(error.get("message") or "")[:200],
+            )
+            retryable = exc.code == 404 or exc.code in _RETRYABLE_HTTP_STATUSES
+            if attempt_index == 0 and retryable:
+                fallback_model = _alternate_model(model, exc.code)
+                models[1] = fallback_model
+                logger.info(
+                    "Retrying Gemini article primary=%s fallback=%s http_status=%s",
+                    model,
+                    fallback_model,
+                    exc.code,
+                )
+                if exc.code in _RETRYABLE_HTTP_STATUSES:
+                    _sleep_before_retry()
+                continue
+            if any(int(item.get("http_status") or 0) == 429 for item in attempt_errors):
                 _record_429()
-                print("[Gemini] 65 s cooldown started.", file=sys.stderr)
-        else:
-            print(f"[Gemini] HTTP {exc.code}: {message}", file=sys.stderr)
-        return None
-    except Exception as exc:
-        _set_last_error(kind="request", model=model, message=str(exc))
-        print(f"[Gemini] Request failed: {exc}", file=sys.stderr)
-        return None
+                logger.warning("Gemini cooldown started after exhausted HTTP 429 retries")
+            return None
+        except Exception as exc:
+            error = {
+                "kind": "request",
+                "model": model,
+                "message": str(exc),
+            }
+            attempt_errors.append(error)
+            _set_last_error(
+                **error,
+                attempted_models=list(attempted_models),
+                attempt_errors=list(attempt_errors),
+            )
+            logger.warning("Gemini article request failed model=%s error=%s", model, exc)
+            if attempt_index == 0:
+                logger.info("Retrying Gemini article with alternate model=%s", models[1])
+                continue
+            return None
+
+    return None
 
 
 def write_article_with_gemini(
@@ -502,9 +604,7 @@ Rules:
     payload = json.dumps({
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
-            "temperature": 0.55,
             "maxOutputTokens": 320,
-            "topP": 0.92,
         },
     }).encode("utf-8")
 
@@ -600,9 +700,7 @@ Rules:
     payload = json.dumps({
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
-            "temperature": 0.2,
             "maxOutputTokens": 220,
-            "topP": 0.8,
         },
     }).encode("utf-8")
 
@@ -715,9 +813,7 @@ Rules:
     payload = json.dumps({
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
-            "temperature": 0.1,
             "maxOutputTokens": 1200,
-            "topP": 0.8,
         },
     }).encode("utf-8")
 
@@ -854,9 +950,7 @@ Rules:
     payload = json.dumps({
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
-            "temperature": 0.2,
             "maxOutputTokens": 220,
-            "topP": 0.85,
         },
     }).encode("utf-8")
 

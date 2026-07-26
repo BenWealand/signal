@@ -203,11 +203,21 @@ def admin_set_user_role(
 def admin_x_status(authorization: str = Header(default="")):
     user = _require_admin(authorization)
     client = get_x_client()
+    from app.llm.gemini_writer import describe_last_gemini_error, get_last_gemini_error
+
+    gemini_error = get_last_gemini_error()
     return {
         "ok": True,
         "adminEmail": user.get("email"),
         "publicArticleBaseUrl": settings.public_article_base_url,
         "xClient": client.status(),
+        "gemini": {
+            "configured": bool(settings.gemini_api_key),
+            "fastModel": settings.gemini_fast_model,
+            "thoroughModel": settings.gemini_model,
+            "lastError": gemini_error,
+            "lastErrorMessage": describe_last_gemini_error() if gemini_error else "",
+        },
         "dryRunDefault": bool(settings.x_dry_run),
         "autoPostDefault": bool(settings.x_auto_post),
         "notes": [

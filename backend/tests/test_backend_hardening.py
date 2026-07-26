@@ -260,7 +260,10 @@ class BackendHardeningTest(unittest.TestCase):
             return _FakeResponse({"candidates": [{"content": {"parts": [{"text": fallback_text}]}}]})
 
         try:
-            with patch.object(gemini_writer.urllib.request, "urlopen", side_effect=fake_urlopen):
+            with (
+                patch.object(gemini_writer.urllib.request, "urlopen", side_effect=fake_urlopen),
+                patch.object(gemini_writer, "_sleep_before_retry", return_value=None),
+            ):
                 result = gemini_writer.write_article_with_gemini(
                     "test topic",
                     [{"source_name": "Source", "title": "Title", "raw_text": "Source material. " * 80}],
@@ -273,6 +276,124 @@ class BackendHardeningTest(unittest.TestCase):
         self.assertEqual(result, fallback_text.strip())
         self.assertEqual(len(calls), 2)
         self.assertIn("gemini-flash-lite-latest", calls[1])
+
+    def test_gemini_503_lite_model_falls_back_to_full_flash(self):
+        original_settings = gemini_writer.settings
+        original_last_error = gemini_writer._last_error
+        original_last_429 = gemini_writer._last_429_at
+        gemini_writer.settings = SimpleNamespace(
+            gemini_api_key="key",
+            gemini_model="gemini-flash-latest",
+            gemini_fast_model="gemini-2.5-flash-lite",
+        )
+        gemini_writer._last_429_at = 0.0
+        gemini_writer._call_times.clear()
+
+        article_text = "Paragraph one has enough detail to pass validation. " * 4
+        calls = []
+        requests = []
+
+        def fake_urlopen(req, timeout=30):
+            calls.append(req.full_url)
+            requests.append(req)
+            if len(calls) == 1:
+                body = json.dumps({
+                    "error": {
+                        "status": "UNAVAILABLE",
+                        "message": "This model is currently experiencing high demand.",
+                    },
+                }).encode("utf-8")
+                raise urllib.error.HTTPError(req.full_url, 503, "Unavailable", {}, io.BytesIO(body))
+            return _FakeResponse({"candidates": [{"content": {"parts": [{"text": article_text}]}}]})
+
+        try:
+            with (
+                patch.object(gemini_writer.urllib.request, "urlopen", side_effect=fake_urlopen),
+                patch.object(gemini_writer, "_sleep_before_retry", return_value=None),
+            ):
+                result = gemini_writer.write_article_with_gemini(
+                    "test topic",
+                    [{"source_name": "Source", "title": "Title", "raw_text": "Source material. " * 80}],
+                    mode="fast",
+                )
+        finally:
+            gemini_writer.settings = original_settings
+            gemini_writer._last_error = original_last_error
+            gemini_writer._last_429_at = original_last_429
+            gemini_writer._call_times.clear()
+
+        self.assertEqual(result, article_text.strip())
+        self.assertEqual(len(calls), 2)
+        self.assertIn("gemini-2.5-flash-lite", calls[0])
+        self.assertIn("gemini-flash-latest", calls[1])
+        generation_config = json.loads(requests[0].data.decode("utf-8"))["generationConfig"]
+        self.assertNotIn("temperature", generation_config)
+        self.assertNotIn("topP", generation_config)
+
+    def test_gemini_exhausted_failover_reports_provider_reason(self):
+        original_settings = gemini_writer.settings
+        original_last_error = gemini_writer._last_error
+        original_last_429 = gemini_writer._last_429_at
+        gemini_writer.settings = SimpleNamespace(
+            gemini_api_key="key",
+            gemini_model="gemini-flash-latest",
+            gemini_fast_model="gemini-2.5-flash-lite",
+        )
+        gemini_writer._last_429_at = 0.0
+        gemini_writer._call_times.clear()
+        calls = []
+
+        def fake_urlopen(req, timeout=30):
+            calls.append(req.full_url)
+            body = json.dumps({
+                "error": {
+                    "status": "UNAVAILABLE",
+                    "message": "This model is currently experiencing high demand.",
+                },
+            }).encode("utf-8")
+            raise urllib.error.HTTPError(req.full_url, 503, "Unavailable", {}, io.BytesIO(body))
+
+        try:
+            with (
+                patch.object(gemini_writer.urllib.request, "urlopen", side_effect=fake_urlopen),
+                patch.object(gemini_writer, "_sleep_before_retry", return_value=None),
+            ):
+                result = gemini_writer.write_article_with_gemini(
+                    "test topic",
+                    [{"source_name": "Source", "title": "Title", "raw_text": "Source material. " * 80}],
+                    mode="fast",
+                )
+            error = gemini_writer.get_last_gemini_error()
+            explanation = gemini_writer.describe_last_gemini_error()
+        finally:
+            gemini_writer.settings = original_settings
+            gemini_writer._last_error = original_last_error
+            gemini_writer._last_429_at = original_last_429
+            gemini_writer._call_times.clear()
+
+        self.assertIsNone(result)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(error["http_status"], 503)
+        self.assertEqual(len(error["attempted_models"]), 2)
+        self.assertIn("temporarily unavailable after trying 2 models", explanation)
+        self.assertIn("high demand", explanation)
+
+    def test_required_gemini_article_surfaces_diagnostic_reason(self):
+        reason = "Gemini is temporarily unavailable after trying 2 models (HTTP 503)."
+        with (
+            patch.object(gemini_writer, "write_article_package_with_gemini", return_value=None),
+            patch.object(gemini_writer, "describe_last_gemini_error", return_value=reason),
+        ):
+            with self.assertRaises(article_writer.GeminiArticleUnavailable) as ctx:
+                article_writer._article_body(
+                    "test topic",
+                    [{"source_name": "Source", "title": "Title", "raw_text": "Source material."}],
+                    [],
+                    [],
+                    require_gemini=True,
+                )
+
+        self.assertEqual(str(ctx.exception), reason)
 
     def test_gemini_retired_model_is_remapped_to_maintained_alias(self):
         original_settings = gemini_writer.settings
