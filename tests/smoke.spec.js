@@ -17,6 +17,9 @@ test("Hermes renders the X admin terminal as a standalone page", async ({ page }
   await expect(page.getByRole("heading", { name: "Hermes" })).toBeVisible();
   await expect(page.getByLabel("Hermes X publishing desk")).toBeVisible();
   await expect(page.locator(".hermes-workspace .x-admin-terminal")).toBeVisible();
+  await expect(page.getByText("X API usage terminal")).toBeVisible();
+  await expect(page.getByText("X admin terminal unavailable")).toHaveCount(0);
+  await expect(page.locator('a[href="/hermes"]')).toHaveCount(0);
   await expect(page.locator(".modal-backdrop")).toHaveCount(0);
   await page.setViewportSize({ width: 390, height: 844 });
   const overflows = await page.evaluate(

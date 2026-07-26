@@ -46,13 +46,12 @@ function explainAdminError(error) {
 }
 
 /**
- * Admin-only X usage board.
- * Requires a live `/admin/me` success — localStorage role spoofing is not enough.
- * Once verified for an account, stay open for that Settings session.
+ * X usage board. Settings requires a live `/admin/me` success; standalone
+ * operator surfaces may show the board while the API still enforces admin auth.
  */
-export function XUsageTerminal({ account, onToast }) {
-  const [allowed, setAllowed] = useState(false);
-  const [checking, setChecking] = useState(true);
+export function XUsageTerminal({ account, onToast, verifyAdminAccess = true }) {
+  const [allowed, setAllowed] = useState(() => !verifyAdminAccess);
+  const [checking, setChecking] = useState(() => verifyAdminAccess);
   const [verifyError, setVerifyError] = useState("");
   const [lines, setLines] = useState([]);
   const [status, setStatus] = useState(null);
@@ -93,6 +92,15 @@ export function XUsageTerminal({ account, onToast }) {
   useEffect(() => {
     let active = true;
     const currentAccount = accountRef.current;
+
+    if (!verifyAdminAccess) {
+      setAllowed(true);
+      setChecking(false);
+      setVerifyError("");
+      return () => {
+        active = false;
+      };
+    }
 
     if (identity && verifiedKeyRef.current === identity) {
       setAllowed(true);
@@ -159,7 +167,7 @@ export function XUsageTerminal({ account, onToast }) {
     return () => {
       active = false;
     };
-  }, [identity, retryToken]);
+  }, [identity, retryToken, verifyAdminAccess]);
 
   const refreshStatus = useCallback(async ({ quietToast = false } = {}) => {
     if (!hasApiBase()) {

@@ -21,7 +21,7 @@ export function HermesScreen({ account, onToast }) {
       </header>
 
       <div className="hermes-workspace" aria-label="Hermes X publishing desk">
-        <XUsageTerminal account={account} onToast={onToast} />
+        <XUsageTerminal account={account} onToast={onToast} verifyAdminAccess={false} />
       </div>
     </section>
   );
