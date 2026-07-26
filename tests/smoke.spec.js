@@ -10,6 +10,22 @@ test("homepage loads", async ({ page }) => {
   await expect(page.getByLabel("Build a sourced draft")).toBeVisible();
 });
 
+test("Hermes renders the X admin terminal as a standalone page", async ({ page }) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.goto("/hermes");
+  await expect(page.getByRole("heading", { name: "Hermes" })).toBeVisible();
+  await expect(page.getByLabel("Hermes X publishing desk")).toBeVisible();
+  await expect(page.locator(".hermes-workspace .x-admin-terminal")).toBeVisible();
+  await expect(page.locator(".modal-backdrop")).toHaveCount(0);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const overflows = await page.evaluate(
+    () => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+  );
+  expect(overflows).toBe(false);
+  expect(pageErrors).toEqual([]);
+});
+
 test("prompt submit reaches build state", async ({ page }) => {
   await page.getByLabel("Build a sourced draft").fill("regional banks commercial property loans");
   await page.getByRole("button", { name: "Write" }).click();

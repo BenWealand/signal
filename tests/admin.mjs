@@ -34,6 +34,7 @@ assert.equal(sectionPath("Sports"), "/sports");
 assert.equal(articlePath("abc"), "/article/abc");
 assert.equal(screenFromPathname("/sports"), "Sports");
 assert.equal(screenFromPathname("/trending"), "Trending");
+assert.equal(screenFromPathname("/hermes"), "Hermes");
 assert.equal(screenFromPathname("/article/xyz"), "Article");
 
 console.log("admin/auth helpers ok");

@@ -2948,6 +2948,43 @@ a.source-link-title:hover {
   min-width: 0;
 }
 
+.hermes-screen {
+  width: min(1380px, calc(100% - 2rem));
+}
+
+.hermes-screen > header {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.hermes-title-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.hermes-title-row p {
+  margin: 0;
+  color: #5f675e;
+  font-size: 0.82rem;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.hermes-workspace {
+  min-width: 0;
+  border-top: 1px solid #d7dbd1;
+  padding-top: 0.25rem;
+}
+
+.hermes-workspace .x-admin-terminal {
+  margin-top: 0;
+  border-top: 0;
+  padding-top: 0.85rem;
+}
+
 .x-admin-terminal-locked {
   color: #697167;
   font-size: 0.85rem;
@@ -3440,6 +3477,11 @@ a.source-link-title:hover {
 }
 
 @media (max-width: 720px) {
+  .hermes-title-row {
+    display: grid;
+    gap: 0.25rem;
+  }
+
   .x-admin-terminal-head {
     flex-direction: column;
   }

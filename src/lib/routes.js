@@ -33,6 +33,7 @@ export function screenFromPathname(pathname) {
   if (path === "/latest") return "Latest";
   if (path === "/trending") return "Trending";
   if (path === "/saved") return "Saved";
+  if (path === "/hermes") return "Hermes";
   if (path.startsWith("/article/")) return "Article";
   const section = SECTION_PATHS[path.slice(1)];
   return section || "Home";

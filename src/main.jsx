@@ -30,6 +30,7 @@ import { LatestScreen } from "./screens/Latest.jsx";
 import { TrendsScreen } from "./screens/Trends.jsx";
 import { SectionScreen } from "./screens/Section.jsx";
 import { SavedScreen } from "./screens/Saved.jsx";
+import { HermesScreen } from "./screens/Hermes.jsx";
 import { syncAccountWithBackend } from "./lib/auth.js";
 import { fetchSharedArticle, readArticleSessionCache, writeArticleSessionCache } from "./lib/articles.js";
 import { applyArticleShareMeta } from "./lib/articleMeta.js";
@@ -574,6 +575,14 @@ function App() {
                   onOpenAccount={() => setAccountOpen(true)}
                   onOpenArticle={openCommandArticle}
                 />
+              )
+            )}
+          />
+          <Route
+            path="hermes"
+            element={(
+              showBuild || showArticle ? null : (
+                <HermesScreen account={account} onToast={showToast} />
               )
             )}
           />
