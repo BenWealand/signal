@@ -96,6 +96,18 @@ class _FakeResponse:
         return json.dumps(self._payload).encode("utf-8")
 
 
+_VALID_ARTICLE_PARAGRAPHS = [
+    "The first paragraph contains enough sourced detail to pass article package validation cleanly.",
+    "The second paragraph adds confirmed context from the supplied public source material for readers.",
+]
+_VALID_ARTICLE_BODY = "\n\n".join(_VALID_ARTICLE_PARAGRAPHS)
+_VALID_ARTICLE_PACKAGE_TEXT = json.dumps({
+    "headline": "Public Sources Confirm Major Test Development",
+    "dek": "Multiple public reports provide the confirmed details used in this test article.",
+    "body": _VALID_ARTICLE_PARAGRAPHS,
+})
+
+
 class BackendHardeningTest(unittest.TestCase):
     def test_upsert_user_persists_supabase_user_id(self):
         cursor = _FakeCursor()
@@ -249,7 +261,7 @@ class BackendHardeningTest(unittest.TestCase):
         gemini_writer._last_429_at = 0.0
         gemini_writer._call_times.clear()
 
-        fallback_text = "Paragraph one has enough detail to pass validation. " * 4
+        fallback_text = _VALID_ARTICLE_PACKAGE_TEXT
         calls = []
 
         def fake_urlopen(_req, timeout=30):
@@ -273,7 +285,7 @@ class BackendHardeningTest(unittest.TestCase):
             gemini_writer._last_429_at = original_last_429
             gemini_writer._call_times.clear()
 
-        self.assertEqual(result, fallback_text.strip())
+        self.assertEqual(result, _VALID_ARTICLE_BODY)
         self.assertEqual(len(calls), 2)
         self.assertIn("gemini-flash-lite-latest", calls[1])
 
@@ -289,7 +301,7 @@ class BackendHardeningTest(unittest.TestCase):
         gemini_writer._last_429_at = 0.0
         gemini_writer._call_times.clear()
 
-        article_text = "Paragraph one has enough detail to pass validation. " * 4
+        article_text = _VALID_ARTICLE_PACKAGE_TEXT
         calls = []
         requests = []
 
@@ -322,13 +334,56 @@ class BackendHardeningTest(unittest.TestCase):
             gemini_writer._last_429_at = original_last_429
             gemini_writer._call_times.clear()
 
-        self.assertEqual(result, article_text.strip())
+        self.assertEqual(result, _VALID_ARTICLE_BODY)
         self.assertEqual(len(calls), 2)
         self.assertIn("gemini-2.5-flash-lite", calls[0])
         self.assertIn("gemini-flash-latest", calls[1])
+        self.assertIn(":generateContent", calls[0])
+        self.assertNotIn("streamGenerateContent", calls[0])
         generation_config = json.loads(requests[0].data.decode("utf-8"))["generationConfig"]
         self.assertNotIn("temperature", generation_config)
         self.assertNotIn("topP", generation_config)
+        self.assertEqual(generation_config["responseMimeType"], "application/json")
+        self.assertEqual(
+            generation_config["responseSchema"]["required"],
+            ["headline", "dek", "body"],
+        )
+
+    def test_gemini_incomplete_primary_response_retries_alternate_model(self):
+        original_settings = gemini_writer.settings
+        original_last_error = gemini_writer._last_error
+        original_last_429 = gemini_writer._last_429_at
+        gemini_writer.settings = SimpleNamespace(
+            gemini_api_key="key",
+            gemini_model="gemini-flash-latest",
+            gemini_fast_model="gemini-2.5-flash-lite",
+        )
+        gemini_writer._last_429_at = 0.0
+        gemini_writer._call_times.clear()
+        calls = []
+
+        def fake_urlopen(req, timeout=30):
+            calls.append(req.full_url)
+            text = "incomplete response" if len(calls) == 1 else _VALID_ARTICLE_PACKAGE_TEXT
+            return _FakeResponse({"candidates": [{"content": {"parts": [{"text": text}]}}]})
+
+        try:
+            with patch.object(gemini_writer.urllib.request, "urlopen", side_effect=fake_urlopen):
+                result = gemini_writer.write_article_with_gemini(
+                    "test topic",
+                    [{"source_name": "Source", "title": "Title", "raw_text": "Source material. " * 80}],
+                    mode="fast",
+                )
+        finally:
+            gemini_writer.settings = original_settings
+            gemini_writer._last_error = original_last_error
+            gemini_writer._last_429_at = original_last_429
+            gemini_writer._call_times.clear()
+
+        self.assertEqual(result, _VALID_ARTICLE_BODY)
+        self.assertEqual(len(calls), 2)
+        self.assertIn("gemini-2.5-flash-lite", calls[0])
+        self.assertIn("gemini-flash-latest", calls[1])
 
     def test_gemini_exhausted_failover_reports_provider_reason(self):
         original_settings = gemini_writer.settings
@@ -401,7 +456,7 @@ class BackendHardeningTest(unittest.TestCase):
         gemini_writer._last_429_at = 0.0
         gemini_writer._call_times.clear()
 
-        article_text = "Paragraph one has enough detail to pass validation. " * 4
+        article_text = _VALID_ARTICLE_PACKAGE_TEXT
         calls = []
 
         def fake_urlopen(_req, timeout=30):
@@ -418,7 +473,7 @@ class BackendHardeningTest(unittest.TestCase):
             gemini_writer.settings = original_settings
             gemini_writer._call_times.clear()
 
-        self.assertEqual(result, article_text.strip())
+        self.assertEqual(result, _VALID_ARTICLE_BODY)
         self.assertEqual(len(calls), 1)
         self.assertIn("gemini-flash-latest", calls[0])
         self.assertNotIn("gemini-2.0-flash", calls[0])
@@ -429,7 +484,7 @@ class BackendHardeningTest(unittest.TestCase):
         gemini_writer._last_429_at = 0.0
         gemini_writer._call_times.clear()
 
-        article_text = "Paragraph one has enough detail to pass validation. " * 4
+        article_text = _VALID_ARTICLE_PACKAGE_TEXT
         calls = []
 
         def fake_urlopen(_req, timeout=30):
@@ -449,7 +504,7 @@ class BackendHardeningTest(unittest.TestCase):
             gemini_writer.settings = original_settings
             gemini_writer._call_times.clear()
 
-        self.assertEqual(result, article_text.strip())
+        self.assertEqual(result, _VALID_ARTICLE_BODY)
         self.assertEqual(len(calls), 2)
         self.assertIn("gemini-9.9-flash-custom", calls[0])
         self.assertIn("gemini-flash-latest", calls[1])

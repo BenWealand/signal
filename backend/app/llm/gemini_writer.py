@@ -57,6 +57,28 @@ _RETIRED_MODELS = frozenset({
 _MODEL_ALIAS_FALLBACK = "gemini-flash-latest"       # always points at the current flash model
 _MODEL_LITE_FALLBACK  = "gemini-flash-lite-latest"  # separate quota bucket for 429 retries / fast mode
 _RETRYABLE_HTTP_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
+_ARTICLE_PACKAGE_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "headline": {
+            "type": "STRING",
+            "description": "A specific factual news headline of 8-14 words. Do not mention Signal.",
+        },
+        "dek": {
+            "type": "STRING",
+            "description": "A one-sentence factual summary under 24 words.",
+        },
+        "body": {
+            "type": "ARRAY",
+            "description": "The article body as separate substantive prose paragraphs.",
+            "items": {"type": "STRING"},
+            "minItems": 2,
+            "maxItems": 8,
+        },
+    },
+    "required": ["headline", "dek", "body"],
+    "propertyOrdering": ["headline", "dek", "body"],
+}
 
 
 def _active_model(mode: str = "thorough") -> str:
@@ -236,39 +258,61 @@ def _build_source_block(articles: list[dict], mode: str = "thorough") -> tuple[s
     return "\n---\n".join(blocks), len(blocks)
 
 
+def _validated_package(headline_value: object, dek_value: object, body_value: object) -> dict[str, str] | None:
+    headline = str(headline_value or "").strip().strip('"')
+    dek = str(dek_value or "").strip().strip('"')
+    if isinstance(body_value, list):
+        paragraphs = [str(item or "").strip() for item in body_value]
+    else:
+        body_text = str(body_value or "").strip()
+        paragraphs = [part.strip() for part in re.split(r"\n\s*\n", body_text) if part.strip()]
+        if len(paragraphs) < 2:
+            paragraphs = [line.strip() for line in body_text.splitlines() if len(line.strip()) > 60]
+    paragraphs = [paragraph for paragraph in paragraphs if len(paragraph) >= 40]
+    body = "\n\n".join(paragraphs)
+    if (
+        len(headline.split()) >= 4
+        and len(dek.split()) >= 5
+        and len(paragraphs) >= 2
+        and len(body) > 100
+    ):
+        return {"headline": headline, "dek": dek, "body": body}
+    return None
+
+
 def _parse_package_text(text: str) -> dict[str, str] | None:
-    """Parse the HEADLINE/DEK/BODY package format from a Gemini response."""
+    """Parse and validate a complete Gemini-authored article package."""
     cleaned = (text or "").strip()
     if not cleaned:
         return None
     if cleaned.startswith("```"):
-        cleaned = cleaned.strip("`")
-        if cleaned.lower().startswith("json"):
-            cleaned = cleaned[4:].strip()
-    # Prefer tagged package format.
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s*```$", "", cleaned).strip()
+
+    # Current requests use schema-enforced JSON.
+    try:
+        parsed = json.loads(cleaned)
+        if isinstance(parsed, dict):
+            package = _validated_package(
+                parsed.get("headline"),
+                parsed.get("dek"),
+                parsed.get("body"),
+            )
+            if package:
+                return package
+    except (TypeError, ValueError, json.JSONDecodeError):
+        pass
+
+    # Retain support for responses from deployments still using tagged prompts.
     headline_match = re.search(r"<<<HEADLINE>>>\s*(.+)", cleaned)
     dek_match = re.search(r"<<<DEK>>>\s*(.+)", cleaned)
     body_match = re.search(r"<<<BODY>>>\s*([\s\S]+)", cleaned)
     if headline_match and dek_match and body_match:
-        headline = headline_match.group(1).strip().strip('"')
-        dek = dek_match.group(1).strip().strip('"')
-        body = body_match.group(1).strip()
-        if len(headline.split()) >= 4 and len(dek.split()) >= 5 and len(body) > 100:
-            return {"headline": headline, "dek": dek, "body": body}
-    # JSON fallback.
-    try:
-        parsed = json.loads(cleaned)
-        if isinstance(parsed, dict):
-            headline = str(parsed.get("headline", "")).strip().strip('"')
-            dek = str(parsed.get("dek", "")).strip().strip('"')
-            body = str(parsed.get("body", "")).strip()
-            if len(headline.split()) >= 4 and len(dek.split()) >= 5 and len(body) > 100:
-                return {"headline": headline, "dek": dek, "body": body}
-    except Exception:
-        pass
-    # Body-only fallback for legacy callers / partial stream.
-    if len(cleaned) > 100 and "<<<HEADLINE>>>" not in cleaned:
-        return {"headline": "", "dek": "", "body": cleaned}
+        return _validated_package(
+            headline_match.group(1),
+            dek_match.group(1),
+            body_match.group(1),
+        )
     return None
 
 
@@ -292,18 +336,7 @@ Write a factual news article based ONLY on the source material above. Follow the
 5. Final paragraph: meaningful context or background, not a generic wrap-up.
 6. Do NOT invent any fact, quote, statistic, or name not present in the source material above.
 7. Correct all grammar and spelling. Write at a professional newspaper standard.
-8. Return EXACTLY this format and nothing else:
-
-<<<HEADLINE>>>
-A specific factual news headline, 8-14 words, no clickbait, do not mention Signal
-<<<DEK>>>
-A one-sentence summary under 24 words
-<<<BODY>>>
-paragraph 1
-
-paragraph 2
-
-..."""
+8. Return one complete article package matching the required JSON schema. Put each body paragraph in a separate array item."""
 
 
 def _emit_stream_progress(accumulated: str, on_chunk) -> None:
@@ -330,6 +363,17 @@ def _emit_stream_progress(accumulated: str, on_chunk) -> None:
         "headline": headline,
         "dek": dek,
     })
+
+
+def _response_text_from_parts(parts: object) -> str:
+    """Join every non-thought text part in response order."""
+    if not isinstance(parts, list):
+        return ""
+    return "".join(
+        str(part.get("text") or "")
+        for part in parts
+        if isinstance(part, dict) and not part.get("thought") and part.get("text")
+    ).strip()
 
 
 
@@ -371,8 +415,10 @@ def _call_gemini_package(
         if not parts:
             _set_last_error(kind="response", model=model, message="Gemini returned no content parts")
             return None
-        text = parts[0].get("text", "").strip()
-        return text if len(text) > 100 else None
+        text = _response_text_from_parts(parts)
+        if not text:
+            _set_last_error(kind="response", model=model, message="Gemini returned no final text")
+        return text or None
 
     accumulated = ""
     with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -391,12 +437,12 @@ def _call_gemini_package(
             except Exception:
                 continue
             parts = payload_obj.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-            delta = parts[0].get("text", "") if parts else ""
+            delta = _response_text_from_parts(parts)
             if not delta:
                 continue
             accumulated += delta
             _emit_stream_progress(accumulated, on_chunk)
-    return accumulated if len(accumulated) > 100 else None
+    return accumulated or None
 
 
 def write_article_package_with_gemini(
@@ -434,10 +480,14 @@ def write_article_package_with_gemini(
     payload = json.dumps({
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
-            "maxOutputTokens": 1400 if mode == "fast" else 1600,
+            "maxOutputTokens": 2400 if mode == "fast" else 3600,
+            "responseMimeType": "application/json",
+            "responseSchema": _ARTICLE_PACKAGE_SCHEMA,
         },
     }).encode("utf-8")
-    use_stream = on_chunk is not None
+    # The current image callback does not consume partial drafts. A complete
+    # response is easier to validate and avoids losing text split across SSE parts.
+    use_stream = False
 
     models = [primary_model, _alternate_model(primary_model)]
     attempted_models: list[str] = []
@@ -458,6 +508,15 @@ def write_article_package_with_gemini(
             )
             package = _parse_package_text(text or "")
             if package and package.get("body"):
+                if on_chunk:
+                    try:
+                        on_chunk({
+                            "draft_text": package["body"],
+                            "headline": package["headline"],
+                            "dek": package["dek"],
+                        })
+                    except Exception:
+                        logger.exception("Gemini article completion callback failed")
                 if attempt_index:
                     logger.info(
                         "Gemini article model failover succeeded primary=%s fallback=%s",
@@ -467,18 +526,31 @@ def write_article_package_with_gemini(
                 _clear_last_error()
                 return package
 
-            error = {
-                "kind": "response",
-                "model": model,
-                "message": "Gemini returned an unusable article package",
-            }
+            call_error = get_last_gemini_error()
+            if not text and call_error and call_error.get("model") == model:
+                error = {
+                    key: value
+                    for key, value in call_error.items()
+                    if key != "timestamp"
+                }
+            else:
+                error = {
+                    "kind": "response",
+                    "model": model,
+                    "message": "Gemini returned an unusable article package",
+                }
+            error["response_length"] = len(text or "")
             attempt_errors.append(error)
             _set_last_error(
                 **error,
                 attempted_models=list(attempted_models),
                 attempt_errors=list(attempt_errors),
             )
-            logger.warning("Gemini returned an unusable article package model=%s", model)
+            logger.warning(
+                "Gemini returned an unusable article package model=%s response_length=%s",
+                model,
+                error["response_length"],
+            )
             if attempt_index == 0:
                 logger.info("Retrying Gemini article with alternate model=%s", models[1])
                 continue

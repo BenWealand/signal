@@ -8,7 +8,11 @@ from unittest.mock import patch
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from app.llm.gemini_writer import _emit_stream_progress, _parse_package_text
+from app.llm.gemini_writer import (
+    _emit_stream_progress,
+    _parse_package_text,
+    _response_text_from_parts,
+)
 
 
 class GeminiPackageParseTest(unittest.TestCase):
@@ -52,6 +56,38 @@ Second paragraph confirming the sourced outcome from multiple public outlets cov
         self.assertEqual(package["headline"], "Markets Rally After Rate Decision")
         self.assertIn("Investors digested", package["dek"])
         self.assertIn("First paragraph", package["body"])
+
+    def test_parses_schema_json_with_body_paragraph_array(self):
+        text = json.dumps({
+            "headline": "Markets Rally After Central Bank Decision",
+            "dek": "Investors assessed the decision and its immediate effects across major markets.",
+            "body": [
+                "Stocks rose after the central bank published its latest decision, according to the supplied market reports.",
+                "Bond yields and currency markets also moved as investors reviewed the statement and its policy implications.",
+            ],
+        })
+        package = _parse_package_text(text)
+        self.assertEqual(package["headline"], "Markets Rally After Central Bank Decision")
+        self.assertEqual(len(package["body"].split("\n\n")), 2)
+
+    def test_rejects_body_only_text_without_gemini_header(self):
+        body_only = (
+            "The first paragraph contains enough material to resemble an article but has no Gemini headline. "
+            "It should not be accepted as a complete package.\n\n"
+            "The second paragraph confirms that body text alone is insufficient for publication."
+        )
+        self.assertIsNone(_parse_package_text(body_only))
+
+    def test_response_text_joins_all_non_thought_parts(self):
+        parts = [
+            {"text": "private reasoning", "thought": True},
+            {"text": '{"headline":"Markets Rally",'},
+            {"text": '"dek":"Investors respond","body":["One","Two"]}'},
+        ]
+        self.assertEqual(
+            _response_text_from_parts(parts),
+            '{"headline":"Markets Rally","dek":"Investors respond","body":["One","Two"]}',
+        )
 
     @patch("app.llm.gemini_writer._rate_limited", return_value=False)
     @patch("app.llm.gemini_writer.settings")
