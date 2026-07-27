@@ -720,6 +720,94 @@ Rules:
         return None
 
 
+def generic_news_prompt_from_x_posts_with_gemini(posts: list[dict]) -> str | None:
+    """
+    Turn a mixed batch of social posts into one neutral news-search prompt.
+
+    The result intentionally omits social commentary and unverified framing so
+    the regular article writer can find independent reporting on the event.
+    """
+    key = settings.gemini_api_key
+    if not key:
+        _set_last_error(kind="config", message="GEMINI_API_KEY is not set")
+        return None
+    if _rate_limited():
+        _set_last_error(kind="rate_limit", message="Local Gemini rate cap reached")
+        return None
+
+    post_lines: list[str] = []
+    for index, post in enumerate(posts[:50], start=1):
+        text = re.sub(r"\s+", " ", str(post.get("text") or "")).strip()[:500]
+        url = str(post.get("url") or "").strip()[:300]
+        if not text:
+            continue
+        post_lines.append(f"{index}. text={text}\n   url={url or '(none)'}")
+    if not post_lines:
+        _set_last_error(kind="input", message="No usable X post text was provided")
+        return None
+
+    model = _active_model("fast")
+    _clear_last_error()
+    prompt = f"""You are an assignment editor choosing one reported news story from a batch of X posts.
+
+Posts:
+{chr(10).join(post_lines)}
+
+Choose the strongest concrete event or announcement that is most likely to have recent, independent news coverage. Repeated references to the same event are a useful signal, but one specific official announcement can also qualify.
+
+Rules:
+1. Return a neutral web-search prompt of 4-12 words.
+2. Name the central person, organization, place, product, or event when the posts provide it.
+3. Remove opinions, insults, ideological framing, engagement bait, and unsupported conclusions.
+4. Do not treat a meme, reaction, vague remark, promotional greeting, or allegation as established fact.
+5. Phrase uncertain claims as a topic to verify, not as a fact.
+6. Do not mention X, tweets, posts, virality, or this batch.
+7. Return strict JSON only in this shape: {{"prompt":"..."}}."""
+
+    payload = json.dumps({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "maxOutputTokens": 100,
+            "responseMimeType": "application/json",
+        },
+    }).encode("utf-8")
+    url = f"{_API_BASE}/{urllib.parse.quote(model, safe='')}:generateContent"
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "x-goog-api-key": key,
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=18) as resp:
+            raw = resp.read().decode("utf-8", errors="ignore")
+        data = json.loads(raw)
+        parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        text = parts[0].get("text", "").strip() if parts else ""
+        if text.startswith("```"):
+            text = text.strip("`").removeprefix("json").strip()
+        parsed = json.loads(text)
+        generic_prompt = re.sub(r"\s+", " ", str(parsed.get("prompt") or "")).strip()
+        word_count = len(generic_prompt.split())
+        if not generic_prompt or not 3 <= word_count <= 16:
+            raise ValueError("Gemini returned an unusable news prompt")
+        return generic_prompt[:240].rstrip()
+    except urllib.error.HTTPError as exc:
+        if exc.code == 429:
+            _record_429()
+        _set_last_error(kind="http", model=model, http_status=exc.code, message=str(exc))
+        logger.warning("Gemini VM prompt generation HTTP %s: %s", exc.code, exc)
+        return None
+    except Exception as exc:
+        _set_last_error(kind="request", model=model, message=str(exc))
+        logger.warning("Gemini VM prompt generation failed: %s", exc)
+        return None
+
+
 def suggest_image_queries_with_gemini(
     headline: str = "",
     dek: str = "",
