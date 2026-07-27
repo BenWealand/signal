@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 import unittest
+import urllib.error
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -99,6 +100,47 @@ class VMGeminiPromptTests(unittest.TestCase):
                 },
             ])
         self.assertEqual(result, "Marvel Studios Ghost Rider Ryan Gosling announcement")
+
+    @patch.object(gemini_writer, "_rate_limited", return_value=False)
+    @patch.object(gemini_writer, "_record_429")
+    @patch.object(gemini_writer.urllib.request, "urlopen")
+    def test_gemini_prompt_retries_alternate_model(self, urlopen, record_429, _rate_limited):
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return json.dumps({
+                    "candidates": [{
+                        "content": {
+                            "parts": [{"text": '{"prompt":"Federal Reserve interest rate decision"}'}],
+                        },
+                    }],
+                }).encode("utf-8")
+
+        urlopen.side_effect = [
+            urllib.error.HTTPError("https://example", 429, "quota", {}, None),
+            FakeResponse(),
+        ]
+        with patch.object(
+            gemini_writer,
+            "settings",
+            SimpleNamespace(
+                gemini_api_key="test-key",
+                gemini_fast_model="gemini-flash-lite-latest",
+                gemini_model="gemini-flash-latest",
+            ),
+        ):
+            result = gemini_writer.generic_news_prompt_from_x_posts_with_gemini([
+                {"url": "https://x.com/example/status/1", "text": "Fed decision update"},
+            ])
+
+        self.assertEqual(result, "Federal Reserve interest rate decision")
+        self.assertEqual(urlopen.call_count, 2)
+        record_429.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -771,41 +771,68 @@ Rules:
             "responseMimeType": "application/json",
         },
     }).encode("utf-8")
-    url = f"{_API_BASE}/{urllib.parse.quote(model, safe='')}:generateContent"
-    req = urllib.request.Request(
-        url,
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "x-goog-api-key": key,
-        },
-        method="POST",
-    )
+    models = [model]
+    fallback_model = _alternate_model(model)
+    if fallback_model not in models:
+        models.append(fallback_model)
 
-    try:
-        with urllib.request.urlopen(req, timeout=18) as resp:
-            raw = resp.read().decode("utf-8", errors="ignore")
-        data = json.loads(raw)
-        parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-        text = parts[0].get("text", "").strip() if parts else ""
-        if text.startswith("```"):
-            text = text.strip("`").removeprefix("json").strip()
-        parsed = json.loads(text)
-        generic_prompt = re.sub(r"\s+", " ", str(parsed.get("prompt") or "")).strip()
-        word_count = len(generic_prompt.split())
-        if not generic_prompt or not 3 <= word_count <= 16:
-            raise ValueError("Gemini returned an unusable news prompt")
-        return generic_prompt[:240].rstrip()
-    except urllib.error.HTTPError as exc:
-        if exc.code == 429:
-            _record_429()
-        _set_last_error(kind="http", model=model, http_status=exc.code, message=str(exc))
-        logger.warning("Gemini VM prompt generation HTTP %s: %s", exc.code, exc)
-        return None
-    except Exception as exc:
-        _set_last_error(kind="request", model=model, message=str(exc))
-        logger.warning("Gemini VM prompt generation failed: %s", exc)
-        return None
+    attempted: list[str] = []
+    for index, active_model in enumerate(models):
+        attempted.append(active_model)
+        url = f"{_API_BASE}/{urllib.parse.quote(active_model, safe='')}:generateContent"
+        req = urllib.request.Request(
+            url,
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "x-goog-api-key": key,
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=18) as resp:
+                raw = resp.read().decode("utf-8", errors="ignore")
+            data = json.loads(raw)
+            parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+            text = parts[0].get("text", "").strip() if parts else ""
+            if text.startswith("```"):
+                text = text.strip("`").removeprefix("json").strip()
+            parsed = json.loads(text)
+            generic_prompt = re.sub(r"\s+", " ", str(parsed.get("prompt") or "")).strip()
+            word_count = len(generic_prompt.split())
+            if not generic_prompt or not 3 <= word_count <= 16:
+                raise ValueError("Gemini returned an unusable news prompt")
+            return generic_prompt[:240].rstrip()
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429:
+                _record_429()
+            retryable = exc.code in _RETRYABLE_HTTP_STATUSES and index + 1 < len(models)
+            logger.warning(
+                "Gemini VM prompt generation HTTP %s with %s%s",
+                exc.code,
+                active_model,
+                "; retrying alternate model" if retryable else "",
+            )
+            if retryable:
+                continue
+            _set_last_error(
+                kind="http",
+                model=active_model,
+                attempted_models=attempted,
+                http_status=exc.code,
+                message=str(exc),
+            )
+            return None
+        except Exception as exc:
+            _set_last_error(
+                kind="request",
+                model=active_model,
+                attempted_models=attempted,
+                message=str(exc),
+            )
+            logger.warning("Gemini VM prompt generation failed: %s", exc)
+            return None
+    return None
 
 
 def suggest_image_queries_with_gemini(
