@@ -1,4 +1,4 @@
-const MAX_POSTS = 50;
+const MAX_POSTS = 5;
 const BACKEND_TIMEOUT_MS = 290_000;
 
 function env(name) {
@@ -34,9 +34,14 @@ export default async function handler(request, response) {
     && !Array.isArray(post)
     && typeof post.url === "string"
     && typeof post.text === "string"
+    && ["reason", "angle", "source_assessment"].every(
+      (field) => post[field] === undefined || typeof post[field] === "string",
+    )
   ));
   if (!valid) {
-    return response.status(422).json({ detail: "Each post must contain string url and text fields" });
+    return response.status(422).json({
+      detail: "Each post must contain string url and text fields; editorial fields must also be strings",
+    });
   }
 
   const apiBase = (env("SIGNAL_API_URL") || env("VITE_SIGNAL_API_URL")).replace(/\/$/, "");

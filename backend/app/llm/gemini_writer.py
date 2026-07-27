@@ -739,9 +739,20 @@ def generic_news_prompt_from_x_posts_with_gemini(posts: list[dict]) -> str | Non
     for index, post in enumerate(posts[:50], start=1):
         text = re.sub(r"\s+", " ", str(post.get("text") or "")).strip()[:500]
         url = str(post.get("url") or "").strip()[:300]
+        reason = re.sub(r"\s+", " ", str(post.get("reason") or "")).strip()[:300]
+        angle = re.sub(r"\s+", " ", str(post.get("angle") or "")).strip()[:300]
+        source_assessment = re.sub(
+            r"\s+", " ", str(post.get("source_assessment") or "")
+        ).strip()[:300]
         if not text:
             continue
-        post_lines.append(f"{index}. text={text}\n   url={url or '(none)'}")
+        post_lines.append(
+            f"{index}. text={text}\n"
+            f"   url={url or '(none)'}\n"
+            f"   reason={reason or '(none)'}\n"
+            f"   angle={angle or '(none)'}\n"
+            f"   source_assessment={source_assessment or '(none)'}"
+        )
     if not post_lines:
         _set_last_error(kind="input", message="No usable X post text was provided")
         return None
@@ -758,11 +769,12 @@ Choose the strongest concrete event or announcement that is most likely to have 
 Rules:
 1. Return a neutral web-search prompt of 4-12 words.
 2. Name the central person, organization, place, product, or event when the posts provide it.
-3. Remove opinions, insults, ideological framing, engagement bait, and unsupported conclusions.
-4. Do not treat a meme, reaction, vague remark, promotional greeting, or allegation as established fact.
-5. Phrase uncertain claims as a topic to verify, not as a fact.
-6. Do not mention X, tweets, posts, virality, or this batch.
-7. Return strict JSON only in this shape: {{"prompt":"..."}}."""
+3. Treat reason, angle, and source_assessment as editorial hints, not verified facts.
+4. Remove opinions, insults, ideological framing, engagement bait, and unsupported conclusions.
+5. Do not treat a meme, reaction, vague remark, promotional greeting, or allegation as established fact.
+6. Phrase uncertain claims as a topic to verify, not as a fact.
+7. Do not mention X, tweets, posts, virality, or this batch.
+8. Return strict JSON only in this shape: {{"prompt":"..."}}."""
 
     payload = json.dumps({
         "contents": [{"parts": [{"text": prompt}]}],

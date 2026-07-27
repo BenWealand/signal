@@ -32,7 +32,12 @@ try {
   let received = null;
   globalThis.fetch = async (url, options) => {
     received = { url, options };
-    return new Response(JSON.stringify({ url: "https://x.com/intent/tweet?text=Draft" }), {
+    return new Response(JSON.stringify({
+      reply_links: [{
+        url: "https://x.com/example/status/1",
+        reply_url: "https://x.com/intent/tweet?text=Draft&in_reply_to=1",
+      }],
+    }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
@@ -42,16 +47,31 @@ try {
   await handler({
     method: "POST",
     headers: {},
-    body: [{ url: "https://x.com/example/status/1", text: "News update" }],
+    body: [{
+      url: "https://x.com/example/status/1",
+      text: "News update",
+      reason: "Official announcement",
+      angle: "Entertainment news",
+      source_assessment: "Primary source",
+    }],
   }, response);
 
   assert.equal(response.statusCode, 200);
   assert.equal(received.url, "https://signal-api.example/vm");
   assert.deepEqual(JSON.parse(received.options.body), [
-    { url: "https://x.com/example/status/1", text: "News update" },
+    {
+      url: "https://x.com/example/status/1",
+      text: "News update",
+      reason: "Official announcement",
+      angle: "Entertainment news",
+      source_assessment: "Primary source",
+    },
   ]);
   assert.deepEqual(JSON.parse(response.payload), {
-    url: "https://x.com/intent/tweet?text=Draft",
+    reply_links: [{
+      url: "https://x.com/example/status/1",
+      reply_url: "https://x.com/intent/tweet?text=Draft&in_reply_to=1",
+    }],
   });
 
   const invalidResponse = mockResponse();

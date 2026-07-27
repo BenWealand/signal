@@ -17,36 +17,101 @@ from app.x.models import XSharePackage
 
 
 class VMRoutingTests(unittest.TestCase):
-    def test_vm_returns_admin_x_intent_url(self):
+    def test_vm_returns_reply_link_for_each_post(self):
         request = SimpleNamespace(headers={}, client=SimpleNamespace(host="127.0.0.1"))
-        intent_url = "https://x.com/intent/tweet?text=Draft"
-        package = XSharePackage(
-            status="ready_to_post",
-            article_url="https://signal.example/article/write-1",
-            reply_text="Draft",
-            share={"intentUrl": intent_url},
-        )
+        intent_urls = [
+            "https://x.com/intent/tweet?text=Marvel&in_reply_to=101",
+            "https://x.com/intent/tweet?text=Senate&in_reply_to=202",
+        ]
+        packages = [
+            XSharePackage(
+                status="ready_to_post",
+                article_url="https://signal.example/article/write-1",
+                reply_text="Marvel draft",
+                share={"intentUrl": intent_urls[0]},
+            ),
+            XSharePackage(
+                status="ready_to_post",
+                article_url="https://signal.example/article/write-2",
+                reply_text="Senate draft",
+                share={"intentUrl": intent_urls[1]},
+            ),
+        ]
+        posts = [
+            VMPost(
+                url="https://x.com/MarvelStudios/status/101",
+                text="Black Panther announcement",
+                reason="Official casting announcement",
+                angle="Entertainment news",
+                source_assessment="Primary source",
+            ),
+            VMPost(
+                url="https://x.com/BasedMikeLee/status/202",
+                text="Senate recess objection",
+                reason="Senator announces procedural action",
+                angle="Political procedure",
+                source_assessment="Primary statement",
+            ),
+        ]
 
         with (
             patch.object(routes_vm, "_check_article_rate_limit"),
             patch.object(
                 routes_vm,
                 "generic_news_prompt_from_x_posts_with_gemini",
-                return_value="Berlin parade vehicle attack investigation",
+                side_effect=[
+                    "Black Panther 3 casting and release date",
+                    "Senate August recess procedural dispute",
+                ],
             ) as generalize,
-            patch.object(routes_vm, "write_article_for_candidate", return_value=package) as write,
+            patch.object(
+                routes_vm,
+                "write_article_for_candidate",
+                side_effect=packages,
+            ) as write,
+        ):
+            result = routes_vm.create_vm_draft(request, posts)
+
+        self.assertEqual(result, {
+            "reply_links": [
+                {"url": posts[0].url, "reply_url": intent_urls[0]},
+                {"url": posts[1].url, "reply_url": intent_urls[1]},
+            ],
+        })
+        self.assertEqual(generalize.call_count, 2)
+        self.assertEqual(write.call_count, 2)
+        first_candidate = write.call_args_list[0].args[0]
+        second_candidate = write.call_args_list[1].args[0]
+        self.assertEqual(first_candidate.post_id, "101")
+        self.assertEqual(second_candidate.post_id, "202")
+        self.assertEqual(first_candidate.provider, "manual-prompt")
+
+    def test_vm_returns_partial_results_with_errors(self):
+        request = SimpleNamespace(headers={}, client=SimpleNamespace(host="127.0.0.1"))
+        package = XSharePackage(
+            status="ready_to_post",
+            article_url="https://signal.example/article/write-1",
+            reply_text="Draft",
+            share={"intentUrl": "https://x.com/intent/tweet?text=Draft&in_reply_to=1"},
+        )
+        with (
+            patch.object(routes_vm, "_check_article_rate_limit"),
+            patch.object(
+                routes_vm,
+                "generic_news_prompt_from_x_posts_with_gemini",
+                return_value="Federal Reserve interest rate decision",
+            ),
+            patch.object(routes_vm, "write_article_for_candidate", return_value=package),
         ):
             result = routes_vm.create_vm_draft(
                 request,
-                [VMPost(url="https://x.com/example/status/1", text="Breaking event update")],
+                [
+                    VMPost(url="https://x.com/example/status/1", text="Fed update"),
+                    VMPost(url="https://example.com/not-x", text="Other update"),
+                ],
             )
-
-        self.assertEqual(result, {"url": intent_url})
-        generalize.assert_called_once()
-        candidate = write.call_args.args[0]
-        self.assertEqual(candidate.prompt, "Berlin parade vehicle attack investigation")
-        self.assertEqual(candidate.provider, "manual-prompt")
-        self.assertEqual(write.call_args.kwargs["mode"], "fast")
+        self.assertEqual(len(result["reply_links"]), 1)
+        self.assertEqual(result["errors"][0]["url"], "https://example.com/not-x")
 
     def test_vm_rejects_posts_without_text(self):
         request = SimpleNamespace(headers={}, client=SimpleNamespace(host="127.0.0.1"))
@@ -97,9 +162,16 @@ class VMGeminiPromptTests(unittest.TestCase):
                 {
                     "url": "https://x.com/MarvelStudios/status/1",
                     "text": "Ryan Gosling will star in Marvel Studios' Ghost Rider.",
+                    "reason": "Official casting announcement",
+                    "angle": "Entertainment news",
+                    "source_assessment": "Primary source",
                 },
             ])
         self.assertEqual(result, "Marvel Studios Ghost Rider Ryan Gosling announcement")
+        request_prompt = json.loads(urlopen.call_args.args[0].data)["contents"][0]["parts"][0]["text"]
+        self.assertIn("reason=Official casting announcement", request_prompt)
+        self.assertIn("angle=Entertainment news", request_prompt)
+        self.assertIn("source_assessment=Primary source", request_prompt)
 
     @patch.object(gemini_writer, "_rate_limited", return_value=False)
     @patch.object(gemini_writer, "_record_429")
