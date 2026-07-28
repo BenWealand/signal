@@ -13,7 +13,7 @@ Vercel frontend:
 Render backend:
 
 - `DATABASE_URL=postgresql://...`
-- `GEMINI_API_KEY=...`
+- `OPENCODE_API_KEY=...`
 - `CORS_ORIGINS=https://your-vercel-site.vercel.app`
 - `PUBLIC_ARTICLE_BASE_URL=https://your-vercel-site.vercel.app`
 - `SIGNAL_API_TOKEN=...`
@@ -42,7 +42,7 @@ Expected:
 
 ## Cleanup
 
-Purge obvious legacy/non-Gemini generated rows before launch:
+Purge obvious legacy/non-Zen generated rows before launch:
 
 ```bash
 curl -X POST \
@@ -61,7 +61,7 @@ Open the Vercel URL and verify:
 
 - Home loads without a blank white screen.
 - The prompt box says the newsroom is waking/sourcing when generating.
-- A failed Gemini/source write shows: `Could not generate from enough reliable sources. Try a more specific prompt.`
+- A failed Zen/source write shows: `Could not generate from enough reliable sources. Try a more specific prompt.`
 - No backend-configured article screen shows `local`, `demo`, `fallback`, or `preview draft` as if it were a generated article.
 - Globe markers only appear for detected locations and move with the globe.
 - Latest, Trending, World, Politics, Markets, Technology, Climate, and Saved screens load.

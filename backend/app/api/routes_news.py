@@ -244,7 +244,7 @@ def _generate_fast_section_articles(section: str, count: int | None = None) -> N
         if queries.generated_prompt_exists_recent(prompt, settings.section_fast_min_age_minutes):
             continue
         try:
-            article = write_article_from_prompt(prompt, limit=10, use_gemini=True, mode="fast")
+            article = write_article_from_prompt(prompt, limit=10, use_zen=True, mode="fast")
             article["section"] = slug
             article["source"] = "Signal desk"
             article["tag"] = "fast-draft"

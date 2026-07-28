@@ -133,7 +133,7 @@ def match_x_urls_to_articles(
     article_limit: int = 80,
 ) -> dict[str, Any]:
     """
-    Resolve pasted X URLs, load recent ready articles, and match with Gemini.
+    Resolve pasted X URLs, load recent ready articles, and match with OpenCode Zen.
 
     Returns rows ready for the admin terminal to view / reply / post.
     """
@@ -176,18 +176,18 @@ def match_x_urls_to_articles(
     catalog = _article_catalog(articles)
     article_by_id = {str(article.get("id")): article for article in articles}
 
-    gemini_matches = None
+    zen_matches = None
     source = "fallback"
     if catalog and any(post.get("text") for post in posts):
         try:
-            from app.llm.gemini_writer import match_x_posts_to_articles_with_gemini
+            from app.llm.zen_writer import match_x_posts_to_articles_with_zen
 
-            gemini_matches = match_x_posts_to_articles_with_gemini(posts, catalog)
+            zen_matches = match_x_posts_to_articles_with_zen(posts, catalog)
         except Exception:
-            gemini_matches = None
-    if gemini_matches is not None:
-        source = "gemini"
-        raw_matches = gemini_matches
+            zen_matches = None
+    if zen_matches is not None:
+        source = "zen"
+        raw_matches = zen_matches
     else:
         raw_matches = _fallback_matches(posts, articles)
 

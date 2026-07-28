@@ -135,7 +135,7 @@ export function XFeedDraftQueue({ dryRun, replyUrl, busy, setBusy, push, onToast
           <em>
             {replyUrl.trim()
               ? "Selected articles will be posted as replies to the X link above."
-              : "Unique Gemini articles published across Signal desks in the last 24 hours."}
+              : "Unique Zen articles published across Signal desks in the last 24 hours."}
           </em>
         </div>
         <div className="x-admin-draft-actions">
@@ -220,7 +220,7 @@ export function XFeedDraftQueue({ dryRun, replyUrl, busy, setBusy, push, onToast
             })}
           </div>
         ) : (
-          <p className="x-admin-feed-empty">No eligible Gemini articles were published in the last 24 hours.</p>
+          <p className="x-admin-feed-empty">No eligible Zen articles were published in the last 24 hours.</p>
         )
       ) : null}
     </section>

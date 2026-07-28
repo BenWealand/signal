@@ -34,7 +34,7 @@ class XUrlMatchTests(unittest.TestCase):
             ],
         )
 
-    def test_match_urls_uses_gemini_and_builds_reply_packages(self):
+    def test_match_urls_uses_zen_and_builds_reply_packages(self):
         article = {
             "id": "write-1",
             "headline": "Federal Reserve Holds Rates Steady",
@@ -44,7 +44,7 @@ class XUrlMatchTests(unittest.TestCase):
             "xShare": {"posted": False},
         }
         posts_text = "https://x.com/markets/status/999"
-        gemini_rows = [
+        zen_rows = [
             {
                 "postId": "999",
                 "articleId": "write-1",
@@ -67,14 +67,14 @@ class XUrlMatchTests(unittest.TestCase):
             patch.object(match_mod, "get_x_client", return_value=client),
             patch.object(match_mod.queries, "list_recent_x_feed_articles", return_value=[article]),
             patch(
-                "app.llm.gemini_writer.match_x_posts_to_articles_with_gemini",
-                return_value=gemini_rows,
+                "app.llm.zen_writer.match_x_posts_to_articles_with_zen",
+                return_value=zen_rows,
             ),
             patch.object(match_mod, "article_public_url", return_value="https://signal.example/article/write-1"),
         ):
             result = match_mod.match_x_urls_to_articles(posts_text, hours=72)
 
-        self.assertEqual(result["source"], "gemini")
+        self.assertEqual(result["source"], "zen")
         self.assertEqual(result["matched"], 1)
         row = result["rows"][0]
         self.assertEqual(row["articleId"], "write-1")
@@ -108,15 +108,16 @@ class XUrlMatchTests(unittest.TestCase):
         self.assertIs(run.call_args.kwargs["write_fn"], routes_admin.write_article_from_prompt)
 
 
-class GeminiMatchParseTest(unittest.TestCase):
-    @patch("app.llm.gemini_writer._rate_limited", return_value=False)
-    @patch("app.llm.gemini_writer.settings")
-    @patch("app.llm.gemini_writer.urllib.request.urlopen")
-    def test_match_x_posts_to_articles_with_gemini(self, urlopen, settings, _rate):
-        from app.llm.gemini_writer import match_x_posts_to_articles_with_gemini
+class ZenMatchParseTest(unittest.TestCase):
+    @patch("app.llm.zen_writer._rate_limited", return_value=False)
+    @patch("app.llm.zen_writer.settings")
+    @patch("app.llm.zen_writer.urllib.request.urlopen")
+    def test_match_x_posts_to_articles_with_zen(self, urlopen, settings, _rate):
+        from app.llm.zen_writer import match_x_posts_to_articles_with_zen
 
-        settings.gemini_api_key = "test-key"
-        settings.gemini_fast_model = "gemini-flash-lite-latest"
+        settings.opencode_api_key = "test-key"
+        settings.opencode_fast_model = "deepseek-v4-flash"
+        settings.opencode_model = "deepseek-v4-flash"
 
         class FakeResp:
             def __enter__(self):
@@ -128,23 +129,19 @@ class GeminiMatchParseTest(unittest.TestCase):
             def read(self, *_args):
                 return json.dumps(
                     {
-                        "candidates": [
+                        "choices": [
                             {
-                                "content": {
-                                    "parts": [
-                                        {
-                                            "text": json.dumps(
-                                                [
-                                                    {
-                                                        "postId": "1",
-                                                        "articleId": "a1",
-                                                        "confidence": 0.8,
-                                                        "reason": "same story",
-                                                    }
-                                                ]
-                                            )
-                                        }
-                                    ]
+                                "message": {
+                                    "content": json.dumps(
+                                        [
+                                            {
+                                                "postId": "1",
+                                                "articleId": "a1",
+                                                "confidence": 0.8,
+                                                "reason": "same story",
+                                            }
+                                        ]
+                                    )
                                 }
                             }
                         ]
@@ -152,12 +149,15 @@ class GeminiMatchParseTest(unittest.TestCase):
                 ).encode("utf-8")
 
         urlopen.return_value = FakeResp()
-        rows = match_x_posts_to_articles_with_gemini(
+        rows = match_x_posts_to_articles_with_zen(
             [{"postId": "1", "text": "Fed holds rates", "author": "markets"}],
             [{"id": "a1", "headline": "Federal Reserve Holds Rates", "dek": "Steady policy", "section": "markets"}],
         )
         self.assertEqual(rows[0]["articleId"], "a1")
         self.assertEqual(rows[0]["confidence"], 0.8)
+        request = urlopen.call_args.args[0]
+        self.assertIn("opencode.ai/zen/v1/chat/completions", request.full_url)
+        self.assertEqual(json.loads(request.data)["model"], "deepseek-v4-flash")
 
 
 if __name__ == "__main__":

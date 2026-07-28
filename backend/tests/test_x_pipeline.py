@@ -12,7 +12,7 @@ from app.x.client import XApiNotConfigured, XClient
 from app.x.filter import filter_candidates, is_actionable_candidate
 from app.x.models import XCandidate
 from app.x.pipeline import maybe_share_package, run_x_pipeline, write_article_for_candidate
-from app.processing.article_writer import GeminiArticleUnavailable
+from app.processing.article_writer import ZenArticleUnavailable
 from app.x.reply import article_public_url, build_prompt, share_intent_url, x_reply_text
 from app.x import reply as reply_mod
 from app.x import client as client_mod
@@ -300,7 +300,7 @@ class XPipelineTests(unittest.TestCase):
         def fake_write(prompt, limit, mode, build_id):
             calls.append(prompt)
             if len(calls) == 1:
-                raise GeminiArticleUnavailable("No accessible sources were found for a Gemini draft")
+                raise ZenArticleUnavailable("No accessible sources were found for an OpenCode Zen draft")
             return {
                 "id": "write-3",
                 "headline": "Coastal Insurance Pressure Rises",

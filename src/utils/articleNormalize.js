@@ -22,7 +22,7 @@ const FALLBACK_REASON_NOTES = {
   no_accessible_sources: "Signal could not find enough accessible reporting on this topic yet. Try a slightly more specific search.",
   quality_gate_failed: "Not enough independent reporting has surfaced on this topic yet for a full edition. Try a more specific search.",
   processing_failed: "Signal gathered coverage but could not finish a full edition. Try again in a moment.",
-  snippet_only_fast_mode: "This older quick edition drew on short source snippets. Rewrite it for a Gemini-sourced edition.",
+  snippet_only_fast_mode: "This older quick edition drew on short source snippets. Rewrite it for a Zen-sourced edition.",
   local_simulation: "An offline preview draft prepared without the backend.",
 };
 
@@ -44,7 +44,7 @@ export function articleStateFor(article = {}) {
       return {
         kind: "offline_preview",
         label: "Offline preview",
-        detail: "A local preview for offline development. Backend-configured builds use Gemini-sourced articles.",
+        detail: "A local preview for offline development. Backend-configured builds use Zen-sourced articles.",
       };
     }
     return article.articleState;
@@ -54,7 +54,7 @@ export function articleStateFor(article = {}) {
       kind: "legacy_limited",
       label: "Legacy limited article",
       detail: FALLBACK_REASON_NOTES[String(article.fallback_reason)]
-        || "This older saved article predates the Gemini-only writing policy.",
+        || "This older saved article predates the Zen-only writing policy.",
     };
   }
   if (article.generation_mode === "fast") {
@@ -83,7 +83,7 @@ export function articleStateFor(article = {}) {
   return {
     kind: "offline_preview",
     label: "Offline preview",
-    detail: "A local preview for offline development. Backend-configured builds use Gemini-sourced articles.",
+    detail: "A local preview for offline development. Backend-configured builds use Zen-sourced articles.",
   };
 }
 

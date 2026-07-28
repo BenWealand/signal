@@ -55,7 +55,7 @@ class SectionFastGenerationTest(unittest.TestCase):
 
         self.assertEqual(len(articles), 3)
         self.assertTrue(all(kwargs["mode"] == "fast" for _prompt, kwargs in articles))
-        self.assertTrue(all(kwargs["use_gemini"] is True for _prompt, kwargs in articles))
+        self.assertTrue(all(kwargs["use_zen"] is True for _prompt, kwargs in articles))
         saved_sections = [call.args[0]["section"] for call in save_article.call_args_list]
         self.assertEqual(saved_sections, ["markets", "markets", "markets"])
 

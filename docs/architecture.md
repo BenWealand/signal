@@ -12,7 +12,7 @@ React/Vite frontend
     -> trafilatura article extraction
     -> local NLP/claim logic
     -> optional ML semantic similarity
-    -> optional Gemini/OpenAI
+    -> optional OpenCode Zen/OpenAI
 ```
 
 Main code paths:
@@ -136,7 +136,7 @@ The core processing functions are:
 - `extract_claims`
 - `detect_consensus`
 - `generate_summary`
-- `write_article_with_gemini`
+- `write_article_with_zen`
 
 Default behavior is local and cheap:
 
@@ -144,7 +144,7 @@ Default behavior is local and cheap:
 - Entity extraction has a fallback.
 - Claim extraction is rule-based unless LLM claims are enabled.
 - Consensus tries semantic embeddings and falls back to Jaccard.
-- Article prose uses Gemini only when configured, then falls back to rule-based paragraphs.
+- Article prose uses OpenCode Zen when configured; required writes fail without a usable Zen draft.
 
 ## Database Tables
 

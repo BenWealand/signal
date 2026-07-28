@@ -282,7 +282,7 @@ class OpenverseImagesTest(unittest.TestCase):
         warning.assert_called()
 
     @patch(
-        "app.llm.gemini_writer.suggest_image_queries_with_gemini",
+        "app.llm.zen_writer.suggest_image_queries_with_zen",
         return_value=["Hull City Wembley", "English Football League final", "Wembley Stadium playoff", "Hull City promotion", "Championship final crowd"],
     )
     @patch("app.ingest.openverse_images.find_openverse_image")
@@ -314,7 +314,7 @@ class OpenverseImagesTest(unittest.TestCase):
 
         self.assertEqual(image["title"], "English Football League playoff final at Wembley")
         find_image.assert_called()
-        # Finished-article pass asks Gemini for top 5 ideas and searches those.
+        # Finished-article pass asks Zen for top 5 ideas and searches those.
         final_call = find_image.call_args_list[-1]
         preferred = final_call.kwargs.get("preferred_queries") or []
         self.assertEqual(preferred[0], "Hull City Wembley")
@@ -326,7 +326,7 @@ class OpenverseImagesTest(unittest.TestCase):
         self.assertLessEqual(find_image.call_count, 2)
 
     @patch(
-        "app.llm.gemini_writer.suggest_image_queries_with_gemini",
+        "app.llm.zen_writer.suggest_image_queries_with_zen",
         return_value=["Jerome Powell Federal Reserve", "Federal Reserve building", "Jerome Powell podium", "FOMC meeting", "US central bank"],
     )
     @patch("app.ingest.openverse_images.find_openverse_image")
@@ -353,11 +353,11 @@ class OpenverseImagesTest(unittest.TestCase):
         self.assertGreaterEqual(find_image.call_count, 1)
 
     @patch(
-        "app.llm.gemini_writer.suggest_image_queries_with_gemini",
+        "app.llm.zen_writer.suggest_image_queries_with_zen",
         return_value=["Lamine Yamal Spain", "Argentina World Cup final", "Spain national team", "Atlanta stadium", "World Cup trophy"],
     )
     @patch("app.ingest.openverse_images.find_openverse_image")
-    def test_finalize_uses_gemini_people_first_queries(self, find_image, suggest):
+    def test_finalize_uses_zen_people_first_queries(self, find_image, suggest):
         find_image.side_effect = [
             {},  # warm-up miss
             {
@@ -414,7 +414,7 @@ class OpenverseImagesTest(unittest.TestCase):
         )
 
     @patch(
-        "app.llm.gemini_writer.suggest_image_queries_with_gemini",
+        "app.llm.zen_writer.suggest_image_queries_with_zen",
         return_value=["Jerome Powell Federal Reserve", "Federal Reserve chair", "FOMC meeting", "US interest rates podium", "Federal Reserve building"],
     )
     @patch("app.ingest.openverse_images.find_openverse_image")
@@ -446,7 +446,7 @@ class OpenverseImagesTest(unittest.TestCase):
         self.assertNotIn("inflation interest rates", first_topic)
 
     @patch(
-        "app.llm.gemini_writer.suggest_image_queries_with_gemini",
+        "app.llm.zen_writer.suggest_image_queries_with_zen",
         return_value=["Hull City Wembley", "Championship playoff final", "Wembley Stadium", "Hull City promotion", "English Football League"],
     )
     @patch("app.ingest.openverse_images.find_openverse_image")

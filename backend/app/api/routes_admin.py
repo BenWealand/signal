@@ -203,20 +203,20 @@ def admin_set_user_role(
 def admin_x_status(authorization: str = Header(default="")):
     user = _require_admin(authorization)
     client = get_x_client()
-    from app.llm.gemini_writer import describe_last_gemini_error, get_last_gemini_error
+    from app.llm.zen_writer import describe_last_zen_error, get_last_zen_error
 
-    gemini_error = get_last_gemini_error()
+    zen_error = get_last_zen_error()
     return {
         "ok": True,
         "adminEmail": user.get("email"),
         "publicArticleBaseUrl": settings.public_article_base_url,
         "xClient": client.status(),
-        "gemini": {
-            "configured": bool(settings.gemini_api_key),
-            "fastModel": settings.gemini_fast_model,
-            "thoroughModel": settings.gemini_model,
-            "lastError": gemini_error,
-            "lastErrorMessage": describe_last_gemini_error() if gemini_error else "",
+        "zen": {
+            "configured": bool(settings.opencode_api_key),
+            "fastModel": settings.opencode_fast_model,
+            "thoroughModel": settings.opencode_model,
+            "lastError": zen_error,
+            "lastErrorMessage": describe_last_zen_error() if zen_error else "",
         },
         "dryRunDefault": bool(settings.x_dry_run),
         "autoPostDefault": bool(settings.x_auto_post),
@@ -328,7 +328,7 @@ def admin_x_run(
         dry_run=payload.dry_run,
         auto_post=payload.auto_post,
         candidates=manual_candidates,
-        # Same writer path as regular article generation (no extra Gemini gate).
+        # Same writer path as regular article generation (no extra Zen gate).
         write_fn=write_article_from_prompt,
     )
     packages = []
@@ -358,7 +358,7 @@ def admin_x_feed_drafts(
     limit: int = 100,
     authorization: str = Header(default=""),
 ):
-    """Draft X posts for unique Gemini articles currently visible in the feeds."""
+    """Draft X posts for unique Zen articles currently visible in the feeds."""
     _require_admin(authorization)
     safe_hours = min(max(int(hours or 24), 1), 168)
     safe_limit = min(max(int(limit or 100), 1), 200)
@@ -415,7 +415,7 @@ def admin_x_feed_share(
     if not article:
         raise HTTPException(status_code=404, detail="Article not found")
     if article.get("generation_mode") not in {"fast", "thorough"}:
-        raise HTTPException(status_code=422, detail="Only Gemini feed articles can be posted")
+        raise HTTPException(status_code=422, detail="Only Zen feed articles can be posted")
 
     existing = queries.get_posted_x_share(payload.article_id)
     if existing and not payload.dry_run:

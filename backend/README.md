@@ -82,7 +82,7 @@ Use the connection string for your own Supabase region/project.
 
 ```env
 PUBLIC_ARTICLE_BASE_URL=http://127.0.0.1:5175
-GEMINI_MODEL=gemini-flash-latest
+OPENCODE_MODEL=deepseek-v4-flash
 CLAIM_MODEL=gpt-4o-mini
 SUMMARY_MODEL=gpt-4o-mini
 USE_LLM_CLAIMS=false
@@ -94,18 +94,18 @@ SIGNAL_ARTICLE_IMAGE_WAIT=8
 ```
 
 Article images use Openverse's anonymous API to select one relevant, openly
-licensed raster image. After the article finishes writing, Gemini reads the
+licensed raster image. After the article finishes writing, OpenCode Zen reads the
 finished story and proposes its top 5 photographic search ideas (ranked by
 relevance). Signal then tries those ideas against Openverse, with a longer
 timeout before publishing with no image. An optional warm-up may start from the
-prompt while writing, but the finished-article Gemini pass is authoritative.
+prompt while writing, but the finished-article Zen pass is authoritative.
 Auto-generated desk/section articles use the same path: when the internal topic
 is a broad keyword bag, warm-up uses concrete source headlines or waits for the
 finished article. Queries must be concrete — named people first, then named
 teams, products, events, or objects — never broad topic phrases like "economy",
 "interest rates", or a bare country name. Countries/cities are expanded into
 concrete visuals such as flags, national teams, or leaders. Mid-stream draft text
-is not used for Openverse searches. Lookups prefer Gemini's finished-article
+is not used for Openverse searches. Lookups prefer Zen's finished-article
 ideas, then named entities in order: person, event, organization, place (GPE),
 product, law, then date. Candidates are kept when their titles align with the
 article text, or when the title contains an exact article entity (person, event,
@@ -126,7 +126,7 @@ Prompt filtering:
 ## Optional Provider Keys
 
 ```env
-GEMINI_API_KEY=
+OPENCODE_API_KEY=
 OPENAI_API_KEY=
 NEWS_API_KEY=
 CURRENTS_API_KEY=
@@ -139,8 +139,8 @@ GDELT_QUERIES=
 
 Behavior:
 
-- No Gemini key: generated article writes fail without saving an article.
-- Gemini rate limit/API failure: generated article writes fail without saving an article.
+- No OpenCode Zen key: generated article writes fail without saving an article.
+- Zen rate limit/API failure: generated article writes fail without saving an article.
 - No OpenAI key: local claim extraction is used.
 - `USE_LLM_CLAIMS=false`: OpenAI is not used for claim extraction.
 - No paid/news provider keys: RSS, Bing News RSS, and GDELT still provide candidates.
@@ -289,8 +289,8 @@ Signal is wired to spend money late:
 6. Extract claims with local rules by default.
 7. Optionally enable LLM claim extraction with `USE_LLM_CLAIMS=true`.
 8. Compare claims locally first.
-9. Use Gemini for final prose.
-10. Fail the write without saving an article when Gemini cannot produce a usable draft.
+9. Use OpenCode Zen for final prose.
+10. Fail the write without saving an article when Zen cannot produce a usable draft.
 
 ## Tests
 
@@ -299,7 +299,7 @@ cd backend
 python -m unittest discover tests
 ```
 
-The existing test suite covers agent access, article parsing, source ranking/filtering, prompt article metadata, Gemini-only prompt writes, claim extraction, text cleaning, and consensus grouping.
+The existing test suite covers agent access, article parsing, source ranking/filtering, prompt article metadata, Zen-only prompt writes, claim extraction, text cleaning, and consensus grouping.
 
 ## Troubleshooting
 
@@ -313,11 +313,11 @@ The API started, but startup table creation failed. Check backend logs and datab
 
 Article generation finds too few sources
 
-Try a more specific prompt, add optional provider keys, or wait for RSS/GDELT availability. The writer now fails without saving an article when source coverage is not strong enough for a Gemini draft.
+Try a more specific prompt, add optional provider keys, or wait for RSS/GDELT availability. The writer now fails without saving an article when source coverage is not strong enough for a Zen draft.
 
-Gemini does not write articles
+OpenCode Zen does not write articles
 
-Check `GEMINI_API_KEY`, `GEMINI_MODEL`, `/articles/test-gemini`, and rate limits. Prompt and section article generation now require a usable Gemini draft.
+Check `OPENCODE_API_KEY`, `OPENCODE_MODEL`, `/articles/test-zen`, and rate limits. Prompt and section article generation now require a usable Zen draft.
 
 ML packages are slow or fail to install
 

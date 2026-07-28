@@ -8,7 +8,7 @@ from typing import Any, Callable
 from app.config import settings
 from app.db import queries
 from app.policy.prompt_filter import prompt_is_blocked
-from app.processing.article_writer import GeminiArticleUnavailable, write_article_from_prompt
+from app.processing.article_writer import ZenArticleUnavailable, write_article_from_prompt
 from app.x.client import XApiNotConfigured, get_x_client
 from app.x.filter import filter_candidates, is_actionable_candidate
 from app.x.models import XCandidate, XSharePackage
@@ -162,7 +162,7 @@ def write_article_for_candidate(
     writer = write_fn or write_article_from_prompt
     try:
         article = writer(prompt, limit=limit, mode=mode, build_id=build_id)
-    except GeminiArticleUnavailable as exc:
+    except ZenArticleUnavailable as exc:
         return XSharePackage(
             status="error",
             article_url="",

@@ -37,7 +37,7 @@ def _paragraphs_from_article(article: dict) -> list[str]:
 
 
 def build_prompt(candidate_topic: str = "", snippet: str = "", prompt: str = "") -> str:
-    """Merge topic/snippet/prompt into a single news query for Gemini."""
+    """Merge topic/snippet/prompt into a single news query for OpenCode Zen."""
     prompt = _clean(prompt, 240)
     topic = _clean(candidate_topic, 120)
     snippet = _clean(snippet, 280)
