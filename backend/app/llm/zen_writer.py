@@ -59,7 +59,14 @@ _LEGACY_GEMINI_MODELS = frozenset({
 _MODEL_PRIMARY = "deepseek-v4-flash"
 _MODEL_FALLBACK = "minimax-m2.7"
 _MODEL_FAST = "deepseek-v4-flash"
-_RETRYABLE_HTTP_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
+# Free OpenCode Zen models — used when paid models return 401/403/404.
+_MODEL_FREE_CHAIN = (
+    "deepseek-v4-flash-free",
+    "big-pickle",
+    "mimo-v2.5-free",
+    "ling-3.0-flash-free",
+)
+_RETRYABLE_HTTP_STATUSES = frozenset({401, 403, 408, 429, 500, 502, 503, 504})
 
 
 def _api_key() -> str:
@@ -68,6 +75,18 @@ def _api_key() -> str:
         str(getattr(settings, "opencode_api_key", "") or "")
         or str(getattr(settings, "gemini_api_key", "") or "")
     ).strip()
+
+
+def _auth_headers(key: str) -> dict[str, str]:
+    """
+    OpenCode Zen's OpenAI-compatible surface accepts Bearer.
+    Some gateway paths also check x-api-key — send both so neither path 401/403s.
+    """
+    return {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {key}",
+        "x-api-key": key,
+    }
 
 
 def _active_model(mode: str = "thorough") -> str:
@@ -90,6 +109,20 @@ def _active_model(mode: str = "thorough") -> str:
         )
         return mapped
     return model
+
+
+def _model_failover_chain(primary: str) -> list[str]:
+    """Ordered unique models to try when the primary is denied or unavailable."""
+    chain = [primary, _alternate_model(primary), *_MODEL_FREE_CHAIN, _MODEL_PRIMARY, _MODEL_FALLBACK]
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for model in chain:
+        name = (model or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        ordered.append(name)
+    return ordered
 
 
 def _source_budgets(mode: str) -> tuple[int, int]:
@@ -132,6 +165,17 @@ def describe_last_zen_error() -> str:
 
     if kind == "http":
         status = int(error.get("http_status") or 0)
+        if status == 401:
+            return (
+                f"OpenCode Zen rejected the API key{attempt_note} (HTTP 401). "
+                "Set OPENCODE_API_KEY to a valid key from https://opencode.ai/auth."
+            )
+        if status == 403:
+            return (
+                f"OpenCode Zen forbade this model or key{attempt_note} (HTTP 403). "
+                "Enable the model in your Zen workspace, check billing, or set OPENCODE_MODEL "
+                "to an allowed chat model such as deepseek-v4-flash or deepseek-v4-flash-free."
+            )
         if status == 429:
             return f"OpenCode Zen rate-limited this request{attempt_note} (HTTP 429). Try again after one minute."
         if status in _RETRYABLE_HTTP_STATUSES:
@@ -393,10 +437,7 @@ def _call_zen_chat(
     req = urllib.request.Request(
         _CHAT_URL,
         data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {key}",
-        },
+        headers=_auth_headers(key),
         method="POST",
     )
 
@@ -476,7 +517,7 @@ def write_article_package_with_zen(
     prompt = _package_prompt(query, source_block, n_sources, mode)
     use_stream = False
 
-    models = [primary_model, _alternate_model(primary_model)]
+    models = _model_failover_chain(primary_model)
     attempted_models: list[str] = []
     attempt_errors: list[dict[str, object]] = []
 
@@ -540,8 +581,8 @@ def write_article_package_with_zen(
                 model,
                 error["response_length"],
             )
-            if attempt_index == 0:
-                logger.info("Retrying Zen article with alternate model=%s", models[1])
+            if attempt_index + 1 < len(models):
+                logger.info("Retrying Zen article with alternate model=%s", models[attempt_index + 1])
                 continue
             return None
         except urllib.error.HTTPError as exc:
@@ -559,8 +600,8 @@ def write_article_package_with_zen(
                 error.get("api_status"),
                 str(error.get("message") or "")[:200],
             )
-            # Some models reject response_format; retry once without it on 400.
-            if attempt_index == 0 and exc.code == 400:
+            # Some models reject response_format; retry once without it on 400/403.
+            if exc.code in {400, 403}:
                 try:
                     text = _call_zen_chat(
                         model=model,
@@ -578,16 +619,14 @@ def write_article_package_with_zen(
                 except Exception:
                     logger.exception("Zen article retry without json_mode failed")
             retryable = exc.code == 404 or exc.code in _RETRYABLE_HTTP_STATUSES
-            if attempt_index == 0 and retryable:
-                fallback_model = _alternate_model(model, exc.code)
-                models[1] = fallback_model
+            if attempt_index + 1 < len(models) and retryable:
                 logger.info(
                     "Retrying Zen article primary=%s fallback=%s http_status=%s",
                     model,
-                    fallback_model,
+                    models[attempt_index + 1],
                     exc.code,
                 )
-                if exc.code in _RETRYABLE_HTTP_STATUSES:
+                if exc.code in {429, 500, 502, 503, 504}:
                     _sleep_before_retry()
                 continue
             if any(int(item.get("http_status") or 0) == 429 for item in attempt_errors):
@@ -607,8 +646,8 @@ def write_article_package_with_zen(
                 attempt_errors=list(attempt_errors),
             )
             logger.warning("Zen article request failed model=%s error=%s", model, exc)
-            if attempt_index == 0:
-                logger.info("Retrying Zen article with alternate model=%s", models[1])
+            if attempt_index + 1 < len(models):
+                logger.info("Retrying Zen article with alternate model=%s", models[attempt_index + 1])
                 continue
             return None
 
