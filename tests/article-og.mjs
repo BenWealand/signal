@@ -3,6 +3,7 @@ import {
   articleShareFields,
   injectShareMetaIntoHtml,
   renderArticleOgHtml,
+  withProxiedArticleImage,
 } from "../api/lib/articleOgHtml.js";
 
 const article = {
@@ -21,6 +22,15 @@ const fields = articleShareFields(article, {
 });
 assert.equal(fields.imageUrl, "https://images.example.com/fed.jpg");
 assert.equal(fields.title, "Federal Reserve Holds Rates");
+
+const proxiedArticle = withProxiedArticleImage(article, {
+  origin: "https://signal-mocha-three.vercel.app",
+  articleId: article.id,
+});
+assert.equal(
+  proxiedArticle.image.url,
+  "https://signal-mocha-three.vercel.app/api/article-image?id=write-og-1",
+);
 
 const html = renderArticleOgHtml(article, {
   pageUrl: "https://signal-mocha-three.vercel.app/article/write-og-1",

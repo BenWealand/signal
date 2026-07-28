@@ -53,6 +53,21 @@ export function articleShareFields(article, { pageUrl = "", siteName = "Signal D
   };
 }
 
+export function withProxiedArticleImage(article, { origin = "", articleId = "" } = {}) {
+  const image = parseJsonField(article?.image, {});
+  const sourceUrl = absoluteUrl(image?.url || image?.src || "");
+  const base = String(origin || "").replace(/\/$/, "");
+  const id = String(articleId || article?.id || "").trim();
+  if (!sourceUrl || !base || !id) return article;
+  return {
+    ...article,
+    image: {
+      ...image,
+      url: `${base}/api/article-image?id=${encodeURIComponent(id)}`,
+    },
+  };
+}
+
 export function renderShareMetaTags(article, options = {}) {
   const fields = articleShareFields(article, options);
   const title = escapeHtml(fields.title);

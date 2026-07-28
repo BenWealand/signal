@@ -2,6 +2,7 @@ import {
   parseJsonField,
   injectShareMetaIntoHtml,
   renderArticleOgHtml,
+  withProxiedArticleImage,
 } from "./lib/articleOgHtml.js";
 
 export const config = { runtime: "edge" };
@@ -149,15 +150,19 @@ export default async function handler(request) {
   }
 
   const spaShell = await loadSpaShell(requestOrigin);
+  const shareArticle = withProxiedArticleImage(article, {
+    origin: shareOrigin,
+    articleId,
+  });
   const html = spaShell
-    ? injectShareMetaIntoHtml(spaShell, article, { pageUrl, siteName: SITE_NAME })
-    : renderArticleOgHtml(article, { pageUrl, siteName: SITE_NAME });
+    ? injectShareMetaIntoHtml(spaShell, shareArticle, { pageUrl, siteName: SITE_NAME })
+    : renderArticleOgHtml(shareArticle, { pageUrl, siteName: SITE_NAME });
 
   return new Response(html, {
     status: 200,
     headers: {
       "content-type": "text/html; charset=utf-8",
-      "cache-control": "public, s-maxage=60, stale-while-revalidate=86400",
+      "cache-control": "public, s-maxage=30, stale-while-revalidate=60",
     },
   });
 }
