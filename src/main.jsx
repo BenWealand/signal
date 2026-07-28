@@ -350,7 +350,9 @@ function App() {
     if (hasApiBase()) {
       clearDraft();
       const rawMessage = String(error?.detail || error?.message || "");
-      const message = rawMessage.includes("gemini_article_unavailable")
+      const message = rawMessage.includes("zen_article_unavailable")
+        || rawMessage.includes("gemini_article_unavailable")
+        || rawMessage.toLowerCase().includes("opencode zen")
         || rawMessage.toLowerCase().includes("gemini")
         || rawMessage.toLowerCase().includes("source")
         ? "Could not generate from enough reliable sources. Try a more specific prompt."

@@ -145,7 +145,7 @@ export function XUrlMatchQueue({ dryRun, busy, setBusy, push, onToast }) {
         <div>
           <strong>Match X URLs</strong>
           <em>
-            Paste many x.com links. Gemini matches each post to a ready Signal article, then you can view or reply/post one by one.
+            Paste many x.com links. Zen matches each post to a ready Signal article, then you can view or reply/post one by one.
           </em>
         </div>
         <div className="x-admin-draft-actions">

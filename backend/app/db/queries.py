@@ -678,7 +678,7 @@ def get_generated_article(article_id: str) -> dict[str, Any]:
 
 
 def list_recent_x_feed_articles(hours: int = 24, limit: int = 100) -> list[dict[str, Any]]:
-    """Return unique Gemini feed articles plus their latest successful X share."""
+    """Return unique Zen feed articles plus their latest successful X share."""
     safe_hours = min(max(int(hours or 24), 1), 168)
     safe_limit = min(max(int(limit or 100), 1), 200)
     with get_connection() as conn:
@@ -834,7 +834,7 @@ def purge_blacklisted_generated_articles(limit: int = 1000) -> dict[str, Any]:
 
 def purge_legacy_generated_articles(limit: int = 1000) -> dict[str, Any]:
     """
-    Remove generated articles that obviously predate the Gemini-only policy.
+    Remove generated articles that obviously predate the Zen-only policy.
 
     Older rows did not store a writer-provider field, so this intentionally
     purges only clear legacy/noncompliant rows instead of guessing.

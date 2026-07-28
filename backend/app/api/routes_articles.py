@@ -15,7 +15,7 @@ from app.db import queries
 from app.config import settings
 from app.policy.prompt_filter import prompt_is_blocked
 from app.processing.article_writer import (
-    GeminiArticleUnavailable,
+    ZenArticleUnavailable,
     write_article_from_prompt,
     get_build_progress,
     set_build_progress,
@@ -173,12 +173,12 @@ def _reject_blocked_prompt(prompt: str) -> None:
         )
 
 
-def _write_gemini_article(prompt: str, *, limit: int, mode: str, build_id: str) -> dict:
+def _write_zen_article(prompt: str, *, limit: int, mode: str, build_id: str) -> dict:
     started = time.monotonic()
     try:
         article = write_article_from_prompt(prompt, limit=limit, mode=mode, build_id=build_id)
         logger.info(
-            "Gemini article generated",
+            "Zen article generated",
             extra={
                 "build_id": build_id,
                 "mode": mode,
@@ -188,9 +188,9 @@ def _write_gemini_article(prompt: str, *, limit: int, mode: str, build_id: str) 
             },
         )
         return article
-    except GeminiArticleUnavailable as exc:
+    except ZenArticleUnavailable as exc:
         logger.warning(
-            "Gemini article unavailable",
+            "Zen article unavailable",
             extra={
                 "build_id": build_id,
                 "mode": mode,
@@ -202,8 +202,8 @@ def _write_gemini_article(prompt: str, *, limit: int, mode: str, build_id: str) 
         raise HTTPException(
             status_code=503,
             detail={
-                "code": "gemini_article_unavailable",
-                "message": str(exc) or "Gemini could not write an article from the available sources.",
+                "code": "zen_article_unavailable",
+                "message": str(exc) or "OpenCode Zen could not write an article from the available sources.",
             },
         ) from exc
 
@@ -289,8 +289,8 @@ def article_follow_ups(payload: FollowUpRequest):
     """
     limit = min(max(payload.limit, 1), 8)
     try:
-        from app.llm.gemini_writer import suggest_follow_up_prompts_with_gemini
-        llm_prompts = suggest_follow_up_prompts_with_gemini(
+        from app.llm.zen_writer import suggest_follow_up_prompts_with_zen
+        llm_prompts = suggest_follow_up_prompts_with_zen(
             topic=payload.prompt,
             headline=payload.headline,
             dek=payload.dek,
@@ -313,29 +313,35 @@ def article_build_progress(
     return get_build_progress(build_id or build_id_legacy)
 
 
-@router.get("/articles/test-gemini")
-def test_gemini():
-    """Quick diagnostic — makes one minimal Gemini call and returns the result."""
-    from app.llm.gemini_writer import get_last_gemini_error, write_article_with_gemini
-    result = write_article_with_gemini(
+@router.get("/articles/test-zen")
+def test_zen():
+    """Quick diagnostic — makes one minimal OpenCode Zen call and returns the result."""
+    from app.llm.zen_writer import get_last_zen_error, write_article_with_zen
+    result = write_article_with_zen(
         "test",
         [{
             "source_name": "Test",
             "title": "Signal diagnostic test",
             "raw_text": (
-                "This diagnostic source says Signal is checking whether the Gemini API "
+                "This diagnostic source says Signal is checking whether OpenCode Zen "
                 "can generate a short neutral article from supplied source material. "
                 "The response should mention only this test and avoid adding outside facts."
             ),
         }],
     )
     return {
-        "gemini_key_set": bool(settings.gemini_api_key),
-        "model": settings.gemini_model,
+        "opencode_key_set": bool(settings.opencode_api_key),
+        "model": settings.opencode_model,
         "result": result,
         "success": result is not None,
-        "error": None if result else get_last_gemini_error(),
+        "error": None if result else get_last_zen_error(),
     }
+
+
+@router.get("/articles/test-gemini")
+def test_gemini_alias():
+    """Deprecated alias for /articles/test-zen."""
+    return test_zen()
 
 
 @router.get("/articles/{article_id}")
@@ -400,7 +406,7 @@ def generate_from_trend(
     _check_article_rate_limit(_client_rate_key(request, "generate-from-trend"))
     _reject_blocked_prompt(payload.prompt)
     build_id = f"build-{uuid.uuid4().hex}"
-    article = _write_gemini_article(payload.prompt, limit=payload.limit, mode=payload.mode, build_id=build_id)
+    article = _write_zen_article(payload.prompt, limit=payload.limit, mode=payload.mode, build_id=build_id)
     article["buildId"] = build_id
     article["source"] = payload.source
     article["trendUrl"] = payload.trend_url
@@ -496,7 +502,7 @@ def write_article(request: Request, payload: TrendArticleRequest, authorization:
     owner_user_id = _resolve_optional_owner_user_id(payload.user_id, authorization)
 
     if not payload.async_mode:
-        article = _write_gemini_article(payload.prompt, limit=payload.limit, mode=payload.mode, build_id=build_id)
+        article = _write_zen_article(payload.prompt, limit=payload.limit, mode=payload.mode, build_id=build_id)
         article["buildId"] = build_id
         article["ownerUserId"] = owner_user_id
         queries.save_generated_article(article)
@@ -520,7 +526,7 @@ def write_article(request: Request, payload: TrendArticleRequest, authorization:
 
     def _job() -> None:
         try:
-            article = _write_gemini_article(
+            article = _write_zen_article(
                 payload.prompt,
                 limit=payload.limit,
                 mode=payload.mode,

@@ -85,8 +85,12 @@ from app.llm.claim_extractor import extract_claims
 THOROUGH_SOURCE_GATE = SourceGate(min_sources=3, min_domains=2, min_text_chars=180, max_current_age_days=14)
 
 
-class GeminiArticleUnavailable(RuntimeError):
-    """Raised when an article cannot be written by Gemini."""
+class ZenArticleUnavailable(RuntimeError):
+    """Raised when an article cannot be written by OpenCode Zen."""
+
+
+# Backward-compatible alias for older imports/tests.
+GeminiArticleUnavailable = ZenArticleUnavailable
 
 
 # ── Language / relevance helpers ──────────────────────────────────────────────
@@ -538,39 +542,46 @@ def _article_body(
     source_articles: list[dict],
     supported: list[dict],
     unique_claims: list[dict],
-    use_gemini: bool = True,
-    require_gemini: bool = False,
+    use_zen: bool = True,
+    require_zen: bool = False,
     *,
+    use_gemini: bool | None = None,
+    require_gemini: bool | None = None,
     generation_mode: str = "thorough",
     build_id: str | None = None,
     on_chunk=None,
 ) -> tuple[list[str], dict[str, str] | None]:
     """
-    Try Gemini first for a polished, grammar-correct article package.
+    Try OpenCode Zen first for a polished, grammar-correct article package.
     Returns (body_paragraphs, optional_header_package).
-    When Gemini is required, fail without saving a generated article.
+    When Zen is required, fail without saving a generated article.
     """
-    from app.llm.gemini_writer import (
-        describe_last_gemini_error,
-        write_article_package_with_gemini,
+    from app.llm.zen_writer import (
+        describe_last_zen_error,
+        write_article_package_with_zen,
     )
 
-    # ── Gemini path ───────────────────────────────────────────────────────────
+    if use_gemini is not None:
+        use_zen = use_gemini
+    if require_gemini is not None:
+        require_zen = require_gemini
+
+    # ── OpenCode Zen path ─────────────────────────────────────────────────────
     package = (
-        write_article_package_with_gemini(
+        write_article_package_with_zen(
             prompt,
             source_articles,
             mode=generation_mode,
             on_chunk=on_chunk,
         )
-        if use_gemini
+        if use_zen
         else None
     )
     if package and package.get("body"):
-        gemini_text = package["body"]
-        paragraphs = [p.strip() for p in gemini_text.split("\n\n") if p.strip()]
+        zen_text = package["body"]
+        paragraphs = [p.strip() for p in zen_text.split("\n\n") if p.strip()]
         if len(paragraphs) < 2:
-            paragraphs = [p.strip() for p in gemini_text.split("\n") if len(p.strip()) > 60]
+            paragraphs = [p.strip() for p in zen_text.split("\n") if len(p.strip()) > 60]
         if len(paragraphs) >= 2:
             header = {
                 "headline": str(package.get("headline") or "").strip(),
@@ -578,8 +589,8 @@ def _article_body(
             }
             return paragraphs, header if header["headline"] and header["dek"] else None
 
-    if require_gemini:
-        raise GeminiArticleUnavailable(describe_last_gemini_error())
+    if require_zen:
+        raise ZenArticleUnavailable(describe_last_zen_error())
 
     # ── Rule-based fallback ───────────────────────────────────────────────────
     prompt_kw = _prompt_keywords(prompt)
@@ -687,15 +698,21 @@ def _article_from_consensus(
     prompt: str,
     source_articles: list[dict],
     consensus: list[dict],
-    use_gemini: bool = True,
+    use_zen: bool = True,
     *,
+    use_gemini: bool | None = None,
     generation_mode: str = "thorough",
     source_quality: dict | None = None,
     used_live_sources: bool = True,
     fallback_reason: str | None = None,
-    require_gemini: bool = False,
+    require_zen: bool = False,
+    require_gemini: bool | None = None,
     build_id: str | None = None,
 ) -> dict:
+    if use_gemini is not None:
+        use_zen = use_gemini
+    if require_gemini is not None:
+        require_zen = require_gemini
     supported = [c for c in consensus if c["status"] == "supported"]
     unique = [c for c in consensus if c["status"] in ("unique", "uncertain")]
     source_names = sorted({str(a["source_name"]) for a in source_articles})
@@ -713,8 +730,8 @@ def _article_from_consensus(
         enabled=getattr(settings, "article_images_enabled", True),
         search_timeout=getattr(settings, "article_image_search_timeout_seconds", 16.0),
     )
-    # Warm up Openverse while Gemini writes. The authoritative pick still happens
-    # after the finished article: Gemini proposes its top 5 image ideas, then we
+    # Warm up Openverse while Zen writes. The authoritative pick still happens
+    # after the finished article: Zen proposes its top 5 image ideas, then we
     # try those against Openverse. For auto/desk keyword-bag prompts, fall back to
     # concrete source headlines so warm-up works the same way as user prompts.
     source_hints = [
@@ -724,13 +741,13 @@ def _article_from_consensus(
     ][:5]
     image_picker.prime_from_prompt(prompt, source_hints=source_hints)
     try:
-        body, gemini_header = _article_body(
+        body, zen_header = _article_body(
             prompt,
             source_articles,
             supported,
             unique,
-            use_gemini=use_gemini or require_gemini,
-            require_gemini=require_gemini,
+            use_zen=use_zen or require_zen,
+            require_zen=require_zen,
             generation_mode=generation_mode,
             build_id=build_id,
             on_chunk=image_picker.on_chunk if image_picker.enabled else None,
@@ -739,9 +756,9 @@ def _article_from_consensus(
         image_picker.shutdown()
         raise
 
-    if gemini_header:
-        headline = gemini_header["headline"]
-        dek = gemini_header["dek"]
+    if zen_header:
+        headline = zen_header["headline"]
+        dek = zen_header["dek"]
         if not supported:
             summary = dek or headline
     image = image_picker.finalize(
@@ -842,7 +859,9 @@ def _fast_consensus_from_sources(prompt: str, candidates: list[dict]) -> list[di
     return detect_consensus(pseudo_claims, use_semantic=False)
 
 
-def _fast_article_from_prompt(prompt: str, limit: int = 8, use_gemini: bool = True, build_id: str | None = None) -> dict:
+def _fast_article_from_prompt(prompt: str, limit: int = 8, use_zen: bool = True, use_gemini: bool | None = None, build_id: str | None = None) -> dict:
+    if use_gemini is not None:
+        use_zen = bool(use_gemini)
     build_id = build_id or f"build-{uuid.uuid4().hex}"
     fast_limit = max(4, min(limit, 12))
     min_cache = max(2, min(settings.fast_cache_min_sources, fast_limit))
@@ -916,8 +935,8 @@ def _fast_article_from_prompt(prompt: str, limit: int = 8, use_gemini: bool = Tr
         )
 
     if not candidates:
-        _set_progress(build_id, active=False, stage="error", stage_label="No sources found", error="No accessible sources were found for a Gemini draft")
-        raise GeminiArticleUnavailable("No accessible sources were found for a Gemini draft")
+        _set_progress(build_id, active=False, stage="error", stage_label="No sources found", error="No accessible sources were found for an OpenCode Zen draft")
+        raise ZenArticleUnavailable("No accessible sources were found for an OpenCode Zen draft")
 
     candidates.sort(key=lambda a: len(a.get("raw_text", "") or a.get("description", "")), reverse=True)
     for candidate in candidates:
@@ -927,7 +946,7 @@ def _fast_article_from_prompt(prompt: str, limit: int = 8, use_gemini: bool = Tr
     _set_progress(
         build_id,
         stage="writing",
-        stage_label=f"Fast draft: Gemini writing from {len(candidates)} sources...",
+        stage_label=f"Fast draft: Zen writing from {len(candidates)} sources...",
         sources_found=len(candidates),
         sources_enriched=sum(1 for c in candidates if len(c.get("raw_text", "")) > 120),
     )
@@ -938,11 +957,11 @@ def _fast_article_from_prompt(prompt: str, limit: int = 8, use_gemini: bool = Tr
         prompt,
         candidates,
         consensus,
-        use_gemini=True,
+        use_zen=True,
         generation_mode="fast",
         source_quality=source_quality,
         used_live_sources=used_live_sources,
-        require_gemini=True,
+        require_zen=True,
         build_id=build_id,
     )
     article["buildId"] = build_id
@@ -962,19 +981,19 @@ def _fast_article_from_prompt(prompt: str, limit: int = 8, use_gemini: bool = Tr
     return article
 
 
-def write_article_from_prompt(prompt: str, limit: int = 50, use_gemini: bool = True, mode: str = "thorough", build_id: str | None = None) -> dict:
+def write_article_from_prompt(prompt: str, limit: int = 50, use_zen: bool = True, use_gemini: bool | None = None, mode: str = "thorough", build_id: str | None = None) -> dict:
     """
     Full pipeline for a user-submitted prompt.
 
     Thorough mode is cache-first and latency-bounded:
     1. Prefer recent desk coverage from Postgres.
     2. Live-fetch only when the cache is thin (Bing/Guardian/GDELT race + capped enrich).
-    3. Process a small top-N set of articles, Jaccard consensus, Gemini package write.
+    3. Process a small top-N set of articles, Jaccard consensus, OpenCode Zen package write.
     """
     build_id = build_id or f"build-{uuid.uuid4().hex}"
-    use_gemini = True
+    use_zen = True if use_gemini is None else bool(use_gemini)
     if mode == "fast":
-        return _fast_article_from_prompt(prompt, limit=limit, use_gemini=use_gemini, build_id=build_id)
+        return _fast_article_from_prompt(prompt, limit=limit, use_zen=use_zen, build_id=build_id)
 
     thorough_limit = max(4, min(limit, settings.thorough_max_candidates))
     min_cache = max(3, min(settings.thorough_cache_min_sources, thorough_limit))
@@ -1085,8 +1104,8 @@ def write_article_from_prompt(prompt: str, limit: int = 50, use_gemini: bool = T
     )
 
     if not all_candidates:
-        _set_progress(build_id, active=False, stage="error", stage_label="No sources found", error="No accessible sources were found for a Gemini draft")
-        raise GeminiArticleUnavailable("No accessible sources were found for a Gemini draft")
+        _set_progress(build_id, active=False, stage="error", stage_label="No sources found", error="No accessible sources were found for an OpenCode Zen draft")
+        raise ZenArticleUnavailable("No accessible sources were found for an OpenCode Zen draft")
 
     source_quality = evaluate_source_quality(all_candidates, prompt, gate=THOROUGH_SOURCE_GATE)
     source_quality["ranking"] = ranked_source_meta
@@ -1095,8 +1114,8 @@ def write_article_from_prompt(prompt: str, limit: int = 50, use_gemini: bool = T
         if max(len(c.get("clean_text", "") or ""), len(c.get("raw_text", "") or "")) >= THOROUGH_SOURCE_GATE.min_text_chars
     ]
     if source_quality["failed_gates"] and len(with_text) < 3:
-        _set_progress(build_id, active=False, stage="error", stage_label="Too few sources found", error="Source coverage did not meet the quality gate for a Gemini article")
-        raise GeminiArticleUnavailable("Source coverage did not meet the quality gate for a Gemini article")
+        _set_progress(build_id, active=False, stage="error", stage_label="Too few sources found", error="Source coverage did not meet the quality gate for an OpenCode Zen article")
+        raise ZenArticleUnavailable("Source coverage did not meet the quality gate for an OpenCode Zen article")
 
     # Keep processing bounded — richest text first.
     all_candidates = sorted(
@@ -1120,8 +1139,8 @@ def write_article_from_prompt(prompt: str, limit: int = 50, use_gemini: bool = T
         processed = [a for a in processed if a]
 
     if not processed:
-        _set_progress(build_id, active=False, stage="error", stage_label="Processing failed", error="Source processing failed before Gemini could write an article")
-        raise GeminiArticleUnavailable("Source processing failed before Gemini could write an article")
+        _set_progress(build_id, active=False, stage="error", stage_label="Processing failed", error="Source processing failed before OpenCode Zen could write an article")
+        raise ZenArticleUnavailable("Source processing failed before OpenCode Zen could write an article")
 
     cluster_id = queries.create_cluster(prompt, [int(a["id"]) for a in processed])
     cluster_claims = queries.get_cluster_claims(cluster_id)
@@ -1140,7 +1159,7 @@ def write_article_from_prompt(prompt: str, limit: int = 50, use_gemini: bool = T
     _set_progress(
         build_id,
         stage="writing",
-        stage_label=f"Found {len(supported)} corroborated claims — Gemini synthesizing article…",
+        stage_label=f"Found {len(supported)} corroborated claims — Zen synthesizing article…",
     )
 
     queries.replace_consensus_claims(cluster_id, consensus)
@@ -1148,11 +1167,11 @@ def write_article_from_prompt(prompt: str, limit: int = 50, use_gemini: bool = T
         prompt,
         processed,
         consensus,
-        use_gemini=use_gemini,
+        use_zen=use_zen,
         generation_mode="thorough",
         source_quality=source_quality,
         used_live_sources=used_live_sources,
-        require_gemini=True,
+        require_zen=True,
         build_id=build_id,
     )
     article["buildId"] = build_id

@@ -12,7 +12,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.api import routes_vm
 from app.api.routes_vm import VMPost
-from app.llm import gemini_writer
+from app.llm import zen_writer
 from app.x.models import XSharePackage
 
 
@@ -58,7 +58,7 @@ class VMRoutingTests(unittest.TestCase):
             patch.object(routes_vm, "_check_article_rate_limit"),
             patch.object(
                 routes_vm,
-                "generic_news_prompt_from_x_posts_with_gemini",
+                "generic_news_prompt_from_x_posts_with_zen",
                 side_effect=[
                     "Black Panther 3 casting and release date",
                     "Senate August recess procedural dispute",
@@ -98,7 +98,7 @@ class VMRoutingTests(unittest.TestCase):
             patch.object(routes_vm, "_check_article_rate_limit"),
             patch.object(
                 routes_vm,
-                "generic_news_prompt_from_x_posts_with_gemini",
+                "generic_news_prompt_from_x_posts_with_zen",
                 return_value="Federal Reserve interest rate decision",
             ),
             patch.object(routes_vm, "write_article_for_candidate", return_value=package),
@@ -124,10 +124,10 @@ class VMRoutingTests(unittest.TestCase):
         self.assertEqual(raised.exception.status_code, 422)
 
 
-class VMGeminiPromptTests(unittest.TestCase):
-    @patch.object(gemini_writer, "_rate_limited", return_value=False)
-    @patch.object(gemini_writer.urllib.request, "urlopen")
-    def test_gemini_generalizes_posts_to_news_prompt(self, urlopen, _rate_limited):
+class VMZenPromptTests(unittest.TestCase):
+    @patch.object(zen_writer, "_rate_limited", return_value=False)
+    @patch.object(zen_writer.urllib.request, "urlopen")
+    def test_zen_generalizes_posts_to_news_prompt(self, urlopen, _rate_limited):
         class FakeResponse:
             def __enter__(self):
                 return self
@@ -137,28 +137,26 @@ class VMGeminiPromptTests(unittest.TestCase):
 
             def read(self):
                 return json.dumps({
-                    "candidates": [{
-                        "content": {
-                            "parts": [{
-                                "text": json.dumps({
-                                    "prompt": "Marvel Studios Ghost Rider Ryan Gosling announcement",
-                                }),
-                            }],
+                    "choices": [{
+                        "message": {
+                            "content": json.dumps({
+                                "prompt": "Marvel Studios Ghost Rider Ryan Gosling announcement",
+                            }),
                         },
                     }],
                 }).encode("utf-8")
 
         urlopen.return_value = FakeResponse()
         with patch.object(
-            gemini_writer,
+            zen_writer,
             "settings",
             SimpleNamespace(
-                gemini_api_key="test-key",
-                gemini_fast_model="gemini-flash-lite-latest",
-                gemini_model="gemini-flash-latest",
+                opencode_api_key="test-key",
+                opencode_fast_model="deepseek-v4-flash",
+                opencode_model="deepseek-v4-flash",
             ),
         ):
-            result = gemini_writer.generic_news_prompt_from_x_posts_with_gemini([
+            result = zen_writer.generic_news_prompt_from_x_posts_with_zen([
                 {
                     "url": "https://x.com/MarvelStudios/status/1",
                     "text": "Ryan Gosling will star in Marvel Studios' Ghost Rider.",
@@ -168,15 +166,19 @@ class VMGeminiPromptTests(unittest.TestCase):
                 },
             ])
         self.assertEqual(result, "Marvel Studios Ghost Rider Ryan Gosling announcement")
-        request_prompt = json.loads(urlopen.call_args.args[0].data)["contents"][0]["parts"][0]["text"]
+        request = urlopen.call_args.args[0]
+        body = json.loads(request.data)
+        request_prompt = body["messages"][0]["content"]
         self.assertIn("reason=Official casting announcement", request_prompt)
         self.assertIn("angle=Entertainment news", request_prompt)
         self.assertIn("source_assessment=Primary source", request_prompt)
+        self.assertEqual(body["model"], "deepseek-v4-flash")
+        self.assertIn("opencode.ai/zen/v1/chat/completions", request.full_url)
 
-    @patch.object(gemini_writer, "_rate_limited", return_value=False)
-    @patch.object(gemini_writer, "_record_429")
-    @patch.object(gemini_writer.urllib.request, "urlopen")
-    def test_gemini_prompt_retries_alternate_model(self, urlopen, record_429, _rate_limited):
+    @patch.object(zen_writer, "_rate_limited", return_value=False)
+    @patch.object(zen_writer, "_record_429")
+    @patch.object(zen_writer.urllib.request, "urlopen")
+    def test_zen_prompt_retries_alternate_model(self, urlopen, record_429, _rate_limited):
         class FakeResponse:
             def __enter__(self):
                 return self
@@ -186,33 +188,42 @@ class VMGeminiPromptTests(unittest.TestCase):
 
             def read(self):
                 return json.dumps({
-                    "candidates": [{
-                        "content": {
-                            "parts": [{"text": '{"prompt":"Federal Reserve interest rate decision"}'}],
+                    "choices": [{
+                        "message": {
+                            "content": '{"prompt":"Federal Reserve interest rate decision"}',
                         },
                     }],
                 }).encode("utf-8")
 
         urlopen.side_effect = [
-            urllib.error.HTTPError("https://example", 429, "quota", {}, None),
+            urllib.error.HTTPError(
+                "https://opencode.ai/zen/v1/chat/completions",
+                429,
+                "quota",
+                {},
+                None,
+            ),
             FakeResponse(),
         ]
         with patch.object(
-            gemini_writer,
+            zen_writer,
             "settings",
             SimpleNamespace(
-                gemini_api_key="test-key",
-                gemini_fast_model="gemini-flash-lite-latest",
-                gemini_model="gemini-flash-latest",
+                opencode_api_key="test-key",
+                opencode_fast_model="deepseek-v4-flash",
+                opencode_model="deepseek-v4-flash",
             ),
         ):
-            result = gemini_writer.generic_news_prompt_from_x_posts_with_gemini([
+            result = zen_writer.generic_news_prompt_from_x_posts_with_zen([
                 {"url": "https://x.com/example/status/1", "text": "Fed decision update"},
             ])
 
         self.assertEqual(result, "Federal Reserve interest rate decision")
         self.assertEqual(urlopen.call_count, 2)
         record_429.assert_called_once()
+        models = [json.loads(call.args[0].data)["model"] for call in urlopen.call_args_list]
+        self.assertEqual(models[0], "deepseek-v4-flash")
+        self.assertEqual(models[1], "minimax-m2.7")
 
 
 if __name__ == "__main__":

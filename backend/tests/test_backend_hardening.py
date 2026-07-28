@@ -17,9 +17,17 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.api import routes_articles, routes_users
 from app.db import queries
-from app.llm import gemini_writer
+from app.llm import zen_writer
 from app.policy import prompt_filter
 from app.processing import article_writer
+
+
+def _model_from_request(req) -> str:
+    return json.loads(req.data.decode("utf-8"))["model"]
+
+
+def _openai_package_response(text: str) -> dict:
+    return {"choices": [{"message": {"content": text}}]}
 
 
 class _FakeCursor:
@@ -254,177 +262,184 @@ class BackendHardeningTest(unittest.TestCase):
         self.assertEqual(article_writer.get_build_progress("build-b")["prompt"], "beta")
         self.assertEqual(article_writer.get_build_progress()["build_id"], "build-b")
 
-    def test_gemini_429_fallback_is_reachable(self):
-        original_settings = gemini_writer.settings
-        original_last_429 = gemini_writer._last_429_at
-        gemini_writer.settings = SimpleNamespace(gemini_api_key="key", gemini_model="gemini-flash-latest")
-        gemini_writer._last_429_at = 0.0
-        gemini_writer._call_times.clear()
+    def test_zen_429_fallback_is_reachable(self):
+        original_settings = zen_writer.settings
+        original_last_429 = zen_writer._last_429_at
+        zen_writer.settings = SimpleNamespace(
+            opencode_api_key="key",
+            opencode_model="deepseek-v4-flash",
+            opencode_fast_model="deepseek-v4-flash",
+        )
+        zen_writer._last_429_at = 0.0
+        zen_writer._call_times.clear()
 
         fallback_text = _VALID_ARTICLE_PACKAGE_TEXT
         calls = []
+        models = []
 
         def fake_urlopen(_req, timeout=30):
             calls.append(_req.full_url)
+            models.append(_model_from_request(_req))
             if len(calls) == 1:
-                body = json.dumps({"error": {"status": "RESOURCE_EXHAUSTED", "message": "quota"}}).encode("utf-8")
+                body = json.dumps({"error": {"message": "quota", "type": "rate_limit_error"}}).encode("utf-8")
                 raise urllib.error.HTTPError(_req.full_url, 429, "Too Many Requests", {}, io.BytesIO(body))
-            return _FakeResponse({"candidates": [{"content": {"parts": [{"text": fallback_text}]}}]})
+            return _FakeResponse(_openai_package_response(fallback_text))
 
         try:
             with (
-                patch.object(gemini_writer.urllib.request, "urlopen", side_effect=fake_urlopen),
-                patch.object(gemini_writer, "_sleep_before_retry", return_value=None),
+                patch.object(zen_writer.urllib.request, "urlopen", side_effect=fake_urlopen),
+                patch.object(zen_writer, "_sleep_before_retry", return_value=None),
             ):
-                result = gemini_writer.write_article_with_gemini(
+                result = zen_writer.write_article_with_zen(
                     "test topic",
                     [{"source_name": "Source", "title": "Title", "raw_text": "Source material. " * 80}],
                 )
         finally:
-            gemini_writer.settings = original_settings
-            gemini_writer._last_429_at = original_last_429
-            gemini_writer._call_times.clear()
+            zen_writer.settings = original_settings
+            zen_writer._last_429_at = original_last_429
+            zen_writer._call_times.clear()
 
         self.assertEqual(result, _VALID_ARTICLE_BODY)
         self.assertEqual(len(calls), 2)
-        self.assertIn("gemini-flash-lite-latest", calls[1])
+        self.assertTrue(all("opencode.ai/zen/v1/chat/completions" in url for url in calls))
+        self.assertEqual(models[0], "deepseek-v4-flash")
+        self.assertEqual(models[1], "minimax-m2.7")
 
-    def test_gemini_503_lite_model_falls_back_to_full_flash(self):
-        original_settings = gemini_writer.settings
-        original_last_error = gemini_writer._last_error
-        original_last_429 = gemini_writer._last_429_at
-        gemini_writer.settings = SimpleNamespace(
-            gemini_api_key="key",
-            gemini_model="gemini-flash-latest",
-            gemini_fast_model="gemini-2.5-flash-lite",
+    def test_zen_503_primary_falls_back_to_failover_model(self):
+        original_settings = zen_writer.settings
+        original_last_error = zen_writer._last_error
+        original_last_429 = zen_writer._last_429_at
+        zen_writer.settings = SimpleNamespace(
+            opencode_api_key="key",
+            opencode_model="deepseek-v4-flash",
+            opencode_fast_model="deepseek-v4-flash",
         )
-        gemini_writer._last_429_at = 0.0
-        gemini_writer._call_times.clear()
+        zen_writer._last_429_at = 0.0
+        zen_writer._call_times.clear()
 
         article_text = _VALID_ARTICLE_PACKAGE_TEXT
         calls = []
         requests = []
+        models = []
 
         def fake_urlopen(req, timeout=30):
             calls.append(req.full_url)
             requests.append(req)
+            models.append(_model_from_request(req))
             if len(calls) == 1:
                 body = json.dumps({
                     "error": {
-                        "status": "UNAVAILABLE",
                         "message": "This model is currently experiencing high demand.",
+                        "type": "server_error",
                     },
                 }).encode("utf-8")
                 raise urllib.error.HTTPError(req.full_url, 503, "Unavailable", {}, io.BytesIO(body))
-            return _FakeResponse({"candidates": [{"content": {"parts": [{"text": article_text}]}}]})
+            return _FakeResponse(_openai_package_response(article_text))
 
         try:
             with (
-                patch.object(gemini_writer.urllib.request, "urlopen", side_effect=fake_urlopen),
-                patch.object(gemini_writer, "_sleep_before_retry", return_value=None),
+                patch.object(zen_writer.urllib.request, "urlopen", side_effect=fake_urlopen),
+                patch.object(zen_writer, "_sleep_before_retry", return_value=None),
             ):
-                result = gemini_writer.write_article_with_gemini(
+                result = zen_writer.write_article_with_zen(
                     "test topic",
                     [{"source_name": "Source", "title": "Title", "raw_text": "Source material. " * 80}],
                     mode="fast",
                 )
         finally:
-            gemini_writer.settings = original_settings
-            gemini_writer._last_error = original_last_error
-            gemini_writer._last_429_at = original_last_429
-            gemini_writer._call_times.clear()
+            zen_writer.settings = original_settings
+            zen_writer._last_error = original_last_error
+            zen_writer._last_429_at = original_last_429
+            zen_writer._call_times.clear()
 
         self.assertEqual(result, _VALID_ARTICLE_BODY)
         self.assertEqual(len(calls), 2)
-        self.assertIn("gemini-2.5-flash-lite", calls[0])
-        self.assertIn("gemini-flash-latest", calls[1])
-        self.assertIn(":generateContent", calls[0])
-        self.assertNotIn("streamGenerateContent", calls[0])
-        generation_config = json.loads(requests[0].data.decode("utf-8"))["generationConfig"]
-        self.assertNotIn("temperature", generation_config)
-        self.assertNotIn("topP", generation_config)
-        self.assertEqual(generation_config["responseMimeType"], "application/json")
-        self.assertEqual(
-            generation_config["responseSchema"]["required"],
-            ["headline", "dek", "body"],
-        )
+        self.assertEqual(models[0], "deepseek-v4-flash")
+        self.assertEqual(models[1], "minimax-m2.7")
+        self.assertTrue(all("opencode.ai/zen/v1/chat/completions" in url for url in calls))
+        payload = json.loads(requests[0].data.decode("utf-8"))
+        self.assertEqual(payload["response_format"], {"type": "json_object"})
+        self.assertEqual(payload["messages"][0]["role"], "user")
+        self.assertEqual(requests[0].headers.get("Authorization"), "Bearer key")
 
-    def test_gemini_incomplete_primary_response_retries_alternate_model(self):
-        original_settings = gemini_writer.settings
-        original_last_error = gemini_writer._last_error
-        original_last_429 = gemini_writer._last_429_at
-        gemini_writer.settings = SimpleNamespace(
-            gemini_api_key="key",
-            gemini_model="gemini-flash-latest",
-            gemini_fast_model="gemini-2.5-flash-lite",
+    def test_zen_incomplete_primary_response_retries_alternate_model(self):
+        original_settings = zen_writer.settings
+        original_last_error = zen_writer._last_error
+        original_last_429 = zen_writer._last_429_at
+        zen_writer.settings = SimpleNamespace(
+            opencode_api_key="key",
+            opencode_model="deepseek-v4-flash",
+            opencode_fast_model="deepseek-v4-flash",
         )
-        gemini_writer._last_429_at = 0.0
-        gemini_writer._call_times.clear()
+        zen_writer._last_429_at = 0.0
+        zen_writer._call_times.clear()
         calls = []
+        models = []
 
         def fake_urlopen(req, timeout=30):
             calls.append(req.full_url)
+            models.append(_model_from_request(req))
             text = "incomplete response" if len(calls) == 1 else _VALID_ARTICLE_PACKAGE_TEXT
-            return _FakeResponse({"candidates": [{"content": {"parts": [{"text": text}]}}]})
+            return _FakeResponse(_openai_package_response(text))
 
         try:
-            with patch.object(gemini_writer.urllib.request, "urlopen", side_effect=fake_urlopen):
-                result = gemini_writer.write_article_with_gemini(
+            with patch.object(zen_writer.urllib.request, "urlopen", side_effect=fake_urlopen):
+                result = zen_writer.write_article_with_zen(
                     "test topic",
                     [{"source_name": "Source", "title": "Title", "raw_text": "Source material. " * 80}],
                     mode="fast",
                 )
         finally:
-            gemini_writer.settings = original_settings
-            gemini_writer._last_error = original_last_error
-            gemini_writer._last_429_at = original_last_429
-            gemini_writer._call_times.clear()
+            zen_writer.settings = original_settings
+            zen_writer._last_error = original_last_error
+            zen_writer._last_429_at = original_last_429
+            zen_writer._call_times.clear()
 
         self.assertEqual(result, _VALID_ARTICLE_BODY)
         self.assertEqual(len(calls), 2)
-        self.assertIn("gemini-2.5-flash-lite", calls[0])
-        self.assertIn("gemini-flash-latest", calls[1])
+        self.assertEqual(models[0], "deepseek-v4-flash")
+        self.assertEqual(models[1], "minimax-m2.7")
 
-    def test_gemini_exhausted_failover_reports_provider_reason(self):
-        original_settings = gemini_writer.settings
-        original_last_error = gemini_writer._last_error
-        original_last_429 = gemini_writer._last_429_at
-        gemini_writer.settings = SimpleNamespace(
-            gemini_api_key="key",
-            gemini_model="gemini-flash-latest",
-            gemini_fast_model="gemini-2.5-flash-lite",
+    def test_zen_exhausted_failover_reports_provider_reason(self):
+        original_settings = zen_writer.settings
+        original_last_error = zen_writer._last_error
+        original_last_429 = zen_writer._last_429_at
+        zen_writer.settings = SimpleNamespace(
+            opencode_api_key="key",
+            opencode_model="deepseek-v4-flash",
+            opencode_fast_model="deepseek-v4-flash",
         )
-        gemini_writer._last_429_at = 0.0
-        gemini_writer._call_times.clear()
+        zen_writer._last_429_at = 0.0
+        zen_writer._call_times.clear()
         calls = []
 
         def fake_urlopen(req, timeout=30):
             calls.append(req.full_url)
             body = json.dumps({
                 "error": {
-                    "status": "UNAVAILABLE",
                     "message": "This model is currently experiencing high demand.",
+                    "type": "server_error",
                 },
             }).encode("utf-8")
             raise urllib.error.HTTPError(req.full_url, 503, "Unavailable", {}, io.BytesIO(body))
 
         try:
             with (
-                patch.object(gemini_writer.urllib.request, "urlopen", side_effect=fake_urlopen),
-                patch.object(gemini_writer, "_sleep_before_retry", return_value=None),
+                patch.object(zen_writer.urllib.request, "urlopen", side_effect=fake_urlopen),
+                patch.object(zen_writer, "_sleep_before_retry", return_value=None),
             ):
-                result = gemini_writer.write_article_with_gemini(
+                result = zen_writer.write_article_with_zen(
                     "test topic",
                     [{"source_name": "Source", "title": "Title", "raw_text": "Source material. " * 80}],
                     mode="fast",
                 )
-            error = gemini_writer.get_last_gemini_error()
-            explanation = gemini_writer.describe_last_gemini_error()
+            error = zen_writer.get_last_zen_error()
+            explanation = zen_writer.describe_last_zen_error()
         finally:
-            gemini_writer.settings = original_settings
-            gemini_writer._last_error = original_last_error
-            gemini_writer._last_429_at = original_last_429
-            gemini_writer._call_times.clear()
+            zen_writer.settings = original_settings
+            zen_writer._last_error = original_last_error
+            zen_writer._last_429_at = original_last_429
+            zen_writer._call_times.clear()
 
         self.assertIsNone(result)
         self.assertEqual(len(calls), 2)
@@ -433,81 +448,92 @@ class BackendHardeningTest(unittest.TestCase):
         self.assertIn("temporarily unavailable after trying 2 models", explanation)
         self.assertIn("high demand", explanation)
 
-    def test_required_gemini_article_surfaces_diagnostic_reason(self):
-        reason = "Gemini is temporarily unavailable after trying 2 models (HTTP 503)."
+    def test_required_zen_article_surfaces_diagnostic_reason(self):
+        reason = "OpenCode Zen is temporarily unavailable after trying 2 models (HTTP 503)."
         with (
-            patch.object(gemini_writer, "write_article_package_with_gemini", return_value=None),
-            patch.object(gemini_writer, "describe_last_gemini_error", return_value=reason),
+            patch.object(zen_writer, "write_article_package_with_zen", return_value=None),
+            patch.object(zen_writer, "describe_last_zen_error", return_value=reason),
         ):
-            with self.assertRaises(article_writer.GeminiArticleUnavailable) as ctx:
+            with self.assertRaises(article_writer.ZenArticleUnavailable) as ctx:
                 article_writer._article_body(
                     "test topic",
                     [{"source_name": "Source", "title": "Title", "raw_text": "Source material."}],
                     [],
                     [],
-                    require_gemini=True,
+                    require_zen=True,
                 )
 
         self.assertEqual(str(ctx.exception), reason)
 
-    def test_gemini_retired_model_is_remapped_to_maintained_alias(self):
-        original_settings = gemini_writer.settings
-        gemini_writer.settings = SimpleNamespace(gemini_api_key="key", gemini_model="gemini-2.0-flash")
-        gemini_writer._last_429_at = 0.0
-        gemini_writer._call_times.clear()
+    def test_legacy_gemini_model_is_remapped_to_zen_primary(self):
+        original_settings = zen_writer.settings
+        zen_writer.settings = SimpleNamespace(
+            opencode_api_key="key",
+            opencode_model="gemini-2.0-flash",
+            opencode_fast_model="deepseek-v4-flash",
+        )
+        zen_writer._last_429_at = 0.0
+        zen_writer._call_times.clear()
 
         article_text = _VALID_ARTICLE_PACKAGE_TEXT
-        calls = []
+        models = []
 
         def fake_urlopen(_req, timeout=30):
-            calls.append(_req.full_url)
-            return _FakeResponse({"candidates": [{"content": {"parts": [{"text": article_text}]}}]})
+            models.append(_model_from_request(_req))
+            return _FakeResponse(_openai_package_response(article_text))
 
         try:
-            with patch.object(gemini_writer.urllib.request, "urlopen", side_effect=fake_urlopen):
-                result = gemini_writer.write_article_with_gemini(
+            with patch.object(zen_writer.urllib.request, "urlopen", side_effect=fake_urlopen):
+                result = zen_writer.write_article_with_zen(
                     "test topic",
                     [{"source_name": "Source", "title": "Title", "raw_text": "Source material. " * 80}],
                 )
         finally:
-            gemini_writer.settings = original_settings
-            gemini_writer._call_times.clear()
+            zen_writer.settings = original_settings
+            zen_writer._call_times.clear()
 
         self.assertEqual(result, _VALID_ARTICLE_BODY)
-        self.assertEqual(len(calls), 1)
-        self.assertIn("gemini-flash-latest", calls[0])
-        self.assertNotIn("gemini-2.0-flash", calls[0])
+        self.assertEqual(len(models), 1)
+        self.assertEqual(models[0], "deepseek-v4-flash")
+        self.assertNotIn("gemini-2.0-flash", models)
 
-    def test_gemini_404_shutdown_falls_back_to_alias_model(self):
-        original_settings = gemini_writer.settings
-        gemini_writer.settings = SimpleNamespace(gemini_api_key="key", gemini_model="gemini-9.9-flash-custom")
-        gemini_writer._last_429_at = 0.0
-        gemini_writer._call_times.clear()
+    def test_zen_404_falls_back_to_failover_model(self):
+        original_settings = zen_writer.settings
+        zen_writer.settings = SimpleNamespace(
+            opencode_api_key="key",
+            opencode_model="custom-zen-model",
+            opencode_fast_model="deepseek-v4-flash",
+        )
+        zen_writer._last_429_at = 0.0
+        zen_writer._call_times.clear()
 
         article_text = _VALID_ARTICLE_PACKAGE_TEXT
         calls = []
+        models = []
 
         def fake_urlopen(_req, timeout=30):
             calls.append(_req.full_url)
+            models.append(_model_from_request(_req))
             if len(calls) == 1:
-                body = json.dumps({"error": {"status": "NOT_FOUND", "message": "model not found"}}).encode("utf-8")
+                body = json.dumps({"error": {"message": "model not found", "type": "not_found_error"}}).encode("utf-8")
                 raise urllib.error.HTTPError(_req.full_url, 404, "Not Found", {}, io.BytesIO(body))
-            return _FakeResponse({"candidates": [{"content": {"parts": [{"text": article_text}]}}]})
+            return _FakeResponse(_openai_package_response(article_text))
 
         try:
-            with patch.object(gemini_writer.urllib.request, "urlopen", side_effect=fake_urlopen):
-                result = gemini_writer.write_article_with_gemini(
+            with patch.object(zen_writer.urllib.request, "urlopen", side_effect=fake_urlopen):
+                result = zen_writer.write_article_with_zen(
                     "test topic",
                     [{"source_name": "Source", "title": "Title", "raw_text": "Source material. " * 80}],
                 )
         finally:
-            gemini_writer.settings = original_settings
-            gemini_writer._call_times.clear()
+            zen_writer.settings = original_settings
+            zen_writer._call_times.clear()
 
         self.assertEqual(result, _VALID_ARTICLE_BODY)
         self.assertEqual(len(calls), 2)
-        self.assertIn("gemini-9.9-flash-custom", calls[0])
-        self.assertIn("gemini-flash-latest", calls[1])
+        self.assertEqual(models[0], "custom-zen-model")
+        self.assertEqual(models[1], "minimax-m2.7")
+        self.assertTrue(all("opencode.ai/zen/v1/chat/completions" in url for url in calls))
 
 
 if __name__ == "__main__":

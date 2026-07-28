@@ -6,9 +6,9 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, validator
 
 from app.api.routes_articles import _check_article_rate_limit, _client_rate_key
-from app.llm.gemini_writer import (
-    describe_last_gemini_error,
-    generic_news_prompt_from_x_posts_with_gemini,
+from app.llm.zen_writer import (
+    describe_last_zen_error,
+    generic_news_prompt_from_x_posts_with_zen,
 )
 from app.x.models import XCandidate
 from app.x.pipeline import write_article_for_candidate
@@ -80,9 +80,9 @@ def create_vm_draft(request: Request, payload: list[VMPost]):
             continue
 
         generation_attempted = True
-        prompt = generic_news_prompt_from_x_posts_with_gemini([post.model_dump()])
+        prompt = generic_news_prompt_from_x_posts_with_zen([post.model_dump()])
         if not prompt:
-            errors.append({"url": post.url, "error": describe_last_gemini_error()})
+            errors.append({"url": post.url, "error": describe_last_zen_error()})
             continue
 
         package = write_article_for_candidate(

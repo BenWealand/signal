@@ -179,17 +179,17 @@ export function XUsageTerminal({ account, onToast, verifyAdminAccess = true }) {
       const data = await apiGet("/admin/x/status");
       setStatus(data);
       const xc = data.xClient || {};
-      const gemini = data.gemini || {};
+      const zen = data.zen || data.gemini || {};
       push(
         `status ok — read=${xc.readConfigured ? "yes" : "no"} write=${xc.writeConfigured ? "yes" : "no"} dryRun=${xc.dryRunDefault ? "on" : "off"}`,
         "ok",
       );
       push(
-        `gemini ${gemini.configured ? "ready" : "not configured"} — fast=${gemini.fastModel || "unset"} thorough=${gemini.thoroughModel || "unset"}`,
-        gemini.configured ? "ok" : "error",
+        `zen ${zen.configured ? "ready" : "not configured"} — fast=${zen.fastModel || "unset"} thorough=${zen.thoroughModel || "unset"}`,
+        zen.configured ? "ok" : "error",
       );
-      if (gemini.lastErrorMessage) {
-        push(`gemini last error: ${gemini.lastErrorMessage}`, "warn");
+      if (zen.lastErrorMessage) {
+        push(`zen last error: ${zen.lastErrorMessage}`, "warn");
       }
     } catch (error) {
       push(`status failed: ${error?.detail || error?.message || "unknown error"}`, "error");

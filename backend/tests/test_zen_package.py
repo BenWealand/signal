@@ -8,14 +8,14 @@ from unittest.mock import patch
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from app.llm.gemini_writer import (
+from app.llm.zen_writer import (
     _emit_stream_progress,
+    _message_content,
     _parse_package_text,
-    _response_text_from_parts,
 )
 
 
-class GeminiPackageParseTest(unittest.TestCase):
+class ZenPackageParseTest(unittest.TestCase):
     def test_parses_tagged_package(self):
         text = """<<<HEADLINE>>>
 Senate Passes Budget Bill Overnight
@@ -70,33 +70,52 @@ Second paragraph confirming the sourced outcome from multiple public outlets cov
         self.assertEqual(package["headline"], "Markets Rally After Central Bank Decision")
         self.assertEqual(len(package["body"].split("\n\n")), 2)
 
-    def test_rejects_body_only_text_without_gemini_header(self):
+    def test_rejects_body_only_text_without_package_header(self):
         body_only = (
-            "The first paragraph contains enough material to resemble an article but has no Gemini headline. "
+            "The first paragraph contains enough material to resemble an article but has no Zen headline. "
             "It should not be accepted as a complete package.\n\n"
             "The second paragraph confirms that body text alone is insufficient for publication."
         )
         self.assertIsNone(_parse_package_text(body_only))
 
-    def test_response_text_joins_all_non_thought_parts(self):
-        parts = [
-            {"text": "private reasoning", "thought": True},
-            {"text": '{"headline":"Markets Rally",'},
-            {"text": '"dek":"Investors respond","body":["One","Two"]}'},
-        ]
+    def test_message_content_reads_openai_chat_completion(self):
+        data = {
+            "choices": [{
+                "message": {
+                    "content": '{"headline":"Markets Rally","dek":"Investors respond","body":["One","Two"]}',
+                },
+            }],
+        }
         self.assertEqual(
-            _response_text_from_parts(parts),
+            _message_content(data),
             '{"headline":"Markets Rally","dek":"Investors respond","body":["One","Two"]}',
         )
 
-    @patch("app.llm.gemini_writer._rate_limited", return_value=False)
-    @patch("app.llm.gemini_writer.settings")
-    @patch("app.llm.gemini_writer.urllib.request.urlopen")
-    def test_suggest_image_queries_prefers_people_phrases(self, urlopen, settings, _rate):
-        from app.llm.gemini_writer import suggest_image_queries_with_gemini
+    def test_message_content_joins_list_content_parts(self):
+        data = {
+            "choices": [{
+                "message": {
+                    "content": [
+                        {"text": '{"headline":"Markets Rally",'},
+                        {"text": '"dek":"Investors respond","body":["One","Two"]}'},
+                    ],
+                },
+            }],
+        }
+        self.assertEqual(
+            _message_content(data),
+            '{"headline":"Markets Rally","dek":"Investors respond","body":["One","Two"]}',
+        )
 
-        settings.gemini_api_key = "test-key"
-        settings.gemini_fast_model = "gemini-flash-lite-latest"
+    @patch("app.llm.zen_writer._rate_limited", return_value=False)
+    @patch("app.llm.zen_writer.settings")
+    @patch("app.llm.zen_writer.urllib.request.urlopen")
+    def test_suggest_image_queries_prefers_people_phrases(self, urlopen, settings, _rate):
+        from app.llm.zen_writer import suggest_image_queries_with_zen
+
+        settings.opencode_api_key = "test-key"
+        settings.opencode_fast_model = "deepseek-v4-flash"
+        settings.opencode_model = "deepseek-v4-flash"
 
         class FakeResp:
             def __enter__(self):
@@ -106,10 +125,16 @@ Second paragraph confirming the sourced outcome from multiple public outlets cov
                 return False
 
             def read(self, *_args):
-                return b'{"candidates":[{"content":{"parts":[{"text":"[\\"Lamine Yamal Spain\\", \\"Argentina World Cup final\\", \\"Spain\\"]"}]}}]}'
+                return json.dumps({
+                    "choices": [{
+                        "message": {
+                            "content": '["Lamine Yamal Spain", "Argentina World Cup final", "Spain"]',
+                        },
+                    }],
+                }).encode("utf-8")
 
         urlopen.return_value = FakeResp()
-        queries = suggest_image_queries_with_gemini(
+        queries = suggest_image_queries_with_zen(
             headline="Spain and Argentina Prepare for World Cup Final",
             dek="Questions emerge regarding Lamine Yamal's training status.",
             body_paragraphs=["Spain faces Argentina after beating England."],
@@ -118,13 +143,16 @@ Second paragraph confirming the sourced outcome from multiple public outlets cov
         self.assertEqual(queries, ["Lamine Yamal Spain", "Argentina World Cup final"])
         request = urlopen.call_args.args[0]
         body = json.loads(request.data.decode("utf-8"))
-        prompt_text = body["contents"][0]["parts"][0]["text"]
+        prompt_text = body["messages"][0]["content"]
         self.assertIn("User topic / prompt:", prompt_text)
         self.assertIn("NEVER return a broad/generic query", prompt_text)
         self.assertIn("interest rates", prompt_text)
         self.assertIn("TOP 5", prompt_text)
         self.assertIn("Rank by relevance", prompt_text)
+        self.assertEqual(body["model"], "deepseek-v4-flash")
         self.assertEqual(urlopen.call_args.kwargs.get("timeout"), 15)
+        self.assertIn("opencode.ai/zen/v1/chat/completions", request.full_url)
+
 
 if __name__ == "__main__":
     unittest.main()

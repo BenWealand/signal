@@ -51,7 +51,7 @@ VITE_SUPABASE_URL=https://your-project-ref.supabase.co
 VITE_SUPABASE_ANON_KEY=your-public-anon-key
 ```
 
-Only `VITE_*` variables are exposed to the frontend. Do not add `DATABASE_URL`, `GEMINI_API_KEY`, `OPENAI_API_KEY`, or news provider keys to the frontend project.
+Only `VITE_*` variables are exposed to the frontend. Do not add `DATABASE_URL`, `OPENCODE_API_KEY`, `OPENAI_API_KEY`, or news provider keys to the frontend project.
 
 The repo includes `vercel.json` with a single-page-app rewrite so direct links like `/?article=...` and future client routes fall back to `index.html`.
 
@@ -78,7 +78,7 @@ Optional backend environment variables:
 ```env
 DB_POOL_MAX=8
 FEED_CACHE_TTL_SECONDS=60
-GEMINI_FAST_MODEL=gemini-flash-lite-latest
+OPENCODE_FAST_MODEL=deepseek-v4-flash
 SIGNAL_FAST_CACHE_MIN_SOURCES=4
 SIGNAL_THOROUGH_ENRICH_LIMIT=12
 SIGNAL_THOROUGH_ENRICH_TIMEOUT=8
@@ -89,7 +89,7 @@ What these do:
 
 - `DB_POOL_MAX`: reuses Postgres connections instead of opening a new TLS session per request.
 - `FEED_CACHE_TTL_SECONDS`: memoizes trending rankings and the `/feeds/bootstrap` bundle in memory for all visitors.
-- `GEMINI_FAST_MODEL`: model used for Fast-mode packaged article writes (headline + dek + body in one call).
+- `OPENCODE_FAST_MODEL`: model used for Fast-mode packaged article writes (headline + dek + body in one call).
 - `SIGNAL_FAST_CACHE_MIN_SOURCES`: Fast mode answers from the daily desk cache once this many recent sources match.
 - `SIGNAL_THOROUGH_ENRICH_LIMIT` / `TIMEOUT`: cap how many pages Thorough mode scrapes and how long each scrape may take.
 - `SIGNAL_DAILY_INGEST`: optional in-process daily RSS refresh. Prefer the GitHub Action `daily-source-ingest.yml` on free-tier hosts.
@@ -131,7 +131,7 @@ Backend environment variables:
 
 ```env
 DATABASE_URL=postgresql://...
-GEMINI_API_KEY=...
+OPENCODE_API_KEY=...
 PUBLIC_ARTICLE_BASE_URL=https://your-frontend.vercel.app
 CORS_ORIGINS=https://your-frontend.vercel.app
 SIGNAL_API_TOKEN=long-random-secret
@@ -144,7 +144,7 @@ SIGNAL_X_AUTO_POST=false
 # X_ACCESS_TOKEN=
 # X_ACCESS_TOKEN_SECRET=
 # X_TRENDS_WOEID=1
-GEMINI_MODEL=gemini-flash-latest
+OPENCODE_MODEL=deepseek-v4-flash
 USE_LLM_CLAIMS=false
 SIGNAL_AUTO_INGEST_ON_STARTUP=false
 SIGNAL_PERIODIC_RSS=false
@@ -202,7 +202,7 @@ Use Fly secrets:
 ```bash
 fly secrets set DATABASE_URL="postgresql://..."
 fly secrets set PUBLIC_ARTICLE_BASE_URL="https://your-frontend.vercel.app"
-fly secrets set GEMINI_API_KEY="..."
+fly secrets set OPENCODE_API_KEY="..."
 ```
 
 Expose port `8080` or match your `fly.toml` service configuration.
@@ -280,7 +280,7 @@ For production-like deployments, add a real migration tool before making schema-
 Backend can run without paid/news provider keys:
 
 - RSS/Bing/GDELT still provide source candidates.
-- Gemini is required for generated article prose. If Gemini is unavailable, the write fails without saving an article.
+- OpenCode Zen is required for generated article prose. If Zen is unavailable, the write fails without saving an article.
 - OpenAI claim extraction stays disabled unless explicitly enabled.
 
 Recommended demo backend:
@@ -288,8 +288,8 @@ Recommended demo backend:
 ```env
 DATABASE_URL=postgresql://...
 PUBLIC_ARTICLE_BASE_URL=https://your-frontend.vercel.app
-GEMINI_API_KEY=...
-GEMINI_MODEL=gemini-flash-latest
+OPENCODE_API_KEY=...
+OPENCODE_MODEL=deepseek-v4-flash
 USE_LLM_CLAIMS=false
 SIGNAL_API_TOKEN=...
 SUPABASE_URL=https://YOUR_PROJECT.supabase.co

@@ -12,7 +12,7 @@ This repository contains:
 
 ## Current Readiness
 
-This is a deployment-stage prototype. Backend-generated articles require Gemini-written prose; when Gemini or source coverage is unavailable, the write fails instead of saving a local, consensus-only, or fallback article. Offline preview drafts are only used when the frontend is intentionally built without a backend URL.
+This is a deployment-stage prototype. Backend-generated articles require OpenCode Zen-written prose; when Zen or source coverage is unavailable, the write fails instead of saving a local, consensus-only, or fallback article. Offline preview drafts are only used when the frontend is intentionally built without a backend URL.
 
 ## Requirements
 
@@ -31,7 +31,8 @@ Required backend variable:
 
 ```env
 DATABASE_URL=postgresql://...
-GEMINI_API_KEY=...
+OPENCODE_API_KEY=...
+# GEMINI_API_KEY still accepted as a fallback alias while migrating Render env vars
 ```
 
 Common local variables:
@@ -59,7 +60,7 @@ PROMPT_BLACKLIST_REGEX=
 Deployment env checklist:
 
 - Vercel frontend: `VITE_SIGNAL_API_URL`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`
-- Render backend: `DATABASE_URL`, `GEMINI_API_KEY`, `CORS_ORIGINS`, `PUBLIC_ARTICLE_BASE_URL`, `SIGNAL_API_TOKEN`, `SUPABASE_JWT_SECRET`
+- Render backend: `DATABASE_URL`, `OPENCODE_API_KEY`, `CORS_ORIGINS`, `PUBLIC_ARTICLE_BASE_URL`, `SIGNAL_API_TOKEN`, `SUPABASE_JWT_SECRET`
 - GitHub Actions: `SIGNAL_API_URL`
 
 For the Render free tier, keep memory-heavy work disabled unless you upgrade:
@@ -183,7 +184,7 @@ Run migration `0003_user_roles_auth.sql` for `role` / `email_confirmed` / `last_
 
 - RSS, Bing News RSS, and GDELT are the main low-cost discovery paths.
 - Guardian, NewsAPI, Currents, and GNews keys add more source candidates when configured.
-- Gemini writes article prose. If Gemini is missing, rate-limited, failing, or given too few usable sources, the backend returns a clear error and does not save an article.
+- OpenCode Zen writes article prose. If Zen is missing, rate-limited, failing, or given too few usable sources, the backend returns a clear error and does not save an article.
 - OpenAI is used only for optional LLM claim extraction when `USE_LLM_CLAIMS=true` and `OPENAI_API_KEY` is set.
 - Sentence-transformers/spaCy are optional ML improvements. Without them, fallback heuristics are used where the code supports it.
 
@@ -237,6 +238,6 @@ Frontend says cached/offline
 
 Confirm `VITE_SIGNAL_API_URL` points at the backend and `GET /health` works.
 
-Article generation fails with a Gemini/source-coverage message
+Article generation fails with a Zen/source-coverage message
 
-The backend may have too few accessible sources, a missing `GEMINI_API_KEY`, or a Gemini rate limit. Try a more specific prompt and check Render logs for the generation failure reason.
+The backend may have too few accessible sources, a missing `OPENCODE_API_KEY`, or a Zen rate limit. Try a more specific prompt and check Render logs for the generation failure reason.

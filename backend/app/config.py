@@ -24,7 +24,14 @@ class Settings:
     supabase_service_role_key: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
     supabase_jwt_secret: str = os.getenv("SUPABASE_JWT_SECRET", "")
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
-    gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
+    # OpenCode Zen gateway (https://opencode.ai/docs/zen/). Prefer OPENCODE_API_KEY
+    # / ZEN_API_KEY; GEMINI_API_KEY is accepted so Render can swap the key in place.
+    opencode_api_key: str = (
+        os.getenv("OPENCODE_API_KEY")
+        or os.getenv("ZEN_API_KEY")
+        or os.getenv("GEMINI_API_KEY")
+        or ""
+    )
     news_api_key: str = os.getenv("NEWS_API_KEY", "")
     currents_api_key: str = os.getenv("CURRENTS_API_KEY", "")
     gnews_api_key: str = os.getenv("GNEWS_API_KEY", "")
@@ -40,10 +47,13 @@ class Settings:
     prompt_blacklist_regex: str = os.getenv("PROMPT_BLACKLIST_REGEX", "")
     claim_model: str = os.getenv("CLAIM_MODEL", "gpt-4o-mini")
     summary_model: str = os.getenv("SUMMARY_MODEL", "gpt-4o-mini")
-    # "gemini-flash-latest" is a Google-maintained alias that always points at
-    # the current flash model, so writes keep working when pinned model ids
-    # (like the retired gemini-2.0-flash) are shut down.
-    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
+    # OpenCode Zen model ids (chat completions). Legacy GEMINI_* env names still work.
+    opencode_model: str = (
+        os.getenv("OPENCODE_MODEL")
+        or os.getenv("ZEN_MODEL")
+        or os.getenv("GEMINI_MODEL")
+        or "deepseek-v4-flash"
+    )
     use_llm_claims: bool = os.getenv("USE_LLM_CLAIMS", "false").lower() == "true"
     auto_ingest_on_startup: bool = os.getenv("SIGNAL_AUTO_INGEST_ON_STARTUP", "false").lower() == "true"
     periodic_rss: bool = os.getenv("SIGNAL_PERIODIC_RSS", "false").lower() == "true"
@@ -56,9 +66,14 @@ class Settings:
     # answer from Postgres before hitting live providers.
     daily_ingest_enabled: bool = os.getenv("SIGNAL_DAILY_INGEST", "false").lower() == "true"
     daily_ingest_interval_seconds: int = int(os.getenv("SIGNAL_DAILY_INGEST_INTERVAL_SECONDS", "86400"))
-    # Fast writes use the lite model; thorough keeps the primary flash model
+    # Fast writes use the configured fast model; thorough keeps the primary model
     # but with tighter enrich caps so it still returns quickly.
-    gemini_fast_model: str = os.getenv("GEMINI_FAST_MODEL", "gemini-flash-lite-latest")
+    opencode_fast_model: str = (
+        os.getenv("OPENCODE_FAST_MODEL")
+        or os.getenv("ZEN_FAST_MODEL")
+        or os.getenv("GEMINI_FAST_MODEL")
+        or "deepseek-v4-flash"
+    )
     fast_cache_min_sources: int = int(os.getenv("SIGNAL_FAST_CACHE_MIN_SOURCES", "4"))
     thorough_cache_min_sources: int = int(os.getenv("SIGNAL_THOROUGH_CACHE_MIN_SOURCES", "5"))
     thorough_enrich_limit: int = int(os.getenv("SIGNAL_THOROUGH_ENRICH_LIMIT", "6"))
@@ -80,6 +95,19 @@ class Settings:
     # Comma-separated admin emails (lowercase). Default: sole admin.
     admin_emails: str = os.getenv("SIGNAL_ADMIN_EMAILS", "benwealand@gmail.com")
     app_name: str = "Signal News Intelligence API"
+
+    # Deprecated Gemini-named aliases (same values as OpenCode Zen settings).
+    @property
+    def gemini_api_key(self) -> str:
+        return self.opencode_api_key
+
+    @property
+    def gemini_model(self) -> str:
+        return self.opencode_model
+
+    @property
+    def gemini_fast_model(self) -> str:
+        return self.opencode_fast_model
 
 
 settings = Settings()

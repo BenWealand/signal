@@ -17,10 +17,10 @@ http://127.0.0.1:5175/
 ```
 
 3. Confirm `DATABASE_URL` points at PostgreSQL/Supabase Postgres.
-4. Optional: confirm Gemini:
+4. Optional: confirm OpenCode Zen:
 
 ```text
-http://127.0.0.1:8000/articles/test-gemini
+http://127.0.0.1:8000/articles/test-zen
 ```
 
 5. Keep a fallback prompt ready:
@@ -70,7 +70,7 @@ Short version:
 
 Pipeline version:
 
-> The backend starts cheap: RSS, Bing News RSS, GDELT, and optional news APIs. It cleans text, extracts entities and claims, groups similar claims, and then requires Gemini for generated article prose. If Gemini or source coverage fails, the write is refused instead of saving a local or consensus-only article.
+> The backend starts cheap: RSS, Bing News RSS, GDELT, and optional news APIs. It cleans text, extracts entities and claims, groups similar claims, and then requires OpenCode Zen for generated article prose. If Zen or source coverage fails, the write is refused instead of saving a local or consensus-only article.
 
 Product positioning:
 
@@ -86,8 +86,8 @@ Product positioning:
 - Article text extraction with trafilatura.
 - Entity and claim extraction.
 - Consensus detection with semantic similarity when ML deps are installed.
-- Gemini-required generated article writing.
-- Clear refusal when Gemini or source coverage is unavailable.
+- Zen-required generated article writing.
+- Clear refusal when Zen or source coverage is unavailable.
 - Generated article storage and deep links.
 - X agent endpoint protected by `SIGNAL_API_TOKEN`.
 - Saved articles and history endpoints.
@@ -129,11 +129,11 @@ If article generation fails:
 4. Use `Latest` to show existing generated/static articles.
 5. Explain that backend-configured builds do not save fallback articles.
 
-If Gemini fails:
+If Zen fails:
 
-1. Show the Gemini/source-coverage error.
-2. Mention that the backend refuses to save non-Gemini generated articles.
-3. Check `/articles/test-gemini` after the demo.
+1. Show the Zen/source-coverage error.
+2. Mention that the backend refuses to save non-Zen generated articles.
+3. Check `/articles/test-zen` after the demo.
 
 If PostgreSQL fails:
 
