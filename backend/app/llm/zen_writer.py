@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 # Docs: https://opencode.ai/docs/zen/
 _API_BASE = "https://opencode.ai/zen/v1"
 _CHAT_URL = f"{_API_BASE}/chat/completions"
+_GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
 # Per-article token budget: keep prompt under ~6 000 chars of source material.
 _MAX_SOURCE_CHARS = 9_000
@@ -63,24 +64,18 @@ _RETRYABLE_HTTP_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
 
 
 def _api_key() -> str:
-    # Prefer OpenCode Zen; accept legacy gemini_api_key attrs used by older tests/env.
-    return (
-        str(getattr(settings, "opencode_api_key", "") or "")
-        or str(getattr(settings, "gemini_api_key", "") or "")
-    ).strip()
+    return str(getattr(settings, "opencode_api_key", "") or "").strip()
+
+
+def _gemini_api_key() -> str:
+    return str(getattr(settings, "gemini_api_key", "") or "").strip()
 
 
 def _active_model(mode: str = "thorough") -> str:
     if mode == "fast":
-        model = (
-            str(getattr(settings, "opencode_fast_model", "") or "")
-            or str(getattr(settings, "gemini_fast_model", "") or "")
-        ).strip() or _MODEL_FAST
+        model = str(getattr(settings, "opencode_fast_model", "") or "").strip() or _MODEL_FAST
     else:
-        model = (
-            str(getattr(settings, "opencode_model", "") or "")
-            or str(getattr(settings, "gemini_model", "") or "")
-        ).strip() or _MODEL_PRIMARY
+        model = str(getattr(settings, "opencode_model", "") or "").strip() or _MODEL_PRIMARY
     lowered = model.lower()
     if lowered in _LEGACY_GEMINI_MODELS or lowered.startswith("gemini-"):
         mapped = _MODEL_FAST if mode == "fast" else _MODEL_PRIMARY
@@ -90,6 +85,15 @@ def _active_model(mode: str = "thorough") -> str:
         )
         return mapped
     return model
+
+
+def _gemini_model(mode: str = "thorough") -> str:
+    setting_name = "gemini_fast_model" if mode == "fast" else "gemini_model"
+    return (
+        str(getattr(settings, setting_name, "") or "").strip()
+        or str(getattr(settings, "gemini_model", "") or "").strip()
+        or "gemini-flash-latest"
+    )
 
 
 def _source_budgets(mode: str) -> tuple[int, int]:
@@ -144,7 +148,10 @@ def describe_last_zen_error() -> str:
     if kind == "rate_limit":
         return "Signal's OpenCode Zen request limit was reached. Try again after one minute."
     if kind == "config":
-        return "OpenCode Zen is not configured on the backend (set OPENCODE_API_KEY)."
+        return (
+            "No article LLM is configured on the backend "
+            "(set OPENCODE_API_KEY and, optionally, GEMINI_API_KEY as fallback)."
+        )
     if kind == "input":
         return "No accessible source material was available for OpenCode Zen."
     if kind == "request":
@@ -167,23 +174,25 @@ def _alternate_model(model: str, http_status: int | None = None) -> str:
 
 def _http_error_details(exc: urllib.error.HTTPError, model: str) -> dict[str, object]:
     body: dict[str, object] = {}
+    raw_body = ""
     try:
-        body = json.loads(exc.read().decode("utf-8", errors="ignore"))
+        raw_body = exc.read().decode("utf-8", errors="ignore").strip()
+        body = json.loads(raw_body)
     except Exception:
         body = {}
     details = body.get("error", {}) if isinstance(body, dict) else {}
     if isinstance(details, dict):
-        message = details.get("message") or details.get("type") or str(exc)
+        message = details.get("message") or details.get("type") or raw_body or str(exc)
         status = details.get("code") or details.get("type")
     else:
-        message = str(details or exc)
+        message = str(details or raw_body or exc)
         status = None
     return {
         "kind": "http",
         "model": model,
         "http_status": exc.code,
         "api_status": status,
-        "message": message,
+        "message": re.sub(r"\s+", " ", str(message)).strip()[:500],
     }
 
 
@@ -210,6 +219,28 @@ def _record_429() -> None:
     global _last_429_at
     with _rate_lock:
         _last_429_at = time.monotonic()
+
+
+def _request_key() -> str | None:
+    """Return the Zen key, or an empty sentinel to call Gemini directly."""
+    zen_key = _api_key()
+    gemini_key = _gemini_api_key()
+    if zen_key:
+        if not _rate_limited():
+            return zen_key
+        if gemini_key:
+            logger.warning("Zen is locally rate-limited; using Gemini fallback")
+            return ""
+        _set_last_error(kind="rate_limit", message="Local OpenCode Zen rate cap reached")
+        return None
+    if gemini_key:
+        logger.warning("Zen is not configured; using Gemini fallback")
+        return ""
+    _set_last_error(
+        kind="config",
+        message="Neither OPENCODE_API_KEY nor GEMINI_API_KEY is set",
+    )
+    return None
 
 
 def _build_source_block(articles: list[dict], mode: str = "thorough") -> tuple[str, int]:
@@ -444,6 +475,122 @@ def _call_zen_chat(
     return accumulated or None
 
 
+def _gemini_message_content(data: dict) -> str:
+    candidates = data.get("candidates") or []
+    if not candidates or not isinstance(candidates[0], dict):
+        return ""
+    content = candidates[0].get("content") or {}
+    parts = content.get("parts") or [] if isinstance(content, dict) else []
+    return "".join(
+        str(part.get("text") or "")
+        for part in parts
+        if isinstance(part, dict)
+    ).strip()
+
+
+def _call_gemini_chat(
+    *,
+    model: str,
+    prompt: str,
+    key: str,
+    max_tokens: int,
+    timeout: int = 30,
+    json_mode: bool = True,
+    on_chunk=None,
+) -> str | None:
+    """Call Google's Gemini API as the secondary provider."""
+    safe_model = re.sub(r"[^A-Za-z0-9._-]", "", model)
+    if not safe_model:
+        raise ValueError("Gemini fallback model is not configured")
+    payload_obj: dict[str, object] = {
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "maxOutputTokens": max_tokens,
+            "temperature": 0.2,
+        },
+    }
+    if json_mode:
+        payload_obj["generationConfig"]["responseMimeType"] = "application/json"
+    req = urllib.request.Request(
+        f"{_GEMINI_API_BASE}/{safe_model}:generateContent",
+        data=json.dumps(payload_obj).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "x-goog-api-key": key,
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        raw = resp.read().decode("utf-8", errors="ignore")
+    data = json.loads(raw)
+    if isinstance(data, dict) and data.get("error"):
+        _set_last_error(kind="api", provider="gemini", model=model, error=data["error"])
+        return None
+    text = _gemini_message_content(data if isinstance(data, dict) else {})
+    if text and on_chunk:
+        _emit_stream_progress(text, on_chunk)
+    return text or None
+
+
+def _call_provider_chat(
+    *,
+    model: str,
+    prompt: str,
+    key: str,
+    max_tokens: int,
+    timeout: int = 30,
+    json_mode: bool = True,
+    stream: bool = False,
+    on_chunk=None,
+    fallback_mode: str = "thorough",
+) -> str | None:
+    """Try OpenCode Zen first, then Gemini when Zen cannot complete the call."""
+    zen_error: Exception | None = None
+    if key:
+        try:
+            text = _call_zen_chat(
+                model=model,
+                prompt=prompt,
+                key=key,
+                max_tokens=max_tokens,
+                timeout=timeout,
+                json_mode=json_mode,
+                stream=stream,
+                on_chunk=on_chunk,
+            )
+            if text:
+                return text
+            logger.warning("Zen returned no text; trying Gemini fallback")
+        except Exception as exc:
+            zen_error = exc
+            logger.warning("Zen request failed; trying Gemini fallback: %s", exc)
+
+    gemini_key = _gemini_api_key()
+    if gemini_key:
+        gemini_model = _gemini_model(fallback_mode)
+        try:
+            text = _call_gemini_chat(
+                model=gemini_model,
+                prompt=prompt,
+                key=gemini_key,
+                max_tokens=max_tokens,
+                timeout=timeout,
+                json_mode=json_mode,
+                on_chunk=on_chunk,
+            )
+            if text:
+                logger.info("Gemini fallback succeeded model=%s", gemini_model)
+                return text
+        except Exception as exc:
+            logger.warning("Gemini fallback failed model=%s error=%s", gemini_model, exc)
+            if zen_error is None:
+                raise
+
+    if zen_error is not None:
+        raise zen_error
+    return None
+
+
 def write_article_package_with_zen(
     query: str,
     source_articles: list[dict],
@@ -456,14 +603,8 @@ def write_article_package_with_zen(
 
     Fast mode uses the configured fast model and a smaller source budget.
     """
-    key = _api_key()
-    if not key:
-        _set_last_error(kind="config", message="OPENCODE_API_KEY is not set")
-        return None
-
-    if _rate_limited():
-        _set_last_error(kind="rate_limit", message="Local OpenCode Zen rate cap reached")
-        print("[Zen] Local rate cap reached — skipping to preserve quota.", file=sys.stderr)
+    key = _request_key()
+    if key is None:
         return None
 
     source_block, n_sources = _build_source_block(source_articles, mode=mode)
@@ -485,7 +626,7 @@ def write_article_package_with_zen(
             continue
         attempted_models.append(model)
         try:
-            text = _call_zen_chat(
+            text = _call_provider_chat(
                 model=model,
                 prompt=prompt,
                 key=key,
@@ -494,6 +635,7 @@ def write_article_package_with_zen(
                 json_mode=True,
                 stream=use_stream,
                 on_chunk=on_chunk,
+                fallback_mode=mode,
             )
             package = _parse_package_text(text or "")
             if package and package.get("body"):
@@ -562,7 +704,7 @@ def write_article_package_with_zen(
             # Some models reject response_format; retry once without it on 400.
             if attempt_index == 0 and exc.code == 400:
                 try:
-                    text = _call_zen_chat(
+                    text = _call_provider_chat(
                         model=model,
                         prompt=prompt,
                         key=key,
@@ -570,6 +712,7 @@ def write_article_package_with_zen(
                         timeout=30,
                         json_mode=False,
                         stream=False,
+                        fallback_mode=mode,
                     )
                     package = _parse_package_text(text or "")
                     if package and package.get("body"):
@@ -642,12 +785,8 @@ def suggest_follow_up_prompts_with_zen(
     max_prompts: int = 5,
 ) -> list[str] | None:
     """Ask Zen for short follow-up search prompts for continuing a story."""
-    key = _api_key()
-    if not key:
-        _set_last_error(kind="config", message="OPENCODE_API_KEY is not set")
-        return None
-    if _rate_limited():
-        _set_last_error(kind="rate_limit", message="Local OpenCode Zen rate cap reached")
+    key = _request_key()
+    if key is None:
         return None
 
     body = "\n\n".join(p.strip() for p in (body_paragraphs or []) if p and p.strip())
@@ -673,13 +812,14 @@ Rules:
 5. Return strict JSON only: an array of {max_prompts} strings. No markdown, no code fence, no explanation."""
 
     try:
-        text = _call_zen_chat(
+        text = _call_provider_chat(
             model=model,
             prompt=prompt,
             key=key,
             max_tokens=320,
             timeout=14,
             json_mode=True,
+            fallback_mode="thorough",
         ) or ""
         if text.startswith("```"):
             text = text.strip("`").removeprefix("json").strip()
@@ -713,12 +853,8 @@ Rules:
 
 def generic_news_prompt_from_x_posts_with_zen(posts: list[dict]) -> str | None:
     """Turn a mixed batch of social posts into one neutral news-search prompt."""
-    key = _api_key()
-    if not key:
-        _set_last_error(kind="config", message="OPENCODE_API_KEY is not set")
-        return None
-    if _rate_limited():
-        _set_last_error(kind="rate_limit", message="Local OpenCode Zen rate cap reached")
+    key = _request_key()
+    if key is None:
         return None
 
     post_lines: list[str] = []
@@ -771,13 +907,14 @@ Rules:
     for index, active_model in enumerate(models):
         attempted.append(active_model)
         try:
-            text = _call_zen_chat(
+            text = _call_provider_chat(
                 model=active_model,
                 prompt=prompt,
                 key=key,
                 max_tokens=100,
                 timeout=18,
                 json_mode=True,
+                fallback_mode="fast",
             ) or ""
             if text.startswith("```"):
                 text = text.strip("`").removeprefix("json").strip()
@@ -828,10 +965,8 @@ def suggest_image_queries_with_zen(
     max_queries: int = 5,
 ) -> list[str] | None:
     """Ask Zen for concrete photographic Openverse search queries."""
-    key = _api_key()
-    if not key:
-        return None
-    if _rate_limited():
+    key = _request_key()
+    if key is None:
         return None
 
     body = "\n\n".join(p.strip() for p in (body_paragraphs or []) if p and p.strip())
@@ -863,13 +998,14 @@ Rules:
 8. Return strict JSON only: an array of exactly {limit} strings, best first. No markdown, no explanation."""
 
     try:
-        text = _call_zen_chat(
+        text = _call_provider_chat(
             model=model,
             prompt=prompt,
             key=key,
             max_tokens=220,
             timeout=15,
             json_mode=True,
+            fallback_mode="fast",
         ) or ""
         if text.startswith("```"):
             text = text.strip("`").removeprefix("json").strip()
@@ -912,10 +1048,8 @@ def match_x_posts_to_articles_with_zen(
     articles: list[dict],
 ) -> list[dict] | None:
     """Match X posts to already-written Signal articles via Zen."""
-    key = _api_key()
-    if not key:
-        return None
-    if _rate_limited():
+    key = _request_key()
+    if key is None:
         return None
     if not posts or not articles:
         return []
@@ -962,13 +1096,14 @@ Rules:
 6. If unmatched, set articleId to "" and confidence to 0."""
 
     try:
-        text = _call_zen_chat(
+        text = _call_provider_chat(
             model=model,
             prompt=prompt,
             key=key,
             max_tokens=1200,
             timeout=20,
             json_mode=True,
+            fallback_mode="fast",
         ) or ""
         if text.startswith("```"):
             text = text.strip("`").removeprefix("json").strip()
@@ -1042,12 +1177,8 @@ def write_article_header_with_zen(
     source_articles: list[dict],
 ) -> dict[str, str] | None:
     """Generate display headline and dek from the finished article body."""
-    key = _api_key()
-    if not key:
-        _set_last_error(kind="config", message="OPENCODE_API_KEY is not set")
-        return None
-    if _rate_limited():
-        _set_last_error(kind="rate_limit", message="Local OpenCode Zen rate cap reached")
+    key = _request_key()
+    if key is None:
         return None
 
     body = "\n\n".join(p.strip() for p in body_paragraphs if p and p.strip())
@@ -1085,13 +1216,14 @@ Rules:
 5. No markdown, no code fence, no explanation."""
 
     try:
-        text = _call_zen_chat(
+        text = _call_provider_chat(
             model=model,
             prompt=prompt,
             key=key,
             max_tokens=220,
             timeout=18,
             json_mode=True,
+            fallback_mode="thorough",
         ) or ""
         if text.startswith("```"):
             text = text.strip("`").removeprefix("json").strip()

@@ -132,6 +132,7 @@ Backend environment variables:
 ```env
 DATABASE_URL=postgresql://...
 OPENCODE_API_KEY=...
+GEMINI_API_KEY=...
 PUBLIC_ARTICLE_BASE_URL=https://your-frontend.vercel.app
 CORS_ORIGINS=https://your-frontend.vercel.app
 SIGNAL_API_TOKEN=long-random-secret
@@ -145,6 +146,7 @@ SIGNAL_X_AUTO_POST=false
 # X_ACCESS_TOKEN_SECRET=
 # X_TRENDS_WOEID=1
 OPENCODE_MODEL=deepseek-v4-flash
+GEMINI_MODEL=gemini-flash-latest
 USE_LLM_CLAIMS=false
 SIGNAL_AUTO_INGEST_ON_STARTUP=false
 SIGNAL_PERIODIC_RSS=false

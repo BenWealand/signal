@@ -215,6 +215,8 @@ def admin_x_status(authorization: str = Header(default="")):
             "configured": bool(settings.opencode_api_key),
             "fastModel": settings.opencode_fast_model,
             "thoroughModel": settings.opencode_model,
+            "geminiFallbackConfigured": bool(settings.gemini_api_key),
+            "geminiFallbackModel": settings.gemini_model,
             "lastError": zen_error,
             "lastErrorMessage": describe_last_zen_error() if zen_error else "",
         },

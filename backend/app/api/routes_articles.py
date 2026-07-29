@@ -332,6 +332,8 @@ def test_zen():
     return {
         "opencode_key_set": bool(settings.opencode_api_key),
         "model": settings.opencode_model,
+        "gemini_fallback_key_set": bool(settings.gemini_api_key),
+        "gemini_fallback_model": settings.gemini_model,
         "result": result,
         "success": result is not None,
         "error": None if result else get_last_zen_error(),

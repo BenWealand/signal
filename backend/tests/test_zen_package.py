@@ -1,21 +1,52 @@
 from __future__ import annotations
 
 import json
+import io
 import sys
 import unittest
+import urllib.error
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
+from app.config import Settings
 from app.llm.zen_writer import (
+    _call_provider_chat,
     _emit_stream_progress,
+    _gemini_message_content,
+    _http_error_details,
     _message_content,
     _parse_package_text,
 )
 
 
 class ZenPackageParseTest(unittest.TestCase):
+    def test_http_error_details_preserve_plain_text_provider_reason(self):
+        error = urllib.error.HTTPError(
+            "https://opencode.ai/zen/v1/chat/completions",
+            403,
+            "Forbidden",
+            {},
+            io.BytesIO(b"Free model access limit reached"),
+        )
+        details = _http_error_details(error, "deepseek-v4-flash-free")
+        self.assertEqual(details["http_status"], 403)
+        self.assertEqual(details["message"], "Free model access limit reached")
+
+    def test_settings_keep_zen_and_gemini_credentials_separate(self):
+        settings = Settings(
+            opencode_api_key="zen-key",
+            gemini_api_key="gemini-key",
+            opencode_model="deepseek-v4-flash",
+            gemini_model="gemini-flash-latest",
+        )
+        self.assertEqual(settings.opencode_api_key, "zen-key")
+        self.assertEqual(settings.gemini_api_key, "gemini-key")
+        self.assertEqual(settings.opencode_model, "deepseek-v4-flash")
+        self.assertEqual(settings.gemini_model, "gemini-flash-latest")
+
     def test_parses_tagged_package(self):
         text = """<<<HEADLINE>>>
 Senate Passes Budget Bill Overnight
@@ -106,6 +137,83 @@ Second paragraph confirming the sourced outcome from multiple public outlets cov
             _message_content(data),
             '{"headline":"Markets Rally","dek":"Investors respond","body":["One","Two"]}',
         )
+
+    def test_gemini_message_content_joins_candidate_parts(self):
+        data = {
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        {"text": '{"prompt":"central bank '},
+                        {"text": 'rate decision"}'},
+                    ],
+                },
+            }],
+        }
+        self.assertEqual(
+            _gemini_message_content(data),
+            '{"prompt":"central bank rate decision"}',
+        )
+
+    def test_provider_chain_uses_gemini_only_after_zen_failure(self):
+        settings = SimpleNamespace(
+            gemini_api_key="gemini-key",
+            gemini_model="gemini-flash-latest",
+            gemini_fast_model="gemini-flash-latest",
+        )
+        calls = []
+
+        class FakeResp:
+            def __init__(self, body):
+                self.body = body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, *_args):
+                return json.dumps(self.body).encode("utf-8")
+
+        def fake_urlopen(request, timeout=30):
+            calls.append(request)
+            if len(calls) == 1:
+                body = json.dumps({"error": {"message": "Zen unavailable"}}).encode("utf-8")
+                raise urllib.error.HTTPError(
+                    request.full_url,
+                    503,
+                    "Service Unavailable",
+                    {},
+                    io.BytesIO(body),
+                )
+            return FakeResp({
+                "candidates": [{
+                    "content": {"parts": [{"text": '{"prompt":"fallback worked"}'}]},
+                }],
+            })
+
+        with (
+            patch("app.llm.zen_writer.settings", settings),
+            patch("app.llm.zen_writer.urllib.request.urlopen", side_effect=fake_urlopen),
+        ):
+            result = _call_provider_chat(
+                model="deepseek-v4-flash",
+                prompt="Choose a prompt",
+                key="zen-key",
+                max_tokens=100,
+                fallback_mode="fast",
+            )
+
+        self.assertEqual(result, '{"prompt":"fallback worked"}')
+        self.assertEqual(len(calls), 2)
+        self.assertIn("opencode.ai/zen/v1/chat/completions", calls[0].full_url)
+        self.assertIn(
+            "generativelanguage.googleapis.com/v1beta/models/"
+            "gemini-flash-latest:generateContent",
+            calls[1].full_url,
+        )
+        self.assertEqual(calls[0].headers["Authorization"], "Bearer zen-key")
+        self.assertEqual(calls[1].headers["X-goog-api-key"], "gemini-key")
 
     @patch("app.llm.zen_writer._rate_limited", return_value=False)
     @patch("app.llm.zen_writer.settings")

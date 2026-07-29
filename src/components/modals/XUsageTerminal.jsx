@@ -188,6 +188,10 @@ export function XUsageTerminal({ account, onToast, verifyAdminAccess = true }) {
         `zen ${zen.configured ? "ready" : "not configured"} — fast=${zen.fastModel || "unset"} thorough=${zen.thoroughModel || "unset"}`,
         zen.configured ? "ok" : "error",
       );
+      push(
+        `gemini fallback ${zen.geminiFallbackConfigured ? "ready" : "not configured"} — model=${zen.geminiFallbackModel || "unset"}`,
+        zen.geminiFallbackConfigured ? "ok" : "warn",
+      );
       if (zen.lastErrorMessage) {
         push(`zen last error: ${zen.lastErrorMessage}`, "warn");
       }

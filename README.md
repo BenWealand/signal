@@ -32,7 +32,8 @@ Required backend variable:
 ```env
 DATABASE_URL=postgresql://...
 OPENCODE_API_KEY=...
-# GEMINI_API_KEY still accepted as a fallback alias while migrating Render env vars
+GEMINI_API_KEY=...
+# OpenCode Zen is primary; Gemini is called only when Zen is unavailable.
 ```
 
 Common local variables:

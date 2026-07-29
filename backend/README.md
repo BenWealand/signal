@@ -83,6 +83,7 @@ Use the connection string for your own Supabase region/project.
 ```env
 PUBLIC_ARTICLE_BASE_URL=http://127.0.0.1:5175
 OPENCODE_MODEL=deepseek-v4-flash
+GEMINI_MODEL=gemini-flash-latest
 CLAIM_MODEL=gpt-4o-mini
 SUMMARY_MODEL=gpt-4o-mini
 USE_LLM_CLAIMS=false
@@ -127,6 +128,7 @@ Prompt filtering:
 
 ```env
 OPENCODE_API_KEY=
+GEMINI_API_KEY=
 OPENAI_API_KEY=
 NEWS_API_KEY=
 CURRENTS_API_KEY=
@@ -139,8 +141,9 @@ GDELT_QUERIES=
 
 Behavior:
 
-- No OpenCode Zen key: generated article writes fail without saving an article.
-- Zen rate limit/API failure: generated article writes fail without saving an article.
+- OpenCode Zen is always attempted first when `OPENCODE_API_KEY` is configured.
+- A Zen request failure, empty response, or local Zen rate limit falls back to Gemini when `GEMINI_API_KEY` is configured.
+- If neither Zen nor Gemini can complete the request, generated article writes fail without saving an article.
 - No OpenAI key: local claim extraction is used.
 - `USE_LLM_CLAIMS=false`: OpenAI is not used for claim extraction.
 - No paid/news provider keys: RSS, Bing News RSS, and GDELT still provide candidates.
