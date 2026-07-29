@@ -19,6 +19,7 @@ from app.llm.zen_writer import (
     _http_error_details,
     _message_content,
     _parse_package_text,
+    write_article_package_with_zen,
 )
 
 
@@ -214,6 +215,47 @@ Second paragraph confirming the sourced outcome from multiple public outlets cov
         )
         self.assertEqual(calls[0].headers["Authorization"], "Bearer zen-key")
         self.assertEqual(calls[1].headers["X-goog-api-key"], "gemini-key")
+
+    def test_article_chain_attempts_gemini_only_once_after_all_zen_models_fail(self):
+        settings = SimpleNamespace(
+            opencode_api_key="zen-key",
+            opencode_model="deepseek-v4-flash-free",
+            opencode_fast_model="deepseek-v4-flash-free",
+            gemini_api_key="gemini-key",
+            gemini_model="gemini-2.5-flash-lite",
+            gemini_fast_model="gemini-2.5-flash-lite",
+        )
+        urls: list[str] = []
+
+        def fake_urlopen(request, timeout=30):
+            urls.append(request.full_url)
+            if "generativelanguage.googleapis.com" in request.full_url:
+                body = json.dumps({"error": {"message": "Gemini quota exceeded", "code": 429}}).encode("utf-8")
+                raise urllib.error.HTTPError(request.full_url, 429, "Too Many Requests", {}, io.BytesIO(body))
+            body = json.dumps({"error": {"message": "Zen denied", "type": "permission_error"}}).encode("utf-8")
+            raise urllib.error.HTTPError(request.full_url, 403, "Forbidden", {}, io.BytesIO(body))
+
+        with (
+            patch("app.llm.zen_writer.settings", settings),
+            patch("app.llm.zen_writer._rate_limited", return_value=False),
+            patch("app.llm.zen_writer._sleep_before_retry", return_value=None),
+            patch("app.llm.zen_writer.urllib.request.urlopen", side_effect=fake_urlopen),
+        ):
+            result = write_article_package_with_zen(
+                "senate budget vote",
+                [{
+                    "source_name": "AP",
+                    "title": "Senate votes on budget package",
+                    "raw_text": "Lawmakers voted on the budget package after debate. " * 20,
+                }],
+                mode="fast",
+            )
+
+        self.assertIsNone(result)
+        gemini_urls = [url for url in urls if "generativelanguage.googleapis.com" in url]
+        zen_urls = [url for url in urls if "opencode.ai/zen" in url]
+        self.assertGreaterEqual(len(zen_urls), 1)
+        self.assertEqual(len(gemini_urls), 1)
 
     @patch("app.llm.zen_writer._rate_limited", return_value=False)
     @patch("app.llm.zen_writer.settings")

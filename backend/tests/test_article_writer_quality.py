@@ -8,7 +8,11 @@ from unittest.mock import patch
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from app.processing.article_writer import ZenArticleUnavailable, write_article_from_prompt
+from app.processing.article_writer import (
+    ZenArticleUnavailable,
+    _article_body,
+    write_article_from_prompt,
+)
 
 
 ARTICLE_IMAGE = {
@@ -38,6 +42,43 @@ def source(url: str, title: str, text: str, *, name: str = "Outlet") -> dict:
 
 
 class ArticleWriterQualityTest(unittest.TestCase):
+    def test_provider_outage_uses_attributed_source_digest(self):
+        sources = [
+            source(
+                "https://reuters.com/world/us/budget",
+                "Senate approves budget package after overnight vote",
+                "The Senate approved the budget package after an overnight vote. "
+                "Lawmakers debated spending provisions before the final roll call. " * 3,
+                name="Reuters",
+            ),
+            source(
+                "https://apnews.com/article/budget",
+                "Budget legislation advances following Senate debate",
+                "The budget legislation advanced following Senate debate. "
+                "The measure now moves to the next stage of the legislative process. " * 3,
+                name="AP",
+            ),
+        ]
+        with (
+            patch("app.llm.zen_writer.write_article_package_with_zen", return_value=None),
+            patch(
+                "app.llm.zen_writer.describe_last_zen_error",
+                return_value="Article providers are temporarily unavailable.",
+            ),
+        ):
+            body, header = _article_body(
+                "senate budget vote",
+                sources,
+                [],
+                [],
+                require_zen=True,
+            )
+
+        self.assertGreaterEqual(len(body), 2)
+        self.assertTrue(any("Reuters" in paragraph for paragraph in body))
+        self.assertTrue(any("AP" in paragraph for paragraph in body))
+        self.assertIsNone(header)
+
     @patch("app.llm.zen_writer._api_key", return_value="test-key")
     @patch("app.ingest.openverse_images.find_openverse_image", return_value=ARTICLE_IMAGE)
     @patch("app.processing.article_writer.queries.save_generated_article", return_value="saved")

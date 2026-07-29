@@ -584,6 +584,7 @@ def _call_provider_chat(
     stream: bool = False,
     on_chunk=None,
     fallback_mode: str = "thorough",
+    fallback_to_gemini: bool = True,
 ) -> str | None:
     """Try OpenCode Zen first, then Gemini when Zen cannot complete the call."""
     zen_error: Exception | None = None
@@ -604,9 +605,13 @@ def _call_provider_chat(
             logger.warning("Zen returned no text; trying Gemini fallback")
         except Exception as exc:
             zen_error = exc
-            logger.warning("Zen request failed; trying Gemini fallback: %s", exc)
+            logger.warning(
+                "Zen request failed%s: %s",
+                "; trying Gemini fallback" if fallback_to_gemini else "",
+                exc,
+            )
 
-    gemini_key = _gemini_api_key()
+    gemini_key = _gemini_api_key() if fallback_to_gemini else ""
     if gemini_key:
         gemini_model = _gemini_model(fallback_mode)
         try:
@@ -629,6 +634,57 @@ def _call_provider_chat(
 
     if zen_error is not None:
         raise zen_error
+    return None
+
+
+def _gemini_article_package_once(
+    prompt: str,
+    *,
+    mode: str,
+    on_chunk=None,
+) -> dict[str, str] | None:
+    """Make one bounded Gemini article attempt after the Zen chain is exhausted."""
+    key = _gemini_api_key()
+    if not key:
+        return None
+    model = _gemini_model(mode)
+    try:
+        text = _call_gemini_chat(
+            model=model,
+            prompt=prompt,
+            key=key,
+            max_tokens=2400 if mode == "fast" else 3600,
+            timeout=30,
+            json_mode=True,
+            on_chunk=on_chunk,
+        )
+        package = _parse_package_text(text or "")
+        if package and package.get("body"):
+            _clear_last_error()
+            return package
+        _set_last_error(
+            kind="response",
+            provider="gemini",
+            model=model,
+            message="Gemini returned an unusable article package",
+        )
+    except urllib.error.HTTPError as exc:
+        error = _http_error_details(exc, model)
+        _set_last_error(**error, provider="gemini")
+        logger.warning(
+            "Gemini article fallback failed model=%s http_status=%s message=%s",
+            model,
+            exc.code,
+            str(error.get("message") or "")[:200],
+        )
+    except Exception as exc:
+        _set_last_error(
+            kind="request",
+            provider="gemini",
+            model=model,
+            message=str(exc),
+        )
+        logger.warning("Gemini article fallback failed model=%s error=%s", model, exc)
     return None
 
 
@@ -658,6 +714,11 @@ def write_article_package_with_zen(
     prompt = _package_prompt(query, source_block, n_sources, mode)
     use_stream = False
 
+    # A local Zen cooldown may route directly to Gemini. Make exactly one Gemini
+    # attempt instead of repeating it once for every nominal Zen model.
+    if not key:
+        return _gemini_article_package_once(prompt, mode=mode, on_chunk=on_chunk)
+
     models = _model_failover_chain(primary_model)
     attempted_models: list[str] = []
     attempt_errors: list[dict[str, object]] = []
@@ -677,6 +738,7 @@ def write_article_package_with_zen(
                 stream=use_stream,
                 on_chunk=on_chunk,
                 fallback_mode=mode,
+                fallback_to_gemini=False,
             )
             package = _parse_package_text(text or "")
             if package and package.get("body"):
@@ -726,7 +788,7 @@ def write_article_package_with_zen(
             if attempt_index + 1 < len(models):
                 logger.info("Retrying Zen article with alternate model=%s", models[attempt_index + 1])
                 continue
-            return None
+            break
         except urllib.error.HTTPError as exc:
             error = _http_error_details(exc, model)
             attempt_errors.append(error)
@@ -742,8 +804,9 @@ def write_article_package_with_zen(
                 error.get("api_status"),
                 str(error.get("message") or "")[:200],
             )
-            # Some models reject response_format; retry once without it on 400/403.
-            if exc.code in {400, 403}:
+            # Some models reject response_format with HTTP 400. A 403 is an
+            # access decision and retrying the identical request only adds delay.
+            if exc.code == 400:
                 try:
                     text = _call_provider_chat(
                         model=model,
@@ -754,6 +817,7 @@ def write_article_package_with_zen(
                         json_mode=False,
                         stream=False,
                         fallback_mode=mode,
+                        fallback_to_gemini=False,
                     )
                     package = _parse_package_text(text or "")
                     if package and package.get("body"):
@@ -775,7 +839,7 @@ def write_article_package_with_zen(
             if any(int(item.get("http_status") or 0) == 429 for item in attempt_errors):
                 _record_429()
                 logger.warning("Zen cooldown started after exhausted HTTP 429 retries")
-            return None
+            break
         except Exception as exc:
             error = {
                 "kind": "request",
@@ -792,9 +856,9 @@ def write_article_package_with_zen(
             if attempt_index + 1 < len(models):
                 logger.info("Retrying Zen article with alternate model=%s", models[attempt_index + 1])
                 continue
-            return None
+            break
 
-    return None
+    return _gemini_article_package_once(prompt, mode=mode, on_chunk=on_chunk)
 
 
 def write_article_with_zen(

@@ -356,10 +356,19 @@ function App() {
     if (error?.status === 403 || lower.includes("http 403") || lower.includes("forbidden")) {
       message = "OpenCode Zen denied access (403). Check OPENCODE_API_KEY, billing, and model access on opencode.ai/auth.";
     } else if (
+      error?.status === 429
+      || lower.includes("quota exceeded")
+      || lower.includes("rate-limit")
+      || lower.includes("rate limit")
+      || lower.includes("http 429")
+    ) {
+      message = "The article providers are temporarily rate-limited. Signal will retry automatically; please wait a minute and try again.";
+    } else if (
       lower.includes("zen_article_unavailable")
       || lower.includes("gemini_article_unavailable")
-      || lower.includes("opencode zen")
-      || lower.includes("source")
+      || lower.includes("no accessible sources")
+      || lower.includes("source coverage")
+      || lower.includes("too few sources")
     ) {
       message = "Could not generate from enough reliable sources, even after trying closer angles. Try a more specific prompt.";
     }

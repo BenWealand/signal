@@ -19,6 +19,7 @@ function titleCase(text) {
 }
 
 const FALLBACK_REASON_NOTES = {
+  llm_unavailable_source_digest: "Built directly from attributed source reporting because the article-writing providers were temporarily unavailable.",
   no_accessible_sources: "Signal could not find enough accessible reporting on this topic yet. Try a slightly more specific search.",
   quality_gate_failed: "Not enough independent reporting has surfaced on this topic yet for a full edition. Try a more specific search.",
   processing_failed: "Signal gathered coverage but could not finish a full edition. Try again in a moment.",
@@ -50,6 +51,13 @@ export function articleStateFor(article = {}) {
     return article.articleState;
   }
   if (article.fallback_reason) {
+    if (String(article.fallback_reason) === "llm_unavailable_source_digest") {
+      return {
+        kind: "source_digest",
+        label: "Attributed source digest",
+        detail: FALLBACK_REASON_NOTES.llm_unavailable_source_digest,
+      };
+    }
     return {
       kind: "legacy_limited",
       label: "Legacy limited article",

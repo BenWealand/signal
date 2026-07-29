@@ -554,7 +554,8 @@ def _article_body(
     """
     Try OpenCode Zen first for a polished, grammar-correct article package.
     Returns (body_paragraphs, optional_header_package).
-    When Zen is required, fail without saving a generated article.
+    If all configured article providers are unavailable, preserve validated
+    reporting as an attributed source digest.
     """
     from app.llm.zen_writer import (
         describe_last_zen_error,
@@ -589,7 +590,25 @@ def _article_body(
             }
             return paragraphs, header if header["headline"] and header["dek"] else None
 
-    # Reader-facing writes must always be OpenCode Zen prose — never a local draft.
+    # Provider outages must not discard already-validated reporting. Build a
+    # conservative, attributed digest using only extracted source text.
+    fallback_paragraphs = _prose_paragraphs(source_articles, _prompt_keywords(prompt))
+    if len(fallback_paragraphs) >= 2:
+        logger.warning(
+            "Article LLMs unavailable; publishing attributed source digest",
+            extra={
+                "build_id": build_id,
+                "source_count": len(source_articles),
+                "provider_error": describe_last_zen_error(),
+            },
+        )
+        if on_chunk:
+            try:
+                on_chunk({"draft_text": "\n\n".join(fallback_paragraphs)})
+            except Exception:
+                logger.exception("Source-digest completion callback failed")
+        return fallback_paragraphs, None
+
     raise ZenArticleUnavailable(describe_last_zen_error())
 
 
@@ -716,6 +735,8 @@ def _article_from_consensus(
         dek = zen_header["dek"]
         if not supported:
             summary = dek or headline
+    elif use_zen or require_zen:
+        fallback_reason = fallback_reason or "llm_unavailable_source_digest"
     image = image_picker.finalize(
         headline=headline,
         dek=dek,
@@ -1159,18 +1180,19 @@ def write_article_from_prompt(prompt: str, limit: int = 50, use_zen: bool = True
     """
     Full pipeline for a user-submitted prompt.
 
-    Always requires an OpenCode Zen draft. If the reader's prompt is too broad
-    or source coverage is thin, Signal retries similar/narrower angles and
-    finally a desk-rescue write — never a local or non-Zen article.
+    Prefer an OpenCode Zen draft and use Gemini as the secondary provider. If
+    both providers are unavailable after reliable sources are validated, publish
+    a conservative attributed source digest. Thin source coverage still retries
+    similar or narrower angles before the final desk rescue.
     """
     build_id = build_id or f"build-{uuid.uuid4().hex}"
-    # Reader writes are Zen-only regardless of legacy kwargs.
+    # Reader writes always use the configured provider chain.
     use_zen = True
-    from app.llm.zen_writer import _api_key as _zen_api_key
+    from app.llm.zen_writer import _api_key as _zen_api_key, _gemini_api_key
 
-    if not _zen_api_key():
-        message = "OpenCode Zen is not configured on the backend (set OPENCODE_API_KEY)."
-        _set_progress(build_id, active=False, stage="error", stage_label="OpenCode Zen unavailable", error=message)
+    if not (_zen_api_key() or _gemini_api_key()):
+        message = "No article provider is configured on the backend (set OPENCODE_API_KEY or GEMINI_API_KEY)."
+        _set_progress(build_id, active=False, stage="error", stage_label="Article provider unavailable", error=message)
         raise ZenArticleUnavailable(message)
 
     original = _normalize_write_prompt(prompt) or "breaking world news today"
