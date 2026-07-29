@@ -248,7 +248,7 @@ function sleep(ms) {
  * Start an async article write and poll progress until the article is ready.
  * Falls back to the sync response shape when the API returns a finished article.
  */
-export async function writeArticle(payload, { onProgress, timeoutMs = 180000 } = {}) {
+export async function writeArticle(payload, { onProgress, timeoutMs = 300000 } = {}) {
   const started = await apiPostAfterWake("/articles/write", {
     ...payload,
     async_mode: true,

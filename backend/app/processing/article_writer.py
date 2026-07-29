@@ -589,53 +589,8 @@ def _article_body(
             }
             return paragraphs, header if header["headline"] and header["dek"] else None
 
-    if require_zen:
-        raise ZenArticleUnavailable(describe_last_zen_error())
-
-    # ── Rule-based fallback ───────────────────────────────────────────────────
-    prompt_kw = _prompt_keywords(prompt)
-    source_names = sorted({str(a["source_name"]) for a in source_articles})
-    source_count = len(source_articles)
-    body: list[str] = []
-
-    good_supported = _good_claim_texts(supported)
-
-    if good_supported:
-        body.append(good_supported[0])
-    else:
-        richest = max(source_articles, key=lambda a: len(a.get("clean_text", "")), default=None)
-        if richest and len(richest.get("title", "")) > 25 and _is_mostly_latin(richest.get("title", "")):
-            body.append(_TITLE_ATTRIBUTION.sub("", richest["title"]).strip())
-
-    if source_names:
-        outlet_str = ", ".join(source_names[:5])
-        if len(source_names) > 5:
-            outlet_str += f" and {len(source_names) - 5} others"
-        body.append(
-            f"Signal reviewed {source_count} articles from {outlet_str}, "
-            "cross-referencing claims for overlap."
-        )
-
-    for text in good_supported[1:5]:
-        body.append(text)
-
-    prose = _prose_paragraphs(source_articles, prompt_kw)
-    if good_supported:
-        if prose:
-            body.append("Additional details reported by individual sources, pending corroboration:")
-            body.extend(prose[:3])
-    else:
-        body.extend(prose)
-
-    n_uncertain = sum(1 for c in unique_claims if c.get("status") == "uncertain")
-    if n_uncertain:
-        body.append(
-            f"Signal set aside {n_uncertain} additional claim"
-            f"{'s' if n_uncertain != 1 else ''} that could not be confirmed "
-            "from public sources."
-        )
-
-    return [p for p in body if p.strip()], None
+    # Reader-facing writes must always be OpenCode Zen prose — never a local draft.
+    raise ZenArticleUnavailable(describe_last_zen_error())
 
 
 def _facts_from_consensus(
@@ -859,6 +814,225 @@ def _fast_consensus_from_sources(prompt: str, candidates: list[dict]) -> list[di
     return detect_consensus(pseudo_claims, use_semantic=False)
 
 
+def _normalize_write_prompt(prompt: str) -> str:
+    return re.sub(r"\s+", " ", str(prompt or "").strip())[:240]
+
+
+_SECTION_ANGLE_PROMPTS: tuple[str, ...] = (
+    "international diplomacy conflict global affairs",
+    "congress senate legislation government policy",
+    "sports athletics leagues championships olympic games",
+    "stock market economy financial inflation interest rates",
+    "artificial intelligence semiconductor technology cybersecurity",
+    "climate change environment renewable energy weather",
+)
+
+
+def _prompt_variants(prompt: str) -> list[str]:
+    """
+    Build narrower / related search prompts when the reader's prompt is too broad
+    or yields too few sources. Always starts with the original prompt.
+    """
+    original = _normalize_write_prompt(prompt) or "breaking world news today"
+    variants: list[str] = [original]
+    words = re.findall(r"[A-Za-z0-9][A-Za-z0-9'&.-]{1,}", original)
+    content_words = [w for w in words if w.lower() not in _STOPWORDS]
+    lower = original.lower()
+
+    for suffix in (
+        "latest developments",
+        "official announcement",
+        "policy decision",
+        "market reaction",
+        "investigation update",
+    ):
+        variants.append(_normalize_write_prompt(f"{original} {suffix}"))
+
+    if content_words:
+        tight = " ".join(content_words[:8])
+        if tight and tight.lower() != lower:
+            variants.append(tight)
+        if len(content_words) >= 2:
+            variants.append(_normalize_write_prompt(f"{' '.join(content_words[:4])} news"))
+            variants.append(_normalize_write_prompt(f"{' '.join(content_words[:3])} latest"))
+
+    for section_prompt in _SECTION_ANGLE_PROMPTS:
+        section_tokens = section_prompt.split()
+        if any(token in lower for token in section_tokens[:3]) or any(
+            token in lower for token in ("world", "politics", "sports", "markets", "tech", "climate", "ai")
+        ):
+            if any(token in lower for token in section_tokens[:4]) or any(
+                tip in lower for tip in ("world", "politics", "sports", "market", "tech", "climate", "ai", "economy")
+            ):
+                # Only attach section expansions that share a topical signal.
+                tip_map = {
+                    "world": "international",
+                    "politics": "congress",
+                    "sports": "sports",
+                    "market": "stock",
+                    "markets": "stock",
+                    "tech": "technology",
+                    "technology": "technology",
+                    "climate": "climate",
+                    "ai": "artificial",
+                    "economy": "economy",
+                }
+                related = False
+                for tip, needle in tip_map.items():
+                    if tip in lower and needle in section_prompt:
+                        related = True
+                        break
+                if related:
+                    variants.append(section_prompt)
+
+    # Very broad 1–2 word prompts: try every desk section angle.
+    if len(content_words) <= 2:
+        variants.extend(_SECTION_ANGLE_PROMPTS)
+
+    # Trending entities / recent headlines as last local variants.
+    try:
+        for topic in queries.list_trending_topics(limit=8) or []:
+            label = _normalize_write_prompt(
+                topic.get("entity_text") or topic.get("topic") or topic.get("label") or ""
+            )
+            if label and label.lower() not in {v.lower() for v in variants}:
+                if not content_words or any(w.lower() in label.lower() for w in content_words[:3]):
+                    variants.append(label)
+    except Exception:
+        logger.exception("Trending topic lookup failed while building prompt variants")
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in variants:
+        key = item.lower()
+        if not item or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped[:14]
+
+
+def _is_zen_config_failure(exc: BaseException) -> bool:
+    message = str(exc or "").lower()
+    return any(
+        marker in message
+        for marker in (
+            "http 401",
+            "http 403",
+            "api key",
+            "not configured",
+            "rate-limited",
+            "rate cap",
+            "forbidden",
+        )
+    )
+
+
+def _desk_rescue_sources(limit: int = 12) -> list[dict]:
+    sources: list[dict] = []
+    try:
+        rows = queries.list_articles(status="processed")[: max(limit * 3, 24)]
+        for row in rows:
+            text = row.get("clean_text") or row.get("raw_text") or row.get("description") or ""
+            if len(str(text)) < 80:
+                continue
+            sources.append({
+                "source_name": row.get("source_name") or "Signal desk",
+                "title": row.get("title") or "",
+                "url": row.get("url") or "",
+                "raw_text": row.get("raw_text") or text,
+                "clean_text": row.get("clean_text") or "",
+                "description": row.get("description") or "",
+                "published_at": row.get("published_at") or "",
+            })
+            if len(sources) >= limit:
+                return sources
+    except Exception:
+        logger.exception("Desk rescue cache lookup failed")
+
+    try:
+        from app.ingest.rss_ingest import fetch_all_rss_fast
+        live = fetch_all_rss_fast(max_per_section=6) or []
+        for article in live:
+            if not article.get("raw_text") and article.get("description"):
+                article["raw_text"] = article["description"]
+            if len(str(article.get("raw_text") or "")) < 40:
+                continue
+            sources.append(article)
+            if len(sources) >= limit:
+                break
+    except Exception:
+        logger.exception("Desk rescue live RSS fetch failed")
+    return sources[:limit]
+
+
+def _desk_rescue_zen_article(
+    original_prompt: str,
+    *,
+    mode: str,
+    build_id: str,
+    limit: int,
+) -> dict:
+    """
+    Last resort: write a Zen article from the strongest recent desk sources,
+    anchored to the closest story matching the reader's request.
+    """
+    sources = _desk_rescue_sources(limit=max(8, min(limit, 14)))
+    if len(sources) < 2:
+        raise ZenArticleUnavailable(
+            "No accessible desk sources were available for an OpenCode Zen rescue draft"
+        )
+
+    rescue_prompt = (
+        "Among the supplied source material, write a factual news article about the "
+        f"story closest to this reader request: {original_prompt}"
+    )
+    _set_progress(
+        build_id,
+        active=True,
+        prompt=original_prompt,
+        stage="writing",
+        stage_label="Refining to the closest sourced story...",
+        sources_found=len(sources),
+        sources_enriched=sum(1 for c in sources if len(str(c.get("raw_text") or "")) > 120),
+        error=None,
+    )
+    consensus = _fast_consensus_from_sources(rescue_prompt, sources)
+    source_quality = evaluate_source_quality(
+        sources,
+        rescue_prompt,
+        gate=SourceGate(min_sources=2, min_domains=1, min_text_chars=60),
+    )
+    article = _article_from_consensus(
+        rescue_prompt,
+        sources,
+        consensus,
+        use_zen=True,
+        generation_mode="fast" if mode == "fast" else "thorough",
+        source_quality=source_quality,
+        used_live_sources=True,
+        require_zen=True,
+        build_id=build_id,
+    )
+    article["prompt"] = original_prompt
+    article["resolvedPrompt"] = rescue_prompt
+    article["promptAdjusted"] = True
+    article["tag"] = "desk-rescue"
+    article["buildId"] = build_id
+    queries.save_generated_article(article)
+    _set_progress(
+        build_id,
+        active=False,
+        stage="done",
+        stage_label="Done",
+        article=article,
+        draft_text="",
+        draft_headline="",
+        error=None,
+    )
+    return article
+
+
 def _fast_article_from_prompt(prompt: str, limit: int = 8, use_zen: bool = True, use_gemini: bool | None = None, build_id: str | None = None) -> dict:
     if use_gemini is not None:
         use_zen = bool(use_gemini)
@@ -985,15 +1159,108 @@ def write_article_from_prompt(prompt: str, limit: int = 50, use_zen: bool = True
     """
     Full pipeline for a user-submitted prompt.
 
+    Always requires an OpenCode Zen draft. If the reader's prompt is too broad
+    or source coverage is thin, Signal retries similar/narrower angles and
+    finally a desk-rescue write — never a local or non-Zen article.
+    """
+    build_id = build_id or f"build-{uuid.uuid4().hex}"
+    # Reader writes are Zen-only regardless of legacy kwargs.
+    use_zen = True
+    from app.llm.zen_writer import _api_key as _zen_api_key
+
+    if not _zen_api_key():
+        message = "OpenCode Zen is not configured on the backend (set OPENCODE_API_KEY)."
+        _set_progress(build_id, active=False, stage="error", stage_label="OpenCode Zen unavailable", error=message)
+        raise ZenArticleUnavailable(message)
+
+    original = _normalize_write_prompt(prompt) or "breaking world news today"
+    variants = _prompt_variants(original)
+    last_error: BaseException | None = None
+
+    for index, variant in enumerate(variants):
+        label = (
+            "Scanning sources..."
+            if index == 0
+            else f"Trying a closer angle ({index + 1}/{len(variants)})..."
+        )
+        _set_progress(
+            build_id,
+            active=True,
+            prompt=original,
+            stage="fetching",
+            stage_label=label,
+            error=None,
+            article=None,
+        )
+        try:
+            if mode == "fast":
+                article = _fast_article_from_prompt(
+                    variant,
+                    limit=limit,
+                    use_zen=True,
+                    build_id=build_id,
+                )
+            else:
+                article = _thorough_article_from_prompt(
+                    variant,
+                    limit=limit,
+                    use_zen=True,
+                    build_id=build_id,
+                )
+            article["prompt"] = original
+            article["buildId"] = build_id
+            if variant != original:
+                article["resolvedPrompt"] = variant
+                article["promptAdjusted"] = True
+                try:
+                    queries.save_generated_article(article)
+                except Exception:
+                    logger.exception("Failed to persist adjusted prompt metadata")
+            return article
+        except ZenArticleUnavailable as exc:
+            last_error = exc
+            logger.warning(
+                "Zen write angle failed prompt=%s variant=%s reason=%s",
+                original[:120],
+                variant[:120],
+                str(exc)[:200],
+            )
+            if _is_zen_config_failure(exc):
+                _set_progress(
+                    build_id,
+                    active=False,
+                    stage="error",
+                    stage_label="OpenCode Zen unavailable",
+                    error=str(exc),
+                )
+                raise
+            continue
+
+    try:
+        return _desk_rescue_zen_article(
+            original,
+            mode=mode,
+            build_id=build_id,
+            limit=limit,
+        )
+    except ZenArticleUnavailable as exc:
+        last_error = exc
+        logger.warning("Zen desk rescue failed prompt=%s reason=%s", original[:120], str(exc)[:200])
+
+    message = str(last_error) if last_error else "OpenCode Zen could not finish a sourced article."
+    _set_progress(build_id, active=False, stage="error", stage_label="Write failed", error=message)
+    raise ZenArticleUnavailable(message)
+
+
+def _thorough_article_from_prompt(prompt: str, limit: int = 50, use_zen: bool = True, build_id: str | None = None) -> dict:
+    """
     Thorough mode is cache-first and latency-bounded:
     1. Prefer recent desk coverage from Postgres.
     2. Live-fetch only when the cache is thin (Bing/Guardian/GDELT race + capped enrich).
     3. Process a small top-N set of articles, Jaccard consensus, OpenCode Zen package write.
     """
     build_id = build_id or f"build-{uuid.uuid4().hex}"
-    use_zen = True if use_gemini is None else bool(use_gemini)
-    if mode == "fast":
-        return _fast_article_from_prompt(prompt, limit=limit, use_zen=use_zen, build_id=build_id)
+    use_zen = True
 
     thorough_limit = max(4, min(limit, settings.thorough_max_candidates))
     min_cache = max(3, min(settings.thorough_cache_min_sources, thorough_limit))

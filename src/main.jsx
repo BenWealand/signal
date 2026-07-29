@@ -347,25 +347,23 @@ function App() {
       showToast("That prompt is blocked by the Signal prompt filter.", 6000);
       return;
     }
-    if (hasApiBase()) {
-      clearDraft();
-      const rawMessage = String(error?.detail || error?.message || "");
-      const message = rawMessage.includes("zen_article_unavailable")
-        || rawMessage.includes("gemini_article_unavailable")
-        || rawMessage.toLowerCase().includes("opencode zen")
-        || rawMessage.toLowerCase().includes("gemini")
-        || rawMessage.toLowerCase().includes("source")
-        ? "Could not generate from enough reliable sources. Try a more specific prompt."
-        : rawMessage || "Signal could not finish that write. Wait a moment and try again.";
-      showToast(message, 6000);
-      return;
+    // Backend-configured builds never invent a local article. Keep the writer
+    // idle and show the real failure (sources / OpenCode Zen access).
+    clearDraft();
+    const rawMessage = String(error?.detail || error?.message || "");
+    const lower = rawMessage.toLowerCase();
+    let message = rawMessage || "Signal could not finish that write. Wait a moment and try again.";
+    if (error?.status === 403 || lower.includes("http 403") || lower.includes("forbidden")) {
+      message = "OpenCode Zen denied access (403). Check OPENCODE_API_KEY, billing, and model access on opencode.ai/auth.";
+    } else if (
+      lower.includes("zen_article_unavailable")
+      || lower.includes("gemini_article_unavailable")
+      || lower.includes("opencode zen")
+      || lower.includes("source")
+    ) {
+      message = "Could not generate from enough reliable sources, even after trying closer angles. Try a more specific prompt.";
     }
-    window.setTimeout(() => {
-      const offline = localFailureDraft(failedPrompt, error);
-      setExternalDraft(offline);
-      setPhase("complete");
-      if (offline.id) navigate(articlePath(offline.id));
-    }, OFFLINE_PREVIEW_DELAY_MS);
+    showToast(message, 7000);
   };
 
   const buildRecommendedPrompt = (nextPrompt) => {

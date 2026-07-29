@@ -38,6 +38,7 @@ def source(url: str, title: str, text: str, *, name: str = "Outlet") -> dict:
 
 
 class ArticleWriterQualityTest(unittest.TestCase):
+    @patch("app.llm.zen_writer._api_key", return_value="test-key")
     @patch("app.ingest.openverse_images.find_openverse_image", return_value=ARTICLE_IMAGE)
     @patch("app.processing.article_writer.queries.save_generated_article", return_value="saved")
     @patch("app.llm.zen_writer.write_article_package_with_zen")
@@ -52,6 +53,7 @@ class ArticleWriterQualityTest(unittest.TestCase):
         write_zen,
         _save,
         find_image,
+        _api_key,
     ):
         text = "The Senate passed the budget bill by a 54-46 vote. " * 6
         zen_body = (
@@ -90,6 +92,7 @@ class ArticleWriterQualityTest(unittest.TestCase):
         self.assertIn("Senate Passes Budget Bill", image_topic)
         self.assertIn("Zen wrote the first sourced draft paragraph", image_topic)
 
+    @patch("app.llm.zen_writer._api_key", return_value="test-key")
     @patch("app.ingest.openverse_images.find_openverse_image", return_value={})
     @patch("app.processing.article_writer.queries.save_generated_article", return_value="saved")
     @patch("app.llm.zen_writer.write_article_package_with_zen")
@@ -104,6 +107,7 @@ class ArticleWriterQualityTest(unittest.TestCase):
         write_zen,
         _save,
         find_image,
+        _api_key,
     ):
         text = "Cabinet officials briefed lawmakers on the semiconductor export controls. " * 5
         cached.return_value = [
@@ -129,6 +133,9 @@ class ArticleWriterQualityTest(unittest.TestCase):
         fetch_gdelt.assert_not_called()
         write_zen.assert_called_once()
 
+    @patch("app.processing.article_writer._desk_rescue_zen_article", side_effect=ZenArticleUnavailable("desk rescue blocked in test"))
+    @patch("app.processing.article_writer.queries.list_trending_topics", return_value=[])
+    @patch("app.llm.zen_writer._api_key", return_value="test-key")
     @patch("app.processing.article_writer.queries.save_generated_article", return_value="saved")
     @patch("app.processing.article_writer._cached_articles_for_prompt", return_value=[])
     @patch("app.processing.article_writer.fetch_gdelt_articles", return_value=[])
@@ -139,6 +146,9 @@ class ArticleWriterQualityTest(unittest.TestCase):
         _gdelt,
         _cached,
         save_generated,
+        _api_key,
+        _topics,
+        _desk_rescue,
     ):
         fetch_rss.return_value = [
             source("https://reuters.com/world/us/budget", "Senate budget vote latest update", "The Senate budget vote is developing. " * 5, name="Reuters"),
