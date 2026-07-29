@@ -62,6 +62,15 @@ class MigrationSqlSplitTests(unittest.TestCase):
         self.assertEqual(len(parts), 1)
         self.assertIn("ADD COLUMN IF NOT EXISTS image", sql)
 
+    def test_x_shares_multi_reply_migration_widens_unique_index(self):
+        path = Path(__file__).resolve().parents[1] / "app" / "db" / "migrations" / "0008_x_shares_multi_reply.sql"
+        sql = path.read_text(encoding="utf-8")
+        parts = _split_sql(sql)
+        self.assertGreaterEqual(len(parts), 3)
+        self.assertIn("DROP INDEX IF EXISTS idx_x_article_shares_posted_once", sql)
+        self.assertIn("reply_to_post_id", sql)
+        self.assertIn("WHERE status = 'posted'", sql)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { apiGet, apiPost, getAccessToken, hasApiBase } from "../../api/client.js";
 import { isAdminAccount } from "../../lib/admin.js";
 import { XFeedDraftQueue } from "./XFeedDraftQueue.jsx";
+import { XMultiLinkCraftQueue } from "./XMultiLinkCraftQueue.jsx";
 import { XUrlMatchQueue } from "./XUrlMatchQueue.jsx";
 
 function stamp() {
@@ -468,6 +469,15 @@ export function XUsageTerminal({ account, onToast, verifyAdminAccess = true }) {
           <pre>{lastDraft.reply}</pre>
         </div>
       ) : null}
+
+      <XMultiLinkCraftQueue
+        dryRun={dryRun}
+        mode={mode}
+        busy={busy}
+        setBusy={setBusy}
+        push={push}
+        onToast={onToastRef.current}
+      />
 
       <XUrlMatchQueue
         dryRun={dryRun}

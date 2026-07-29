@@ -238,7 +238,7 @@ CREATE INDEX IF NOT EXISTS idx_generated_articles_source ON generated_articles(s
 CREATE INDEX IF NOT EXISTS idx_x_article_shares_article_created
   ON x_article_shares(article_id, created_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_x_article_shares_posted_once
-  ON x_article_shares(article_id) WHERE status = 'posted';
+  ON x_article_shares(article_id, reply_to_post_id) WHERE status = 'posted';
 CREATE INDEX IF NOT EXISTS idx_saved_stories_user ON saved_stories(user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_saved_stories_unique_user_story ON saved_stories(user_id, story_id);
 CREATE INDEX IF NOT EXISTS idx_user_history_user ON user_history(user_id);
