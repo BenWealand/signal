@@ -348,13 +348,13 @@ function App() {
       return;
     }
     // Backend-configured builds never invent a local article. Keep the writer
-    // idle and show the real failure (sources / OpenCode Zen access).
+    // idle and show the real failure (sources / local writer access).
     clearDraft();
     const rawMessage = String(error?.detail || error?.message || "");
     const lower = rawMessage.toLowerCase();
     let message = rawMessage || "Signal could not finish that write. Wait a moment and try again.";
     if (error?.status === 403 || lower.includes("http 403") || lower.includes("forbidden")) {
-      message = "OpenCode Zen denied access (403). Check OPENCODE_API_KEY, billing, and model access on opencode.ai/auth.";
+      message = "The local article writer denied the request (403). Check the configured llama.cpp endpoint and API key.";
     } else if (
       error?.status === 429
       || lower.includes("quota exceeded")
@@ -364,7 +364,8 @@ function App() {
     ) {
       message = "The article providers are temporarily rate-limited. Signal will retry automatically; please wait a minute and try again.";
     } else if (
-      lower.includes("zen_article_unavailable")
+      lower.includes("local_generation_failed")
+      || lower.includes("zen_article_unavailable")
       || lower.includes("gemini_article_unavailable")
       || lower.includes("no accessible sources")
       || lower.includes("source coverage")

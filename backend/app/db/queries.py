@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import datetime
 import json
+import re
+import uuid
 from typing import Any
 
 from app.db.connection import get_connection
@@ -466,8 +468,9 @@ def save_generated_article(article: dict[str, Any]) -> str:
                 (id, owner_user_id, source, tag, trend_url, prompt, headline, dek, summary, body, facts,
                  terms, sources, source_links, consensus, source_count, denied_for_bias,
                  fairness_score, accuracy_score, score_metadata, generation_mode, source_quality,
-                 consensus_level, used_live_sources, fallback_reason, image, section, status, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 consensus_level, used_live_sources, fallback_reason, image, source_fingerprint,
+                 section, status, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(id) DO UPDATE SET
                   owner_user_id = COALESCE(generated_articles.owner_user_id, EXCLUDED.owner_user_id),
                   source = EXCLUDED.source,
@@ -494,6 +497,7 @@ def save_generated_article(article: dict[str, Any]) -> str:
                   used_live_sources = EXCLUDED.used_live_sources,
                   fallback_reason = EXCLUDED.fallback_reason,
                   image = EXCLUDED.image,
+                  source_fingerprint = EXCLUDED.source_fingerprint,
                   section = EXCLUDED.section,
                   status = EXCLUDED.status
                 """,
@@ -524,6 +528,7 @@ def save_generated_article(article: dict[str, Any]) -> str:
                     1 if article.get("used_live_sources") else 0,
                     article.get("fallback_reason", ""),
                     json.dumps(article.get("image") or {}),
+                    article.get("sourceFingerprint", ""),
                     section,
                     article.get("status", "published"),
                     article.get("createdAt"),
@@ -544,6 +549,7 @@ _GENERATED_ARTICLE_METADATA_COLUMNS = {
     "used_live_sources": "SMALLINT DEFAULT 0",
     "fallback_reason": "TEXT DEFAULT ''",
     "image": "TEXT DEFAULT '{}'",
+    "source_fingerprint": "TEXT DEFAULT ''",
     "section": "TEXT DEFAULT ''",
 }
 
@@ -593,6 +599,7 @@ def _decode_generated_article(row: Any) -> dict[str, Any]:
         "used_live_sources": bool(item.get("used_live_sources", 0)),
         "fallback_reason": item.get("fallback_reason", ""),
         "image": _json_loads(item.get("image"), {}),
+        "sourceFingerprint": item.get("source_fingerprint", ""),
         "section": str(item.get("section") or "").lower(),
         "status": item["status"],
         "createdAt": item["created_at"],
@@ -677,8 +684,230 @@ def get_generated_article(article_id: str) -> dict[str, Any]:
             return {} if article and article_is_blocked(article).blocked else article
 
 
+def find_recent_generated_article_by_fingerprint(
+    fingerprint: str,
+    *,
+    hours: int = 48,
+) -> dict[str, Any]:
+    cleaned = (fingerprint or "").strip()
+    if not cleaned:
+        return {}
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT *
+                FROM generated_articles
+                WHERE source_fingerprint = %s
+                  AND status = 'published'
+                  AND created_at >= NOW() - (%s * INTERVAL '1 hour')
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (cleaned, min(max(int(hours), 1), 168)),
+            )
+            article = _decode_generated_article(cur.fetchone())
+            return {} if article and article_is_blocked(article).blocked else article
+
+
+def normalize_generation_prompt(prompt: str) -> str:
+    return re.sub(r"\s+", " ", str(prompt or "").strip()).lower()[:2000]
+
+
+def enqueue_article_generation_job(
+    prompt: str,
+    *,
+    mode: str,
+    priority: int = 0,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    normalized = normalize_generation_prompt(prompt)
+    if not normalized:
+        raise ValueError("prompt is required")
+    active_mode = mode if mode in {"fast", "thorough"} else "fast"
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            # Coalesce identical queued/in-flight work.
+            cur.execute(
+                """
+                SELECT *
+                FROM article_generation_jobs
+                WHERE normalized_prompt = %s
+                  AND mode = %s
+                  AND status IN ('queued', 'sourcing', 'ready_for_generation', 'generating')
+                ORDER BY created_at ASC
+                LIMIT 1
+                """,
+                (normalized, active_mode),
+            )
+            active = row_to_dict(cur.fetchone())
+            if active:
+                return active
+
+            # A recent completed prompt can be returned immediately without
+            # spending another generation slot.
+            cur.execute(
+                """
+                SELECT article_id
+                FROM article_generation_jobs
+                WHERE normalized_prompt = %s
+                  AND mode = %s
+                  AND status = 'saved'
+                  AND article_id IS NOT NULL
+                  AND finished_at >= NOW() - INTERVAL '24 hours'
+                ORDER BY finished_at DESC
+                LIMIT 1
+                """,
+                (normalized, active_mode),
+            )
+            recent = cur.fetchone()
+            job_id = f"build-{uuid.uuid4().hex}"
+            if recent and recent.get("article_id"):
+                cur.execute(
+                    """
+                    INSERT INTO article_generation_jobs
+                      (id, prompt, normalized_prompt, mode, status, priority,
+                       article_id, payload, started_at, finished_at)
+                    VALUES (%s, %s, %s, %s, 'saved', %s, %s, %s::jsonb, NOW(), NOW())
+                    RETURNING *
+                    """,
+                    (
+                        job_id,
+                        prompt,
+                        normalized,
+                        active_mode,
+                        int(priority),
+                        recent["article_id"],
+                        json.dumps(payload or {}),
+                    ),
+                )
+                return row_to_dict(cur.fetchone())
+
+            cur.execute(
+                """
+                INSERT INTO article_generation_jobs
+                  (id, prompt, normalized_prompt, mode, status, priority, payload)
+                VALUES (%s, %s, %s, %s, 'queued', %s, %s::jsonb)
+                RETURNING *
+                """,
+                (
+                    job_id,
+                    prompt,
+                    normalized,
+                    active_mode,
+                    int(priority),
+                    json.dumps(payload or {}),
+                ),
+            )
+            return row_to_dict(cur.fetchone())
+
+
+def get_article_generation_job(job_id: str) -> dict[str, Any]:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM article_generation_jobs WHERE id = %s", (job_id,))
+            return row_to_dict(cur.fetchone())
+
+
+def claim_next_article_generation_job() -> dict[str, Any]:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                WITH next_job AS (
+                  SELECT id
+                  FROM article_generation_jobs
+                  WHERE status = 'queued'
+                  ORDER BY priority DESC, created_at ASC
+                  FOR UPDATE SKIP LOCKED
+                  LIMIT 1
+                )
+                UPDATE article_generation_jobs jobs
+                SET status = 'sourcing',
+                    attempt_count = attempt_count + 1,
+                    started_at = COALESCE(started_at, NOW()),
+                    error = ''
+                FROM next_job
+                WHERE jobs.id = next_job.id
+                RETURNING jobs.*
+                """
+            )
+            return row_to_dict(cur.fetchone())
+
+
+def mark_article_generation_job_ready(
+    job_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE article_generation_jobs
+                SET status = 'ready_for_generation',
+                    payload = %s::jsonb,
+                    error = ''
+                WHERE id = %s AND status = 'sourcing'
+                RETURNING *
+                """,
+                (json.dumps(payload, default=str), job_id),
+            )
+            return row_to_dict(cur.fetchone())
+
+
+def claim_ready_article_generation_job() -> dict[str, Any]:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                WITH next_job AS (
+                  SELECT id
+                  FROM article_generation_jobs
+                  WHERE status = 'ready_for_generation'
+                  ORDER BY priority DESC, created_at ASC
+                  FOR UPDATE SKIP LOCKED
+                  LIMIT 1
+                )
+                UPDATE article_generation_jobs jobs
+                SET status = 'generating'
+                FROM next_job
+                WHERE jobs.id = next_job.id
+                RETURNING jobs.*
+                """
+            )
+            return row_to_dict(cur.fetchone())
+
+
+def update_article_generation_job(
+    job_id: str,
+    *,
+    status: str,
+    article_id: str | None = None,
+    error: str = "",
+) -> dict[str, Any]:
+    allowed = {"queued", "sourcing", "ready_for_generation", "generating", "saved", "failed"}
+    if status not in allowed:
+        raise ValueError("invalid article generation job status")
+    finished = status in {"saved", "failed"}
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE article_generation_jobs
+                SET status = %s,
+                    article_id = COALESCE(%s, article_id),
+                    error = %s,
+                    finished_at = CASE WHEN %s THEN NOW() ELSE finished_at END
+                WHERE id = %s
+                RETURNING *
+                """,
+                (status, article_id, str(error or "")[:4000], finished, job_id),
+            )
+            return row_to_dict(cur.fetchone())
+
+
 def list_recent_x_feed_articles(hours: int = 24, limit: int = 100) -> list[dict[str, Any]]:
-    """Return unique Zen feed articles plus their latest successful X share."""
+    """Return unique generated feed articles plus their latest successful X share."""
     safe_hours = min(max(int(hours or 24), 1), 168)
     safe_limit = min(max(int(limit or 100), 1), 200)
     with get_connection() as conn:

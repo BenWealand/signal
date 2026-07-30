@@ -80,7 +80,7 @@ class GeneratedArticleImagePersistenceTest(unittest.TestCase):
         insert = next((params for sql, params in cursor.executed if "INSERT INTO generated_articles" in sql), None)
         self.assertEqual(result, article["id"])
         self.assertIsNotNone(insert)
-        self.assertEqual(len(insert), 29)
+        self.assertEqual(len(insert), 30)
         self.assertEqual(json.loads(insert[25]), image)
 
 

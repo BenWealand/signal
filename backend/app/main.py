@@ -262,15 +262,9 @@ def health():
             "supabase_url_configured": bool((settings.supabase_url or "").strip()),
             "schema": auth_schema,
         },
-        "mode": "llm" if (
-            settings.openai_api_key
-            or settings.opencode_api_key
-            or settings.gemini_api_key
-        ) else "demo",
+        "mode": "local-llm",
         "keys_configured": {
-            "opencode_zen": bool(settings.opencode_api_key),
-            "gemini_fallback": bool(settings.gemini_api_key),
-            "openai": bool(settings.openai_api_key),
+            "local_llm": bool(settings.llm_base_url and settings.llm_model),
             "news_api": bool(settings.news_api_key),
             "currents": bool(settings.currents_api_key),
             "gnews": bool(settings.gnews_api_key),

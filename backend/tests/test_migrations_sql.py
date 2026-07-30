@@ -62,6 +62,14 @@ class MigrationSqlSplitTests(unittest.TestCase):
         self.assertEqual(len(parts), 1)
         self.assertIn("ADD COLUMN IF NOT EXISTS image", sql)
 
+    def test_local_generation_migration_adds_queue_and_fingerprint(self):
+        path = Path(__file__).resolve().parents[1] / "app" / "db" / "migrations" / "0008_local_generation_jobs.sql"
+        sql = path.read_text(encoding="utf-8")
+        self.assertIn("CREATE TABLE IF NOT EXISTS article_generation_jobs", sql)
+        self.assertIn("source_fingerprint", sql)
+        self.assertIn("ready_for_generation", sql)
+        self.assertIn("priority DESC", sql)
+
 
 if __name__ == "__main__":
     unittest.main()

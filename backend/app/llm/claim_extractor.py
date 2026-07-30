@@ -1,10 +1,6 @@
 from __future__ import annotations
 
 import re
-import json
-
-from app.config import settings
-from app.llm.client import complete_text
 
 
 OPINION_MARKERS = {
@@ -97,40 +93,8 @@ def _match_entities(sentence: str, entities: list[str]) -> list[str]:
     return matched[:8]
 
 
-def extract_claims_with_llm(text: str, entities: list[str], max_claims: int) -> list[dict[str, object]]:
-    prompt = f"""
-Extract only factual claims from the cleaned article text.
-Ignore opinion, prediction, rhetoric, and emotional framing.
-Return JSON only as an array. Each item:
-{{"text": "...", "claim_type": "event|number|quote|context|other", "entities": ["..."], "confidence_score": 0.0}}
-Use at most {max_claims} claims.
-Known entities: {entities}
-
-Article:
-{text[:8000]}
-"""
-    raw = complete_text(prompt, model=settings.claim_model)
-    parsed = json.loads(raw)
-    return [
-        {
-            "text": str(item["text"]).strip().rstrip(".") + ".",
-            "claim_type": item.get("claim_type", "event"),
-            "entities": item.get("entities", []),
-            "confidence_score": float(item.get("confidence_score", 0.8)),
-        }
-        for item in parsed[:max_claims]
-        if item.get("text")
-    ]
-
-
 def extract_claims(text: str, entities: list[str] | None = None, max_claims: int = 8) -> list[dict[str, object]]:
     entities = entities or []
-    if settings.use_llm_claims and settings.openai_api_key:
-        try:
-            return extract_claims_with_llm(text, entities, max_claims)
-        except Exception:
-            pass
-
     claims: list[dict[str, object]] = []
     seen: set[str] = set()
     for sentence in _split_sentences(text):

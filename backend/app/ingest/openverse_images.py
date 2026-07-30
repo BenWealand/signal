@@ -676,7 +676,7 @@ def find_openverse_image(
 ) -> dict[str, Any]:
     """Return one relevant, attribution-ready open image or an empty dict.
 
-    preferred_queries (for example Zen-specific suggestions) are tried
+    preferred_queries (for example entity-specific suggestions) are tried
     before NER subjects. Broad topic-only queries are skipped. Candidates are
     accepted only when their titles align with the article topic; otherwise the
     article publishes without an image.
@@ -688,7 +688,7 @@ def find_openverse_image(
     for subject in preferred:
         if subject not in subjects and not _is_broad_image_query(subject):
             subjects.append(subject)
-    # Fall back to specific NER subjects when Zen gave nothing usable.
+    # Fall back to specific NER subjects when priority queries gave nothing usable.
     if not (preferred_only and preferred):
         for subject in priority_image_queries(article_text or query):
             if subject not in subjects and not _is_broad_image_query(subject):
@@ -716,7 +716,7 @@ def find_openverse_image(
 
 
 class ArticleImagePicker:
-    """Pick an Openverse image from Zen ideas after the article is written."""
+    """Pick an Openverse image from deterministic entity queries."""
 
     def __init__(
         self,
@@ -732,7 +732,7 @@ class ArticleImagePicker:
         self._future = None
         self._image: dict[str, Any] = {}
         self._prompt = ""
-        self._zen_queries: list[str] = []
+        self._priority_queries: list[str] = []
         self._primed = False
         self._deferred = False
         self._lock = threading.Lock()
@@ -772,22 +772,9 @@ class ArticleImagePicker:
             self._image = dict(result)
 
     def _search_from_prompt(self) -> dict[str, Any]:
-        """Optional warm-up search from the topic while the article writes."""
-        preferred: list[str] = []
-        try:
-            from app.llm.zen_writer import suggest_image_queries_with_zen
-
-            preferred = suggest_image_queries_with_zen(
-                headline=self._prompt,
-                dek="",
-                body_paragraphs=[],
-                topic=self._prompt,
-                max_queries=3,
-            ) or []
-        except Exception:
-            logger.exception("Zen prompt image-subject suggestion failed")
-            preferred = []
-        self._zen_queries = list(preferred)
+        """Optional deterministic warm-up search from named entities."""
+        preferred = priority_image_queries(self._prompt)[:3]
+        self._priority_queries = list(preferred)
         return find_openverse_image(
             self._prompt,
             topic=self._prompt,
@@ -804,8 +791,8 @@ class ArticleImagePicker:
     ) -> None:
         """Optionally warm up Openverse while the article writes.
 
-        The authoritative pick still happens in finalize() after Zen reads the
-        finished article and proposes its top image ideas.
+        The authoritative pick still happens in finalize() after the complete
+        article package has been generated.
         """
         if not self.enabled:
             return
@@ -837,7 +824,7 @@ class ArticleImagePicker:
         body: str | list[str] = "",
         wait_seconds: float = 8.0,
     ) -> dict[str, Any]:
-        """After the article is written: Zen top-5 ideas, then try each."""
+        """After the article is written, derive concrete NER queries and try each."""
         if not self.enabled:
             self.shutdown()
             return {}
@@ -871,22 +858,8 @@ class ArticleImagePicker:
             self.shutdown()
             return warm_image if warm_image and image_still_fits_article(warm_image, topic or self._prompt) else {}
 
-        body_parts = body if isinstance(body, list) else [body_text]
-        article_queries: list[str] = []
-        try:
-            from app.llm.zen_writer import suggest_image_queries_with_zen
-
-            article_queries = suggest_image_queries_with_zen(
-                headline=headline or self._prompt,
-                dek=dek,
-                body_paragraphs=[str(part) for part in body_parts if str(part).strip()],
-                topic=headline or self._prompt,
-                max_queries=5,
-            ) or []
-            self._zen_queries = list(article_queries)
-        except Exception:
-            logger.exception("Zen finished-article image ideas failed")
-            article_queries = []
+        article_queries = priority_image_queries(topic)[:5]
+        self._priority_queries = list(article_queries)
 
         image: dict[str, Any] = {}
         if article_queries:

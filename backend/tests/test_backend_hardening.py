@@ -451,15 +451,23 @@ class BackendHardeningTest(unittest.TestCase):
         self.assertIn("high demand", explanation)
 
     def test_required_zen_article_surfaces_diagnostic_reason(self):
-        reason = "OpenCode Zen is temporarily unavailable after trying 2 models (HTTP 503)."
+        reason = "Local writer is temporarily unavailable (HTTP 503)."
+        sources = [
+            {
+                "source_name": f"Source {index}",
+                "title": f"Title {index}",
+                "url": f"https://source{index}.example/story",
+                "raw_text": "Source material. " * 80,
+            }
+            for index in range(4)
+        ]
         with (
-            patch.object(zen_writer, "write_article_package_with_zen", return_value=None),
-            patch.object(zen_writer, "describe_last_zen_error", return_value=reason),
+            patch.object(article_writer, "generate_article_package", side_effect=RuntimeError(reason)),
         ):
             with self.assertRaises(article_writer.ZenArticleUnavailable) as ctx:
                 article_writer._article_body(
                     "test topic",
-                    [{"source_name": "Source", "title": "Title", "raw_text": "Source material."}],
+                    sources,
                     [],
                     [],
                     require_zen=True,

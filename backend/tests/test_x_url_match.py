@@ -34,7 +34,7 @@ class XUrlMatchTests(unittest.TestCase):
             ],
         )
 
-    def test_match_urls_uses_zen_and_builds_reply_packages(self):
+    def test_match_urls_uses_deterministic_scoring_and_builds_reply_packages(self):
         article = {
             "id": "write-1",
             "headline": "Federal Reserve Holds Rates Steady",
@@ -44,14 +44,6 @@ class XUrlMatchTests(unittest.TestCase):
             "xShare": {"posted": False},
         }
         posts_text = "https://x.com/markets/status/999"
-        zen_rows = [
-            {
-                "postId": "999",
-                "articleId": "write-1",
-                "confidence": 0.91,
-                "reason": "Same Fed rate decision",
-            }
-        ]
         client = SimpleNamespace(
             lookup_post=lambda post_id: XCandidate(
                 topic="Fed holds rates",
@@ -66,15 +58,11 @@ class XUrlMatchTests(unittest.TestCase):
         with (
             patch.object(match_mod, "get_x_client", return_value=client),
             patch.object(match_mod.queries, "list_recent_x_feed_articles", return_value=[article]),
-            patch(
-                "app.llm.zen_writer.match_x_posts_to_articles_with_zen",
-                return_value=zen_rows,
-            ),
             patch.object(match_mod, "article_public_url", return_value="https://signal.example/article/write-1"),
         ):
             result = match_mod.match_x_urls_to_articles(posts_text, hours=72)
 
-        self.assertEqual(result["source"], "zen")
+        self.assertEqual(result["source"], "deterministic")
         self.assertEqual(result["matched"], 1)
         row = result["rows"][0]
         self.assertEqual(row["articleId"], "write-1")

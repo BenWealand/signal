@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 from app.config import settings
+from app.x.prompt import search_prompt_from_x_post
 
 # Soft cap before X's 280 hard limit (post_tweet also truncates).
 X_POST_SOFT_LIMIT = 275
@@ -37,10 +38,10 @@ def _paragraphs_from_article(article: dict) -> list[str]:
 
 
 def build_prompt(candidate_topic: str = "", snippet: str = "", prompt: str = "") -> str:
-    """Merge topic/snippet/prompt into a single news query for OpenCode Zen."""
+    """Merge X context into a deterministic, bounded news-search query."""
     prompt = _clean(prompt, 240)
     topic = _clean(candidate_topic, 120)
-    snippet = _clean(snippet, 280)
+    snippet = search_prompt_from_x_post(snippet)
     parts: list[str] = []
     if prompt:
         parts.append(prompt)

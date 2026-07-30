@@ -12,7 +12,9 @@ This repository contains:
 
 ## Current Readiness
 
-This is a deployment-stage prototype. Backend-generated articles require OpenCode Zen-written prose; when Zen or source coverage is unavailable, the write fails instead of saving a local, consensus-only, or fallback article. Offline preview drafts are only used when the frontend is intentionally built without a backend URL.
+This is a deployment-stage prototype. Backend-generated articles use a local
+Ministral model through llama.cpp. Durable jobs serialize generation, while
+claims, consensus, follow-ups, image queries, and matching remain deterministic.
 
 ## Requirements
 
@@ -31,9 +33,10 @@ Required backend variable:
 
 ```env
 DATABASE_URL=postgresql://...
-OPENCODE_API_KEY=...
-GEMINI_API_KEY=...
-# OpenCode Zen is primary; Gemini is called only when Zen is unavailable.
+SIGNAL_LLM_PROVIDER=llamacpp
+SIGNAL_LLM_BASE_URL=http://127.0.0.1:8080/v1
+SIGNAL_LLM_MODEL=signal-writer
+SIGNAL_LLM_API_KEY=no-key
 ```
 
 Common local variables:
@@ -47,7 +50,6 @@ CORS_ORIGINS=http://127.0.0.1:5175
 Optional keys:
 
 ```env
-OPENAI_API_KEY=
 NEWS_API_KEY=
 CURRENTS_API_KEY=
 GNEWS_API_KEY=
@@ -61,7 +63,7 @@ PROMPT_BLACKLIST_REGEX=
 Deployment env checklist:
 
 - Vercel frontend: `VITE_SIGNAL_API_URL`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`
-- Render backend: `DATABASE_URL`, `OPENCODE_API_KEY`, `CORS_ORIGINS`, `PUBLIC_ARTICLE_BASE_URL`, `SIGNAL_API_TOKEN`, `SUPABASE_JWT_SECRET`
+- Backend: `DATABASE_URL`, `SIGNAL_LLM_BASE_URL`, `SIGNAL_LLM_MODEL`, `CORS_ORIGINS`, `PUBLIC_ARTICLE_BASE_URL`, `SIGNAL_API_TOKEN`, `SUPABASE_JWT_SECRET`
 - GitHub Actions: `SIGNAL_API_URL`
 
 For the Render free tier, keep memory-heavy work disabled unless you upgrade:
@@ -185,8 +187,8 @@ Run migration `0003_user_roles_auth.sql` for `role` / `email_confirmed` / `last_
 
 - RSS, Bing News RSS, and GDELT are the main low-cost discovery paths.
 - Guardian, NewsAPI, Currents, and GNews keys add more source candidates when configured.
-- OpenCode Zen writes article prose. If Zen is missing, rate-limited, failing, or given too few usable sources, the backend returns a clear error and does not save an article.
-- OpenAI is used only for optional LLM claim extraction when `USE_LLM_CLAIMS=true` and `OPENAI_API_KEY` is set.
+- Local Ministral writes the complete article package in one schema-constrained call. Transport or schema failures are retried once.
+- Claim extraction, matching, follow-up prompts, and image queries are deterministic and do not call a language model.
 - Sentence-transformers/spaCy are optional ML improvements. Without them, fallback heuristics are used where the code supports it.
 
 ## Useful Commands
@@ -239,6 +241,8 @@ Frontend says cached/offline
 
 Confirm `VITE_SIGNAL_API_URL` points at the backend and `GET /health` works.
 
-Article generation fails with a Zen/source-coverage message
+Article generation fails with a local-writer/source-coverage message
 
-The backend may have too few accessible sources, a missing `OPENCODE_API_KEY`, or a Zen rate limit. Try a more specific prompt and check Render logs for the generation failure reason.
+The backend may have too few accessible sources or the local llama.cpp writer
+may be unavailable. Try a more specific prompt and check the API and dedicated
+article-worker logs.

@@ -114,7 +114,7 @@ def write_article_for_candidate(
     limit: int = 12,
     write_fn: Callable[..., dict] | None = None,
 ) -> XSharePackage:
-    """Write + save a sourced article and return a ready-to-share package."""
+    """Legacy synchronous VM path; non-VM callers use the durable queue."""
     is_direct_prompt = candidate.provider == "manual-prompt" and bool(candidate.prompt.strip())
     if not is_direct_prompt:
         ok, reason = is_actionable_candidate(candidate)
@@ -209,6 +209,74 @@ def write_article_for_candidate(
             ),
             "postId": candidate.post_id,
         },
+    )
+
+
+def enqueue_article_for_candidate(
+    candidate: XCandidate,
+    *,
+    mode: str = "fast",
+    limit: int = 12,
+    priority: int = 40,
+) -> XSharePackage:
+    """Validate an X candidate and enqueue it without occupying the request."""
+    is_direct_prompt = candidate.provider == "manual-prompt" and bool(candidate.prompt.strip())
+    if not is_direct_prompt:
+        ok, reason = is_actionable_candidate(candidate)
+        if not ok:
+            return XSharePackage(
+                status="skipped",
+                article_url="",
+                reply_text="",
+                trend_url=candidate.trend_url,
+                candidate=candidate.to_dict(),
+                error=reason,
+            )
+    prompt_seed = re.sub(r"\s+", " ", candidate.prompt or "").strip()
+    prompt_seed = prompt_seed[:2000 if is_direct_prompt else 240].rstrip()
+    if is_direct_prompt or (prompt_seed and _is_specific_prompt(prompt_seed)):
+        prompt = prompt_seed
+    else:
+        try:
+            prompt = build_prompt(candidate.topic, candidate.snippet, candidate.prompt)
+        except ValueError as exc:
+            return XSharePackage(
+                status="error",
+                article_url="",
+                reply_text="",
+                trend_url=candidate.trend_url,
+                candidate=candidate.to_dict(),
+                error=str(exc),
+            )
+    blocked = prompt_is_blocked(prompt)
+    if blocked.blocked:
+        return XSharePackage(
+            status="blocked",
+            article_url="",
+            reply_text="",
+            trend_url=candidate.trend_url,
+            candidate=candidate.to_dict(),
+            error=f"prompt_blocked:{blocked.source}",
+        )
+    job = queries.enqueue_article_generation_job(
+        prompt,
+        mode=mode,
+        priority=priority,
+        payload={
+            "limit": limit,
+            "source": "Signal desk",
+            "trendUrl": candidate.trend_url,
+            "tag": candidate.tag or "x-trend",
+            "xPostId": candidate.post_id,
+        },
+    )
+    return XSharePackage(
+        status="saved" if job.get("status") == "saved" else "queued",
+        article_url="",
+        reply_text="",
+        trend_url=candidate.trend_url,
+        candidate=candidate.to_dict(),
+        share={"buildId": job["id"], "postId": candidate.post_id},
     )
 
 
@@ -313,21 +381,32 @@ def run_x_pipeline(
     packages: list[dict[str, Any]] = []
     ready_count = 0
     for candidate in actionable:
-        package = write_article_for_candidate(
-            candidate,
-            mode=mode,
-            limit=source_limit,
-            write_fn=write_fn,
+        package = (
+            write_article_for_candidate(
+                candidate,
+                mode=mode,
+                limit=source_limit,
+                write_fn=write_fn,
+            )
+            if write_fn is not None and write_fn is not write_article_from_prompt
+            else enqueue_article_for_candidate(
+                candidate,
+                mode=mode,
+                limit=source_limit,
+            )
         )
         package = maybe_share_package(package, dry_run=dry_run, auto_post=auto_post)
         package_dict = package.to_dict()
         packages.append(package_dict)
-        if package_dict.get("status") in {"ready_to_post", "shared"}:
+        if package_dict.get("status") in {"queued", "saved", "ready_to_post", "shared"}:
             ready_count += 1
             if ready_count >= max_articles:
                 break
 
-    ready = [p for p in packages if p.get("status") in {"ready_to_post", "shared"}]
+    ready = [
+        p for p in packages
+        if p.get("status") in {"queued", "saved", "ready_to_post", "shared"}
+    ]
     return {
         "status": "ok" if ready else "empty",
         "provider": provider,

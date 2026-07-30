@@ -203,22 +203,17 @@ def admin_set_user_role(
 def admin_x_status(authorization: str = Header(default="")):
     user = _require_admin(authorization)
     client = get_x_client()
-    from app.llm.zen_writer import describe_last_zen_error, get_last_zen_error
-
-    zen_error = get_last_zen_error()
     return {
         "ok": True,
         "adminEmail": user.get("email"),
         "publicArticleBaseUrl": settings.public_article_base_url,
         "xClient": client.status(),
-        "zen": {
-            "configured": bool(settings.opencode_api_key),
-            "fastModel": settings.opencode_fast_model,
-            "thoroughModel": settings.opencode_model,
-            "geminiFallbackConfigured": bool(settings.gemini_api_key),
-            "geminiFallbackModel": settings.gemini_model,
-            "lastError": zen_error,
-            "lastErrorMessage": describe_last_zen_error() if zen_error else "",
+        "localWriter": {
+            "configured": bool(settings.llm_base_url and settings.llm_model),
+            "provider": settings.llm_provider,
+            "baseUrl": settings.llm_base_url,
+            "model": settings.llm_model,
+            "maxConcurrency": settings.llm_max_concurrency,
         },
         "dryRunDefault": bool(settings.x_dry_run),
         "autoPostDefault": bool(settings.x_auto_post),
@@ -360,7 +355,7 @@ def admin_x_feed_drafts(
     limit: int = 100,
     authorization: str = Header(default=""),
 ):
-    """Draft X posts for unique Zen articles currently visible in the feeds."""
+    """Draft X posts for unique generated articles currently visible in the feeds."""
     _require_admin(authorization)
     safe_hours = min(max(int(hours or 24), 1), 168)
     safe_limit = min(max(int(limit or 100), 1), 200)
@@ -417,7 +412,7 @@ def admin_x_feed_share(
     if not article:
         raise HTTPException(status_code=404, detail="Article not found")
     if article.get("generation_mode") not in {"fast", "thorough"}:
-        raise HTTPException(status_code=422, detail="Only Zen feed articles can be posted")
+        raise HTTPException(status_code=422, detail="Only generated feed articles can be posted")
 
     existing = queries.get_posted_x_share(payload.article_id)
     if existing and not payload.dry_run:

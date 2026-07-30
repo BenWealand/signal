@@ -91,13 +91,11 @@ class ZenPromptFallbackTest(unittest.TestCase):
         self.assertIn("authorization", header_blob)
         self.assertIn("x-api-key", header_blob)
 
-    def test_write_retries_closer_prompt_when_first_angle_has_no_sources(self):
+    def test_write_selects_closer_prompt_before_generation(self):
         calls: list[str] = []
 
-        def fake_fast(prompt, limit=8, use_zen=True, use_gemini=None, build_id=None):
+        def fake_fast(prompt, **_kwargs):
             calls.append(prompt)
-            if prompt == "technology":
-                raise article_writer.ZenArticleUnavailable("No accessible sources were found for an OpenCode Zen draft")
             return {
                 "id": "write-1",
                 "prompt": prompt,
@@ -110,15 +108,27 @@ class ZenPromptFallbackTest(unittest.TestCase):
             patch.object(article_writer, "_fast_article_from_prompt", side_effect=fake_fast),
             patch.object(
                 article_writer,
-                "_prompt_variants",
-                return_value=["technology", "artificial intelligence semiconductor technology cybersecurity"],
+                "_select_supported_variant",
+                return_value=(
+                    "artificial intelligence semiconductor technology cybersecurity",
+                    [
+                        {"url": "https://a.example/story"},
+                        {"url": "https://b.example/story"},
+                        {"url": "https://c.example/story"},
+                        {"url": "https://d.example/story"},
+                    ],
+                ),
             ),
-            patch("app.llm.zen_writer._api_key", return_value="key"),
-            patch.object(article_writer.queries, "save_generated_article", return_value="saved"),
+            patch.object(
+                article_writer.queries,
+                "find_recent_generated_article_by_fingerprint",
+                return_value={},
+            ),
         ):
             article = article_writer.write_article_from_prompt("technology", mode="fast")
 
-        self.assertEqual(calls[0], "technology")
+        self.assertEqual(len(calls), 1)
+        self.assertIn("artificial intelligence", calls[0])
         self.assertEqual(article["prompt"], "technology")
         self.assertTrue(article.get("promptAdjusted"))
         self.assertIn("artificial intelligence", article.get("resolvedPrompt", ""))

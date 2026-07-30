@@ -46,12 +46,12 @@ def fake_request() -> Request:
 
 
 class ArticlesWriteApiTest(unittest.TestCase):
-    @patch("app.api.routes_articles.queries.save_generated_article", return_value="test-article-1")
+    @patch(
+        "app.api.routes_articles.queries.enqueue_article_generation_job",
+        return_value={"id": "build-test", "status": "queued"},
+    )
     @patch("app.api.routes_users._require_user_route_guard", return_value=3)
-    @patch("app.api.routes_articles.write_article_from_prompt")
-    def test_articles_write_uses_verified_owner_and_saves_result(self, write_article, require_user, save_article):
-        write_article.side_effect = lambda prompt, **_kwargs: fake_article(prompt)
-
+    def test_articles_write_uses_verified_owner_and_queues_result(self, require_user, enqueue):
         payload = routes_articles.TrendArticleRequest(
             prompt="latest senate budget vote",
             limit=7,
@@ -60,14 +60,13 @@ class ArticlesWriteApiTest(unittest.TestCase):
         )
         result = routes_articles.write_article(fake_request(), payload, authorization="Bearer token")
 
-        self.assertEqual(result["prompt"], "latest senate budget vote")
-        self.assertEqual(result["ownerUserId"], 3)
-        self.assertIn("buildId", result)
-        write_article.assert_called_once()
-        self.assertEqual(write_article.call_args.kwargs["limit"], 7)
-        self.assertEqual(write_article.call_args.kwargs["mode"], "fast")
+        self.assertEqual(result["buildId"], "build-test")
+        self.assertEqual(result["status"], "queued")
         require_user.assert_called_once_with(3, authorization="Bearer token")
-        save_article.assert_called_once()
+        enqueue.assert_called_once()
+        self.assertEqual(enqueue.call_args.args[0], "latest senate budget vote")
+        self.assertEqual(enqueue.call_args.kwargs["mode"], "fast")
+        self.assertEqual(enqueue.call_args.kwargs["payload"]["ownerUserId"], 3)
 
 
 if __name__ == "__main__":

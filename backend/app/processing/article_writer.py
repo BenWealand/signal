@@ -5,6 +5,8 @@ import time
 import threading
 import uuid
 import logging
+import hashlib
+import urllib.parse
 from datetime import datetime, timezone
 
 from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
@@ -45,7 +47,39 @@ def get_build_progress(build_id: str | None = None) -> dict:
             p = dict(_progress_by_build[_latest_build_id])
         else:
             p = dict(_progress)
-    if p["active"] and p["started_at"]:
+    if build_id and p.get("stage_label") == "Unknown build":
+        try:
+            job = queries.get_article_generation_job(build_id)
+            if job:
+                status = str(job.get("status") or "queued")
+                stage_map = {
+                    "queued": ("queued", "Queued for sourcing...", True),
+                    "sourcing": ("fetching", "Gathering and scoring sources...", True),
+                    "ready_for_generation": ("writing", "Waiting for the local writer...", True),
+                    "generating": ("writing", "Ministral is writing the article...", True),
+                    "saved": ("done", "Done", False),
+                    "failed": ("error", "Write failed", False),
+                }
+                stage, label, active = stage_map.get(status, ("queued", status, True))
+                article = (
+                    queries.get_generated_article(str(job.get("article_id")))
+                    if job.get("article_id")
+                    else None
+                )
+                p.update(
+                    {
+                        "active": active,
+                        "prompt": job.get("prompt") or "",
+                        "stage": stage,
+                        "stage_label": label,
+                        "article": article,
+                        "error": job.get("error") or None,
+                        "started_at": job.get("started_at") or 0,
+                    }
+                )
+        except Exception:
+            logger.exception("Durable build progress lookup failed", extra={"build_id": build_id})
+    if p["active"] and isinstance(p.get("started_at"), (int, float)) and p["started_at"]:
         p["elapsed_s"] = int(time.time() - p["started_at"])
     return p
 
@@ -70,7 +104,6 @@ set_build_progress = _set_progress
 from app.db import queries
 from app.ingest.article_reader import fetch_readable_article_text
 from app.ingest.gdelt_ingest import fetch_gdelt_articles
-from app.ingest.openverse_images import ArticleImagePicker
 from app.ingest.rss_ingest import fetch_articles_for_query_fast
 from app.ingest.source_registry import domain_from_url, is_blocked_domain
 from app.ingest.source_ranker import SourceGate, evaluate_source_quality, rank_sources
@@ -80,13 +113,14 @@ from app.llm.trend_article import title_case
 from app.nlp.ner import extract_entities
 from app.processing.clean_text import clean_article_text
 from app.llm.claim_extractor import extract_claims
+from app.llm.article_generator import generate_article_package
 
 
 THOROUGH_SOURCE_GATE = SourceGate(min_sources=3, min_domains=2, min_text_chars=180, max_current_age_days=14)
 
 
 class ZenArticleUnavailable(RuntimeError):
-    """Raised when an article cannot be written by OpenCode Zen."""
+    """Backward-compatible name for local article-generation failures."""
 
 
 # Backward-compatible alias for older imports/tests.
@@ -551,65 +585,27 @@ def _article_body(
     build_id: str | None = None,
     on_chunk=None,
 ) -> tuple[list[str], dict[str, str] | None]:
-    """
-    Try OpenCode Zen first for a polished, grammar-correct article package.
-    Returns (body_paragraphs, optional_header_package).
-    If all configured article providers are unavailable, preserve validated
-    reporting as an attributed source digest.
-    """
-    from app.llm.zen_writer import (
-        describe_last_zen_error,
-        write_article_package_with_zen,
-    )
-
-    if use_gemini is not None:
-        use_zen = use_gemini
-    if require_gemini is not None:
-        require_zen = require_gemini
-
-    # ── OpenCode Zen path ─────────────────────────────────────────────────────
-    package = (
-        write_article_package_with_zen(
+    """Generate the complete article package with the local writer."""
+    try:
+        package = generate_article_package(
             prompt,
             source_articles,
             mode=generation_mode,
-            on_chunk=on_chunk,
         )
-        if use_zen
-        else None
-    )
-    if package and package.get("body"):
-        zen_text = package["body"]
-        paragraphs = [p.strip() for p in zen_text.split("\n\n") if p.strip()]
-        if len(paragraphs) < 2:
-            paragraphs = [p.strip() for p in zen_text.split("\n") if len(p.strip()) > 60]
-        if len(paragraphs) >= 2:
-            header = {
-                "headline": str(package.get("headline") or "").strip(),
-                "dek": str(package.get("dek") or "").strip(),
-            }
-            return paragraphs, header if header["headline"] and header["dek"] else None
+    except Exception as exc:
+        raise ZenArticleUnavailable(str(exc) or "Local article generation failed") from exc
+    paragraphs = [str(item).strip() for item in package["body"]]
+    if on_chunk:
+        try:
+            on_chunk({"draft_text": "\n\n".join(paragraphs)})
+        except Exception:
+            logger.exception("Article completion callback failed")
+    return paragraphs, {
+        "headline": str(package["headline"]).strip(),
+        "dek": str(package["dek"]).strip(),
+    }
 
-    # Provider outages must not discard already-validated reporting. Build a
-    # conservative, attributed digest using only extracted source text.
-    fallback_paragraphs = _prose_paragraphs(source_articles, _prompt_keywords(prompt))
-    if len(fallback_paragraphs) >= 2:
-        logger.warning(
-            "Article LLMs unavailable; publishing attributed source digest",
-            extra={
-                "build_id": build_id,
-                "source_count": len(source_articles),
-                "provider_error": describe_last_zen_error(),
-            },
-        )
-        if on_chunk:
-            try:
-                on_chunk({"draft_text": "\n\n".join(fallback_paragraphs)})
-            except Exception:
-                logger.exception("Source-digest completion callback failed")
-        return fallback_paragraphs, None
-
-    raise ZenArticleUnavailable(describe_last_zen_error())
+    # ── OpenCode Zen path ─────────────────────────────────────────────────────
 
 
 def _facts_from_consensus(
@@ -700,49 +696,23 @@ def _article_from_consensus(
         headline if headline.endswith("— Signal Coverage") is False
         else f"Signal tracked {source_count} public sources for: {prompt}."
     )
-    image_picker = ArticleImagePicker(
-        enabled=getattr(settings, "article_images_enabled", True),
-        search_timeout=getattr(settings, "article_image_search_timeout_seconds", 16.0),
+    # Image lookup is deferred until after the article is durably saved.
+    body, zen_header = _article_body(
+        prompt,
+        source_articles,
+        supported,
+        unique,
+        use_zen=True,
+        require_zen=True,
+        generation_mode=generation_mode,
+        build_id=build_id,
     )
-    # Warm up Openverse while Zen writes. The authoritative pick still happens
-    # after the finished article: Zen proposes its top 5 image ideas, then we
-    # try those against Openverse. For auto/desk keyword-bag prompts, fall back to
-    # concrete source headlines so warm-up works the same way as user prompts.
-    source_hints = [
-        str(article.get("title") or "").strip()
-        for article in source_articles
-        if str(article.get("title") or "").strip()
-    ][:5]
-    image_picker.prime_from_prompt(prompt, source_hints=source_hints)
-    try:
-        body, zen_header = _article_body(
-            prompt,
-            source_articles,
-            supported,
-            unique,
-            use_zen=use_zen or require_zen,
-            require_zen=require_zen,
-            generation_mode=generation_mode,
-            build_id=build_id,
-            on_chunk=image_picker.on_chunk if image_picker.enabled else None,
-        )
-    except Exception:
-        image_picker.shutdown()
-        raise
 
     if zen_header:
         headline = zen_header["headline"]
         dek = zen_header["dek"]
         if not supported:
             summary = dek or headline
-    elif use_zen or require_zen:
-        fallback_reason = fallback_reason or "llm_unavailable_source_digest"
-    image = image_picker.finalize(
-        headline=headline,
-        dek=dek,
-        body=body,
-        wait_seconds=getattr(settings, "article_image_wait_seconds", 8.0),
-    )
     facts = _facts_from_consensus(source_articles, supported, unique)
     terms = list(dict.fromkeys(re.findall(r"[a-z]{4,}", prompt.lower())))[:5]
     source_quality = source_quality or evaluate_source_quality(source_articles, prompt, gate=THOROUGH_SOURCE_GATE)
@@ -776,7 +746,7 @@ def _article_from_consensus(
             for a in source_articles
             if a.get("url") and a.get("title") and _is_mostly_latin(a.get("title", ""))
         ],
-        "image": image,
+        "image": {},
         "consensus": consensus,
         "generation_mode": generation_mode,
         "source_quality": source_quality,
@@ -910,18 +880,6 @@ def _prompt_variants(prompt: str) -> list[str]:
     if len(content_words) <= 2:
         variants.extend(_SECTION_ANGLE_PROMPTS)
 
-    # Trending entities / recent headlines as last local variants.
-    try:
-        for topic in queries.list_trending_topics(limit=8) or []:
-            label = _normalize_write_prompt(
-                topic.get("entity_text") or topic.get("topic") or topic.get("label") or ""
-            )
-            if label and label.lower() not in {v.lower() for v in variants}:
-                if not content_words or any(w.lower() in label.lower() for w in content_words[:3]):
-                    variants.append(label)
-    except Exception:
-        logger.exception("Trending topic lookup failed while building prompt variants")
-
     deduped: list[str] = []
     seen: set[str] = set()
     for item in variants:
@@ -930,7 +888,114 @@ def _prompt_variants(prompt: str) -> list[str]:
             continue
         seen.add(key)
         deduped.append(item)
-    return deduped[:14]
+    return deduped[:10]
+
+
+def _source_candidates_for_variant(prompt: str, limit: int, mode: str) -> list[dict]:
+    """Collect cache and live coverage without invoking the article model."""
+    candidate_limit = max(4, min(limit, settings.thorough_max_candidates if mode == "thorough" else 12))
+    try:
+        cached = _cached_articles_for_prompt(prompt, candidate_limit)
+    except Exception:
+        logger.exception("Variant cache lookup failed", extra={"prompt": prompt})
+        cached = []
+    rss_candidates: list[dict] = []
+    gdelt_candidates: list[dict] = []
+    timeout = 6.0 if mode == "thorough" else 5.0
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = {
+            pool.submit(
+                fetch_articles_for_query_fast,
+                prompt,
+                candidate_limit,
+                min(4, candidate_limit),
+                timeout,
+            ): "rss",
+            pool.submit(fetch_gdelt_articles, prompt, candidate_limit, 0.15): "gdelt",
+        }
+        for future, source in list(futures.items()):
+            try:
+                result = future.result(timeout=timeout + 1) or []
+                if source == "rss":
+                    rss_candidates = result
+                else:
+                    gdelt_candidates = result
+            except Exception:
+                logger.info("Variant live source lookup failed", extra={"source": source, "prompt": prompt})
+    return _merge_candidates(cached, rss_candidates + gdelt_candidates, candidate_limit, prompt)
+
+
+def _coverage_score(prompt: str, sources: list[dict]) -> tuple[float, int, int]:
+    domains = {
+        domain_from_url(str(item.get("url") or "")) or str(item.get("domain") or "")
+        for item in sources
+        if item.get("url") or item.get("domain")
+    }
+    rich_chars = sum(
+        min(
+            1300,
+            len(str(item.get("clean_text") or item.get("raw_text") or item.get("description") or "")),
+        )
+        for item in sources
+    )
+    relevance = sum(_relevance_score(item, _prompt_keywords(prompt)) for item in sources)
+    return (relevance + len(domains) * 1.5 + min(rich_chars, 8500) / 1700, len(domains), rich_chars)
+
+
+def _select_supported_variant(
+    original: str,
+    *,
+    mode: str,
+    limit: int,
+    build_id: str,
+) -> tuple[str, list[dict]]:
+    variants = _prompt_variants(original)
+    _set_progress(
+        build_id,
+        active=True,
+        prompt=original,
+        stage="fetching",
+        stage_label=f"Comparing source coverage for {len(variants)} angles...",
+        error=None,
+        article=None,
+    )
+    results: dict[str, list[dict]] = {}
+    # Source preparation is I/O-bound. Bound this to two simultaneous variants.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        future_map = {
+            pool.submit(_source_candidates_for_variant, variant, limit, mode): variant
+            for variant in variants
+        }
+        for future in as_completed(future_map):
+            variant = future_map[future]
+            try:
+                results[variant] = future.result() or []
+            except Exception:
+                logger.exception("Variant source preparation failed", extra={"variant": variant})
+                results[variant] = []
+    selected = max(
+        variants,
+        key=lambda variant: (*_coverage_score(variant, results.get(variant, [])), -variants.index(variant)),
+    )
+    return selected, results.get(selected, [])
+
+
+def source_fingerprint(prompt: str, sources: list[dict]) -> str:
+    urls: list[str] = []
+    for source in sources:
+        value = str(source.get("url") or "").strip()
+        try:
+            parsed = urllib.parse.urlsplit(value)
+            value = urllib.parse.urlunsplit(
+                (parsed.scheme.lower(), parsed.netloc.lower(), parsed.path.rstrip("/"), parsed.query, "")
+            )
+        except ValueError:
+            pass
+        if value:
+            urls.append(value)
+    normalized_prompt = _normalize_write_prompt(prompt).lower()
+    material = normalized_prompt + "\n" + "\n".join(sorted(set(urls)))
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
 def _is_zen_config_failure(exc: BaseException) -> bool:
@@ -995,13 +1060,13 @@ def _desk_rescue_zen_article(
     limit: int,
 ) -> dict:
     """
-    Last resort: write a Zen article from the strongest recent desk sources,
+    Last resort: use the strongest recent desk sources,
     anchored to the closest story matching the reader's request.
     """
     sources = _desk_rescue_sources(limit=max(8, min(limit, 14)))
     if len(sources) < 2:
         raise ZenArticleUnavailable(
-            "No accessible desk sources were available for an OpenCode Zen rescue draft"
+            "No accessible desk sources were available for a local rescue draft"
         )
 
     rescue_prompt = (
@@ -1040,21 +1105,17 @@ def _desk_rescue_zen_article(
     article["promptAdjusted"] = True
     article["tag"] = "desk-rescue"
     article["buildId"] = build_id
-    queries.save_generated_article(article)
-    _set_progress(
-        build_id,
-        active=False,
-        stage="done",
-        stage_label="Done",
-        article=article,
-        draft_text="",
-        draft_headline="",
-        error=None,
-    )
     return article
 
 
-def _fast_article_from_prompt(prompt: str, limit: int = 8, use_zen: bool = True, use_gemini: bool | None = None, build_id: str | None = None) -> dict:
+def _fast_article_from_prompt(
+    prompt: str,
+    limit: int = 8,
+    use_zen: bool = True,
+    use_gemini: bool | None = None,
+    build_id: str | None = None,
+    prefetched_sources: list[dict] | None = None,
+) -> dict:
     if use_gemini is not None:
         use_zen = bool(use_gemini)
     build_id = build_id or f"build-{uuid.uuid4().hex}"
@@ -1071,18 +1132,19 @@ def _fast_article_from_prompt(prompt: str, limit: int = 8, use_zen: bool = True,
     )
 
     # 1) Prefer freshly ingested desk coverage first.
-    cached: list[dict] = []
-    try:
-        cached = _cached_articles_for_prompt(prompt, fast_limit)
-    except Exception:
-        logger.exception("Cached article lookup failed during fast article generation", extra={"build_id": build_id, "prompt": prompt})
-        cached = []
+    cached: list[dict] = list(prefetched_sources or [])
+    if prefetched_sources is None:
+        try:
+            cached = _cached_articles_for_prompt(prompt, fast_limit)
+        except Exception:
+            logger.exception("Cached article lookup failed during fast article generation", extra={"build_id": build_id, "prompt": prompt})
+            cached = []
 
     candidates = _merge_candidates(cached, [], fast_limit, prompt)
-    used_live_sources = False
+    used_live_sources = prefetched_sources is not None
 
     # 2) Only hit live providers when the daily cache is thin.
-    if len(candidates) < min_cache:
+    if prefetched_sources is None and len(candidates) < min_cache:
         _set_progress(
             build_id,
             stage="fetching",
@@ -1130,8 +1192,8 @@ def _fast_article_from_prompt(prompt: str, limit: int = 8, use_zen: bool = True,
         )
 
     if not candidates:
-        _set_progress(build_id, active=False, stage="error", stage_label="No sources found", error="No accessible sources were found for an OpenCode Zen draft")
-        raise ZenArticleUnavailable("No accessible sources were found for an OpenCode Zen draft")
+        _set_progress(build_id, active=False, stage="error", stage_label="No sources found", error="No accessible sources were found for a local draft")
+        raise ZenArticleUnavailable("No accessible sources were found for a local draft")
 
     candidates.sort(key=lambda a: len(a.get("raw_text", "") or a.get("description", "")), reverse=True)
     for candidate in candidates:
@@ -1141,7 +1203,7 @@ def _fast_article_from_prompt(prompt: str, limit: int = 8, use_zen: bool = True,
     _set_progress(
         build_id,
         stage="writing",
-        stage_label=f"Fast draft: Zen writing from {len(candidates)} sources...",
+        stage_label=f"Fast draft: local writer using {len(candidates)} sources...",
         sources_found=len(candidates),
         sources_enriched=sum(1 for c in candidates if len(c.get("raw_text", "")) > 120),
     )
@@ -1162,124 +1224,107 @@ def _fast_article_from_prompt(prompt: str, limit: int = 8, use_zen: bool = True,
     article["buildId"] = build_id
     article["tag"] = "fast-draft"
     article["summary"] = article["summary"].replace("Signal tracked", "Fast draft from")
-    queries.save_generated_article(article)
-    _set_progress(
-        build_id,
-        active=False,
-        stage="done",
-        stage_label="Done",
-        article=article,
-        draft_text="",
-        draft_headline="",
-        error=None,
-    )
     return article
 
 
-def write_article_from_prompt(prompt: str, limit: int = 50, use_zen: bool = True, use_gemini: bool | None = None, mode: str = "thorough", build_id: str | None = None) -> dict:
-    """
-    Full pipeline for a user-submitted prompt.
-
-    Prefer an OpenCode Zen draft and use Gemini as the secondary provider. If
-    both providers are unavailable after reliable sources are validated, publish
-    a conservative attributed source digest. Thin source coverage still retries
-    similar or narrower angles before the final desk rescue.
-    """
-    build_id = build_id or f"build-{uuid.uuid4().hex}"
-    # Reader writes always use the configured provider chain.
-    use_zen = True
-    from app.llm.zen_writer import _api_key as _zen_api_key, _gemini_api_key
-
-    if not (_zen_api_key() or _gemini_api_key()):
-        message = "No article provider is configured on the backend (set OPENCODE_API_KEY or GEMINI_API_KEY)."
-        _set_progress(build_id, active=False, stage="error", stage_label="Article provider unavailable", error=message)
-        raise ZenArticleUnavailable(message)
-
+def prepare_article_request(
+    prompt: str,
+    *,
+    limit: int,
+    mode: str,
+    build_id: str,
+) -> tuple[str, list[dict], str, dict]:
+    """Finish all source work and reuse checks before generation begins."""
     original = _normalize_write_prompt(prompt) or "breaking world news today"
-    variants = _prompt_variants(original)
-    last_error: BaseException | None = None
-
-    for index, variant in enumerate(variants):
-        label = (
-            "Scanning sources..."
-            if index == 0
-            else f"Trying a closer angle ({index + 1}/{len(variants)})..."
+    selected, sources = _select_supported_variant(
+        original,
+        mode=mode,
+        limit=limit,
+        build_id=build_id,
+    )
+    if not sources:
+        sources = _desk_rescue_sources(limit=max(6, min(limit, 12)))
+        selected = (
+            "Among the supplied source material, write the story closest to "
+            f"this reader request: {original}"
         )
-        _set_progress(
-            build_id,
-            active=True,
-            prompt=original,
-            stage="fetching",
-            stage_label=label,
-            error=None,
-            article=None,
-        )
-        try:
-            if mode == "fast":
-                article = _fast_article_from_prompt(
-                    variant,
-                    limit=limit,
-                    use_zen=True,
-                    build_id=build_id,
-                )
-            else:
-                article = _thorough_article_from_prompt(
-                    variant,
-                    limit=limit,
-                    use_zen=True,
-                    build_id=build_id,
-                )
-            article["prompt"] = original
-            article["buildId"] = build_id
-            if variant != original:
-                article["resolvedPrompt"] = variant
-                article["promptAdjusted"] = True
-                try:
-                    queries.save_generated_article(article)
-                except Exception:
-                    logger.exception("Failed to persist adjusted prompt metadata")
-            return article
-        except ZenArticleUnavailable as exc:
-            last_error = exc
-            logger.warning(
-                "Zen write angle failed prompt=%s variant=%s reason=%s",
-                original[:120],
-                variant[:120],
-                str(exc)[:200],
-            )
-            if _is_zen_config_failure(exc):
-                _set_progress(
-                    build_id,
-                    active=False,
-                    stage="error",
-                    stage_label="OpenCode Zen unavailable",
-                    error=str(exc),
-                )
-                raise
-            continue
-
+    if not sources:
+        message = "No accessible sources were found for a local article draft"
+        _set_progress(build_id, active=False, stage="error", stage_label="No sources found", error=message)
+        raise ZenArticleUnavailable(message)
+    fingerprint = source_fingerprint(original, sources)
     try:
-        return _desk_rescue_zen_article(
+        existing = queries.find_recent_generated_article_by_fingerprint(fingerprint)
+    except Exception:
+        existing = {}
+    return selected, sources, fingerprint, existing
+
+
+def write_article_from_prompt(
+    prompt: str,
+    limit: int = 50,
+    use_zen: bool = True,
+    use_gemini: bool | None = None,
+    mode: str = "thorough",
+    build_id: str | None = None,
+    status_callback=None,
+    prepared_variant: str | None = None,
+    prepared_sources: list[dict] | None = None,
+    prepared_fingerprint: str | None = None,
+) -> dict:
+    """Select the strongest sourced angle, then invoke Ministral exactly once."""
+    build_id = build_id or f"build-{uuid.uuid4().hex}"
+    original = _normalize_write_prompt(prompt) or "breaking world news today"
+    if prepared_variant is not None and prepared_sources is not None:
+        selected = prepared_variant
+        sources = prepared_sources
+        fingerprint = prepared_fingerprint or source_fingerprint(original, sources)
+        existing = {}
+    else:
+        selected, sources, fingerprint, existing = prepare_article_request(
             original,
             mode=mode,
-            build_id=build_id,
             limit=limit,
+            build_id=build_id,
         )
-    except ZenArticleUnavailable as exc:
-        last_error = exc
-        logger.warning("Zen desk rescue failed prompt=%s reason=%s", original[:120], str(exc)[:200])
+    if existing:
+        existing["buildId"] = build_id
+        existing["_reused"] = True
+        return existing
 
-    message = str(last_error) if last_error else "OpenCode Zen could not finish a sourced article."
-    _set_progress(build_id, active=False, stage="error", stage_label="Write failed", error=message)
-    raise ZenArticleUnavailable(message)
+    if status_callback:
+        status_callback("ready_for_generation")
+    writer = _fast_article_from_prompt if mode == "fast" else _thorough_article_from_prompt
+    if status_callback:
+        status_callback("generating")
+    article = writer(
+        selected,
+        limit=limit,
+        use_zen=True,
+        build_id=build_id,
+        prefetched_sources=sources,
+    )
+    article["prompt"] = original
+    article["sourceFingerprint"] = fingerprint
+    article["buildId"] = build_id
+    if selected != original:
+        article["resolvedPrompt"] = selected
+        article["promptAdjusted"] = True
+    return article
 
 
-def _thorough_article_from_prompt(prompt: str, limit: int = 50, use_zen: bool = True, build_id: str | None = None) -> dict:
+def _thorough_article_from_prompt(
+    prompt: str,
+    limit: int = 50,
+    use_zen: bool = True,
+    build_id: str | None = None,
+    prefetched_sources: list[dict] | None = None,
+) -> dict:
     """
     Thorough mode is cache-first and latency-bounded:
     1. Prefer recent desk coverage from Postgres.
     2. Live-fetch only when the cache is thin (Bing/Guardian/GDELT race + capped enrich).
-    3. Process a small top-N set of articles, Jaccard consensus, OpenCode Zen package write.
+    3. Process a small top-N set, compute Jaccard consensus, and generate locally.
     """
     build_id = build_id or f"build-{uuid.uuid4().hex}"
     use_zen = True
@@ -1297,21 +1342,22 @@ def _thorough_article_from_prompt(prompt: str, limit: int = 50, use_zen: bool = 
     )
 
     # 1) Cache first — same daily desk coverage Fast uses.
-    cached: list[dict] = []
-    try:
-        cached = _cached_articles_for_prompt(prompt, thorough_limit)
-    except Exception:
-        logger.exception("Cached article lookup failed during thorough generation", extra={"build_id": build_id, "prompt": prompt})
-        cached = []
+    cached: list[dict] = list(prefetched_sources or [])
+    if prefetched_sources is None:
+        try:
+            cached = _cached_articles_for_prompt(prompt, thorough_limit)
+        except Exception:
+            logger.exception("Cached article lookup failed during thorough generation", extra={"build_id": build_id, "prompt": prompt})
+            cached = []
 
     live_candidates = _merge_candidates(cached, [], thorough_limit, prompt)
-    used_live_sources = False
+    used_live_sources = prefetched_sources is not None
     rss_candidates: list[dict] = []
     gdelt_candidates: list[dict] = []
 
     # 2) Live race only when cache is thin — same early-exit race Fast uses,
     # then a capped enrich pass for the thinnest candidates.
-    if len(live_candidates) < min_cache:
+    if prefetched_sources is None and len(live_candidates) < min_cache:
         _set_progress(
             build_id,
             stage="fetching",
@@ -1393,8 +1439,8 @@ def _thorough_article_from_prompt(prompt: str, limit: int = 50, use_zen: bool = 
     )
 
     if not all_candidates:
-        _set_progress(build_id, active=False, stage="error", stage_label="No sources found", error="No accessible sources were found for an OpenCode Zen draft")
-        raise ZenArticleUnavailable("No accessible sources were found for an OpenCode Zen draft")
+        _set_progress(build_id, active=False, stage="error", stage_label="No sources found", error="No accessible sources were found for a local draft")
+        raise ZenArticleUnavailable("No accessible sources were found for a local draft")
 
     source_quality = evaluate_source_quality(all_candidates, prompt, gate=THOROUGH_SOURCE_GATE)
     source_quality["ranking"] = ranked_source_meta
@@ -1403,8 +1449,8 @@ def _thorough_article_from_prompt(prompt: str, limit: int = 50, use_zen: bool = 
         if max(len(c.get("clean_text", "") or ""), len(c.get("raw_text", "") or "")) >= THOROUGH_SOURCE_GATE.min_text_chars
     ]
     if source_quality["failed_gates"] and len(with_text) < 3:
-        _set_progress(build_id, active=False, stage="error", stage_label="Too few sources found", error="Source coverage did not meet the quality gate for an OpenCode Zen article")
-        raise ZenArticleUnavailable("Source coverage did not meet the quality gate for an OpenCode Zen article")
+        _set_progress(build_id, active=False, stage="error", stage_label="Too few sources found", error="Source coverage did not meet the quality gate for a local article")
+        raise ZenArticleUnavailable("Source coverage did not meet the quality gate for a local article")
 
     # Keep processing bounded — richest text first.
     all_candidates = sorted(
@@ -1428,8 +1474,8 @@ def _thorough_article_from_prompt(prompt: str, limit: int = 50, use_zen: bool = 
         processed = [a for a in processed if a]
 
     if not processed:
-        _set_progress(build_id, active=False, stage="error", stage_label="Processing failed", error="Source processing failed before OpenCode Zen could write an article")
-        raise ZenArticleUnavailable("Source processing failed before OpenCode Zen could write an article")
+        _set_progress(build_id, active=False, stage="error", stage_label="Processing failed", error="Source processing failed before local generation")
+        raise ZenArticleUnavailable("Source processing failed before local generation")
 
     cluster_id = queries.create_cluster(prompt, [int(a["id"]) for a in processed])
     cluster_claims = queries.get_cluster_claims(cluster_id)
@@ -1448,7 +1494,7 @@ def _thorough_article_from_prompt(prompt: str, limit: int = 50, use_zen: bool = 
     _set_progress(
         build_id,
         stage="writing",
-        stage_label=f"Found {len(supported)} corroborated claims — Zen synthesizing article…",
+        stage_label=f"Found {len(supported)} corroborated claims — local writer generating article…",
     )
 
     queries.replace_consensus_claims(cluster_id, consensus)
@@ -1464,16 +1510,5 @@ def _thorough_article_from_prompt(prompt: str, limit: int = 50, use_zen: bool = 
         build_id=build_id,
     )
     article["buildId"] = build_id
-    queries.save_generated_article(article)
 
-    _set_progress(
-        build_id,
-        active=False,
-        stage="done",
-        stage_label="Done",
-        article=article,
-        draft_text="",
-        draft_headline="",
-        error=None,
-    )
     return article

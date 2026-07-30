@@ -4,7 +4,6 @@ import re
 import time
 import uuid
 import logging
-import threading
 from collections import defaultdict, deque
 from secrets import compare_digest
 
@@ -14,12 +13,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request
 from app.db import queries
 from app.config import settings
 from app.policy.prompt_filter import prompt_is_blocked
-from app.processing.article_writer import (
-    ZenArticleUnavailable,
-    write_article_from_prompt,
-    get_build_progress,
-    set_build_progress,
-)
+from app.processing.article_writer import get_build_progress, set_build_progress
 
 
 from app.x.models import XCandidate
@@ -173,41 +167,6 @@ def _reject_blocked_prompt(prompt: str) -> None:
         )
 
 
-def _write_zen_article(prompt: str, *, limit: int, mode: str, build_id: str) -> dict:
-    started = time.monotonic()
-    try:
-        article = write_article_from_prompt(prompt, limit=limit, mode=mode, build_id=build_id)
-        logger.info(
-            "Zen article generated",
-            extra={
-                "build_id": build_id,
-                "mode": mode,
-                "duration_ms": int((time.monotonic() - started) * 1000),
-                "source_count": article.get("sourceCount", 0),
-                "prompt_length": len(prompt or ""),
-            },
-        )
-        return article
-    except ZenArticleUnavailable as exc:
-        logger.warning(
-            "Zen article unavailable",
-            extra={
-                "build_id": build_id,
-                "mode": mode,
-                "duration_ms": int((time.monotonic() - started) * 1000),
-                "prompt_length": len(prompt or ""),
-                "reason": str(exc),
-            },
-        )
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "code": "zen_article_unavailable",
-                "message": str(exc) or "OpenCode Zen could not write an article from the available sources.",
-            },
-        ) from exc
-
-
 def _resolve_optional_owner_user_id(user_id: int | None, authorization: str = "") -> int | None:
     if user_id is None:
         return None
@@ -285,22 +244,10 @@ def _editorial_follow_ups(payload: FollowUpRequest, limit: int) -> list[str]:
 def article_follow_ups(payload: FollowUpRequest):
     """
     Follow-up search recommendations for the article reader.
-    Prefers LLM-generated exploration angles; falls back to editorial angles.
+    Uses deterministic editorial templates so generation capacity stays reserved
+    for complete articles.
     """
     limit = min(max(payload.limit, 1), 8)
-    try:
-        from app.llm.zen_writer import suggest_follow_up_prompts_with_zen
-        llm_prompts = suggest_follow_up_prompts_with_zen(
-            topic=payload.prompt,
-            headline=payload.headline,
-            dek=payload.dek,
-            body_paragraphs=payload.body[:6],
-            max_prompts=limit,
-        )
-    except Exception:
-        llm_prompts = None
-    if llm_prompts:
-        return {"prompts": llm_prompts[:limit], "source": "llm"}
     return {"prompts": _editorial_follow_ups(payload, limit), "source": "editorial"}
 
 
@@ -315,28 +262,54 @@ def article_build_progress(
 
 @router.get("/articles/test-zen")
 def test_zen():
-    """Quick diagnostic — makes one minimal OpenCode Zen call and returns the result."""
-    from app.llm.zen_writer import get_last_zen_error, write_article_with_zen
-    result = write_article_with_zen(
-        "test",
-        [{
-            "source_name": "Test",
-            "title": "Signal diagnostic test",
-            "raw_text": (
-                "This diagnostic source says Signal is checking whether OpenCode Zen "
-                "can generate a short neutral article from supplied source material. "
-                "The response should mention only this test and avoid adding outside facts."
-            ),
-        }],
-    )
+    """Deprecated route name for a minimal local-writer diagnostic."""
+    from app.llm.article_generator import generate_article_package
+    source_text = (
+        "Signal is checking whether the local writer can generate a short neutral "
+        "article from supplied source material without adding outside facts. "
+    ) * 5
+    try:
+        result = generate_article_package(
+            "Signal local writer diagnostic",
+            [
+                {
+                    "source_name": "Diagnostic A",
+                    "title": "Signal tests local article generation",
+                    "url": "https://example.com/diagnostic-a",
+                    "raw_text": source_text,
+                },
+                {
+                    "source_name": "Diagnostic B",
+                    "title": "Independent diagnostic confirms local writer test",
+                    "url": "https://example.org/diagnostic-b",
+                    "raw_text": source_text,
+                },
+                {
+                    "source_name": "Diagnostic C",
+                    "title": "Local writer diagnostic uses bounded source material",
+                    "url": "https://example.net/diagnostic-c",
+                    "raw_text": source_text,
+                },
+                {
+                    "source_name": "Diagnostic D",
+                    "title": "Schema-constrained article generation diagnostic",
+                    "url": "https://iana.org/help/diagnostic-d",
+                    "raw_text": source_text,
+                },
+            ],
+            mode="fast",
+        )
+        error = None
+    except Exception as exc:
+        result = None
+        error = str(exc)
     return {
-        "opencode_key_set": bool(settings.opencode_api_key),
-        "model": settings.opencode_model,
-        "gemini_fallback_key_set": bool(settings.gemini_api_key),
-        "gemini_fallback_model": settings.gemini_model,
+        "provider": settings.llm_provider,
+        "base_url": settings.llm_base_url,
+        "model": settings.llm_model,
         "result": result,
         "success": result is not None,
-        "error": None if result else get_last_zen_error(),
+        "error": error,
     }
 
 
@@ -397,7 +370,7 @@ def purge_legacy_generated_articles(
     return queries.purge_legacy_generated_articles(limit=min(max(limit, 1), 5000))
 
 
-@router.post("/articles/generate-from-trend")
+@router.post("/articles/generate-from-trend", status_code=202)
 def generate_from_trend(
     request: Request,
     payload: TrendArticleRequest,
@@ -407,18 +380,23 @@ def generate_from_trend(
     _require_signal_agent_token(x_signal_token=x_signal_token, authorization=authorization)
     _check_article_rate_limit(_client_rate_key(request, "generate-from-trend"))
     _reject_blocked_prompt(payload.prompt)
-    build_id = f"build-{uuid.uuid4().hex}"
-    article = _write_zen_article(payload.prompt, limit=payload.limit, mode=payload.mode, build_id=build_id)
-    article["buildId"] = build_id
-    article["source"] = payload.source
-    article["trendUrl"] = payload.trend_url
-    article["tag"] = payload.tag
-    article["ownerUserId"] = _resolve_optional_owner_user_id(payload.user_id, authorization)
-    queries.save_generated_article(article)
-    return article
+    owner_user_id = _resolve_optional_owner_user_id(payload.user_id, authorization)
+    job = queries.enqueue_article_generation_job(
+        payload.prompt,
+        mode=payload.mode,
+        priority=10,
+        payload={
+            "limit": payload.limit,
+            "source": payload.source,
+            "trendUrl": payload.trend_url,
+            "tag": payload.tag,
+            "ownerUserId": owner_user_id,
+        },
+    )
+    return {"buildId": job["id"], "status": job["status"], "active": job["status"] != "saved"}
 
 
-@router.post("/agents/x/article-reply")
+@router.post("/agents/x/article-reply", status_code=202)
 def generate_x_article_reply(
     request: Request,
     payload: XTrendArticleRequest,
@@ -460,114 +438,55 @@ def generate_x_article_reply(
         except Exception:
             logger.info("X lookup enrichment skipped for article-reply", exc_info=True)
 
-    def _writer(prompt: str, limit: int, mode: str, build_id: str) -> dict:
-        return write_article_from_prompt(prompt, limit=limit, mode=mode, build_id=build_id)
-
-    package = write_article_for_candidate(
-        candidate,
+    prompt_seed = re.sub(r"\s+", " ", candidate.prompt or "").strip()[:240].rstrip()
+    if prompt_seed and _is_specific_x_prompt(prompt_seed):
+        prompt = prompt_seed
+    else:
+        try:
+            prompt = build_prompt(candidate.topic, candidate.snippet, candidate.prompt)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    _reject_blocked_prompt(prompt)
+    job = queries.enqueue_article_generation_job(
+        prompt,
         mode=payload.mode,
-        limit=payload.limit,
-        write_fn=_writer,
+        priority=80,
+        payload={
+            "limit": payload.limit,
+            "source": payload.source,
+            "trendUrl": candidate.trend_url,
+            "tag": payload.tag,
+            "xPostId": candidate.post_id,
+        },
     )
-    if package.status == "ready_to_post":
-        package = maybe_share_package(
-            package,
-            dry_run=payload.dry_run,
-            auto_post=bool(payload.auto_post) if payload.auto_post is not None else False,
-        )
-    body = package.to_dict()
-    if body.get("status") in {"blocked", "skipped", "error"} and not body.get("article"):
-        code = 422 if body.get("status") in {"blocked", "skipped"} else 503
-        raise HTTPException(
-            status_code=code,
-            detail={
-                "code": body.get("status"),
-                "message": body.get("error") or "X article reply failed",
-            },
-        )
     return {
-        "status": body.get("status") or "ready_to_post",
-        "article": body.get("article") or {},
-        "articleUrl": body.get("article_url") or "",
-        "replyText": body.get("reply_text") or "",
-        "trendUrl": body.get("trend_url") or payload.trend_url,
-        "share": body.get("share") or {},
-        "candidate": body.get("candidate") or {},
+        "buildId": job["id"],
+        "status": job["status"],
+        "active": job["status"] not in {"saved", "failed"},
+        "trendUrl": candidate.trend_url,
+        "candidate": candidate.to_dict(),
     }
 
 
-@router.post("/articles/write")
+@router.post("/articles/write", status_code=202)
 def write_article(request: Request, payload: TrendArticleRequest, authorization: str = Header(default="")):
     _check_article_rate_limit(_client_rate_key(request, "write"))
     _reject_blocked_prompt(payload.prompt)
-    build_id = f"build-{uuid.uuid4().hex}"
     owner_user_id = _resolve_optional_owner_user_id(payload.user_id, authorization)
-
-    if not payload.async_mode:
-        article = _write_zen_article(payload.prompt, limit=payload.limit, mode=payload.mode, build_id=build_id)
-        article["buildId"] = build_id
-        article["ownerUserId"] = owner_user_id
-        queries.save_generated_article(article)
-        return article
-
-    set_build_progress(
-        build_id,
-        active=True,
-        prompt=payload.prompt,
-        stage="fetching",
-        stage_label="Queued for sourcing...",
-        sources_found=0,
-        sources_enriched=0,
-        claims_extracted=0,
-        draft_text="",
-        draft_headline="",
-        article=None,
-        error=None,
-        started_at=time.time(),
+    job = queries.enqueue_article_generation_job(
+        payload.prompt,
+        mode=payload.mode,
+        priority=100,
+        payload={
+            "limit": payload.limit,
+            "source": payload.source,
+            "trendUrl": payload.trend_url,
+            "tag": payload.tag,
+            "ownerUserId": owner_user_id,
+        },
     )
-
-    def _job() -> None:
-        try:
-            article = _write_zen_article(
-                payload.prompt,
-                limit=payload.limit,
-                mode=payload.mode,
-                build_id=build_id,
-            )
-            article["buildId"] = build_id
-            article["ownerUserId"] = owner_user_id
-            queries.save_generated_article(article)
-            set_build_progress(
-                build_id,
-                active=False,
-                stage="done",
-                stage_label="Done",
-                article=article,
-                draft_text="\n\n".join(article.get("body") or []),
-                draft_headline=article.get("headline") or "",
-                error=None,
-            )
-        except HTTPException as exc:
-            detail = exc.detail if isinstance(exc.detail, dict) else {"message": str(exc.detail)}
-            message = str(detail.get("message") or detail)
-            set_build_progress(
-                build_id,
-                active=False,
-                stage="error",
-                stage_label="Write failed",
-                error=message,
-                article=None,
-            )
-        except Exception as exc:
-            logger.exception("Async article write failed", extra={"build_id": build_id})
-            set_build_progress(
-                build_id,
-                active=False,
-                stage="error",
-                stage_label="Write failed",
-                error=str(exc) or "Article write failed",
-                article=None,
-            )
-
-    threading.Thread(target=_job, daemon=True, name=f"article-write-{build_id[:10]}").start()
-    return {"buildId": build_id, "status": "building", "active": True}
+    return {
+        "buildId": job["id"],
+        "status": job["status"],
+        "active": job["status"] not in {"saved", "failed"},
+    }

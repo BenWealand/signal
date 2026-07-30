@@ -234,7 +234,7 @@ def _section_prompts(section: str, count: int) -> list[str]:
 
 
 def _generate_fast_section_articles(section: str, count: int | None = None) -> None:
-    """Generate shared fast-mode section articles and save them to the DB."""
+    """Queue shared fast-mode section articles for the durable writer."""
     slug = _normalize_section_slug(section)
     if slug not in SECTION_PROMPTS:
         return
@@ -244,11 +244,17 @@ def _generate_fast_section_articles(section: str, count: int | None = None) -> N
         if queries.generated_prompt_exists_recent(prompt, settings.section_fast_min_age_minutes):
             continue
         try:
-            article = write_article_from_prompt(prompt, limit=10, use_zen=True, mode="fast")
-            article["section"] = slug
-            article["source"] = "Signal desk"
-            article["tag"] = "fast-draft"
-            queries.save_generated_article(article)
+            queries.enqueue_article_generation_job(
+                prompt,
+                mode="fast",
+                priority=0,
+                payload={
+                    "limit": 10,
+                    "source": "Signal desk",
+                    "tag": "fast-draft",
+                    "section": slug,
+                },
+            )
             generated += 1
             if generated >= target_count:
                 break

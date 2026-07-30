@@ -23,9 +23,20 @@ class Settings:
     supabase_url: str = os.getenv("SUPABASE_URL", "")
     supabase_service_role_key: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
     supabase_jwt_secret: str = os.getenv("SUPABASE_JWT_SECRET", "")
-    openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
-    # OpenCode Zen is the primary LLM provider. Gemini is configured separately
-    # below and is used only when Zen is unavailable.
+    # Deprecated VM-only settings below are not used by the article worker or
+    # any deterministic ancillary operation.
+    llm_provider: str = os.getenv("SIGNAL_LLM_PROVIDER", "llamacpp")
+    llm_base_url: str = os.getenv("SIGNAL_LLM_BASE_URL", "http://127.0.0.1:8080/v1")
+    llm_model: str = os.getenv("SIGNAL_LLM_MODEL", "signal-writer")
+    llm_api_key: str = os.getenv("SIGNAL_LLM_API_KEY", "no-key")
+    llm_timeout_seconds: float = float(os.getenv("SIGNAL_LLM_TIMEOUT_SECONDS", "600"))
+    llm_max_concurrency: int = int(os.getenv("SIGNAL_LLM_MAX_CONCURRENCY", "1"))
+    llm_fast_max_tokens: int = int(os.getenv("SIGNAL_LLM_FAST_MAX_TOKENS", "950"))
+    llm_thorough_max_tokens: int = int(os.getenv("SIGNAL_LLM_THOROUGH_MAX_TOKENS", "1600"))
+    llm_emergency_max_tokens: int = int(os.getenv("SIGNAL_LLM_EMERGENCY_MAX_TOKENS", "2200"))
+    llm_temperature: float = float(os.getenv("SIGNAL_LLM_TEMPERATURE", "0.15"))
+    llm_top_p: float = float(os.getenv("SIGNAL_LLM_TOP_P", "0.9"))
+    # Legacy VM compatibility only.
     opencode_api_key: str = (
         os.getenv("OPENCODE_API_KEY")
         or os.getenv("ZEN_API_KEY")
@@ -45,16 +56,13 @@ class Settings:
     cors_origin_regex: str = os.getenv("CORS_ORIGIN_REGEX", "")
     prompt_blacklist: str = os.getenv("PROMPT_BLACKLIST", "")
     prompt_blacklist_regex: str = os.getenv("PROMPT_BLACKLIST_REGEX", "")
-    claim_model: str = os.getenv("CLAIM_MODEL", "gpt-4o-mini")
-    summary_model: str = os.getenv("SUMMARY_MODEL", "gpt-4o-mini")
-    # OpenCode Zen model ids (OpenAI-compatible chat completions).
+    # Legacy VM compatibility model ids.
     opencode_model: str = (
         os.getenv("OPENCODE_MODEL")
         or os.getenv("ZEN_MODEL")
         or "deepseek-v4-flash"
     )
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
-    use_llm_claims: bool = os.getenv("USE_LLM_CLAIMS", "false").lower() == "true"
     auto_ingest_on_startup: bool = os.getenv("SIGNAL_AUTO_INGEST_ON_STARTUP", "false").lower() == "true"
     periodic_rss: bool = os.getenv("SIGNAL_PERIODIC_RSS", "false").lower() == "true"
     embedding_warmup_on_startup: bool = os.getenv("SIGNAL_EMBEDDING_WARMUP_ON_STARTUP", "false").lower() == "true"

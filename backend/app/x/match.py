@@ -3,11 +3,13 @@ from __future__ import annotations
 """Match pasted X post URLs to already-written Signal articles."""
 
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 from app.db import queries
 from app.x.client import get_x_client, status_id_from_url
 from app.x.reply import article_public_url, share_intent_url, x_reply_text
+from app.nlp.ner import extract_entities
 
 _URL_RE = re.compile(
     r"https?://(?:www\.|mobile\.)?(?:x\.com|twitter\.com)/[^\s]+/status/\d+[^\s]*",
@@ -62,6 +64,8 @@ def _article_catalog(articles: list[dict[str, Any]]) -> list[dict[str, str]]:
                 "dek": str(article.get("dek") or "").strip()[:240],
                 "section": str(article.get("section") or "latest"),
                 "preview": body_preview[:280],
+                "source": str(article.get("source") or ""),
+                "createdAt": str(article.get("createdAt") or ""),
             }
         )
     return catalog
@@ -92,15 +96,46 @@ def _fallback_matches(
     used: set[str] = set()
     matches: list[dict[str, Any]] = []
     for post in posts:
-        post_text = " ".join(
-            part for part in [post.get("text") or "", post.get("topic") or "", post.get("author") or ""] if part
-        )
+        post_text = " ".join(part for part in [post.get("text") or "", post.get("topic") or ""] if part)
+        post_entities = {
+            str(entity.get("text") or "").strip().lower()
+            for entity in extract_entities(post_text)
+            if str(entity.get("type") or "").upper() in {"PERSON", "ORG", "GPE", "EVENT", "PRODUCT"}
+        }
+        author = str(post.get("author") or "").strip().lstrip("@").lower()
         best = None
         best_score = 0.0
         for item in catalog:
             if item["id"] in used:
                 continue
-            score = _keyword_score(post_text, f"{item['headline']} {item['dek']} {item['preview']}")
+            headline_score = _keyword_score(post_text, item["headline"])
+            supporting_score = _keyword_score(post_text, f"{item['dek']} {item['preview']}")
+            article_entities = {
+                str(entity.get("text") or "").strip().lower()
+                for entity in extract_entities(f"{item['headline']} {item['dek']}")
+                if str(entity.get("type") or "").upper() in {"PERSON", "ORG", "GPE", "EVENT", "PRODUCT"}
+            }
+            entity_overlap = len(post_entities & article_entities)
+            exact_entity_bonus = 0.24 if entity_overlap else 0.0
+            if entity_overlap >= 2:
+                exact_entity_bonus += 0.14
+            author_bonus = 0.0
+            if author and author in f"{item['headline']} {item['dek']} {item['source']}".lower():
+                author_bonus = 0.12
+            recency_bonus = 0.0
+            try:
+                created = datetime.fromisoformat(item["createdAt"].replace("Z", "+00:00"))
+                age_hours = max(0.0, (datetime.now(timezone.utc) - created).total_seconds() / 3600)
+                recency_bonus = max(0.0, 0.12 * (1.0 - age_hours / 168.0))
+            except (TypeError, ValueError):
+                pass
+            score = (
+                headline_score * 0.58
+                + supporting_score * 0.22
+                + exact_entity_bonus
+                + author_bonus
+                + recency_bonus
+            )
             if score > best_score:
                 best_score = score
                 best = item
@@ -111,7 +146,7 @@ def _fallback_matches(
                     "postId": post["postId"],
                     "articleId": best["id"],
                     "confidence": round(min(0.85, best_score + 0.2), 2),
-                    "reason": "keyword overlap fallback",
+                    "reason": "deterministic headline, entity, author, and recency score",
                 }
             )
         else:
@@ -133,7 +168,7 @@ def match_x_urls_to_articles(
     article_limit: int = 80,
 ) -> dict[str, Any]:
     """
-    Resolve pasted X URLs, load recent ready articles, and match with OpenCode Zen.
+    Resolve pasted X URLs, load recent ready articles, and match deterministically.
 
     Returns rows ready for the admin terminal to view / reply / post.
     """
@@ -176,20 +211,8 @@ def match_x_urls_to_articles(
     catalog = _article_catalog(articles)
     article_by_id = {str(article.get("id")): article for article in articles}
 
-    zen_matches = None
-    source = "fallback"
-    if catalog and any(post.get("text") for post in posts):
-        try:
-            from app.llm.zen_writer import match_x_posts_to_articles_with_zen
-
-            zen_matches = match_x_posts_to_articles_with_zen(posts, catalog)
-        except Exception:
-            zen_matches = None
-    if zen_matches is not None:
-        source = "zen"
-        raw_matches = zen_matches
-    else:
-        raw_matches = _fallback_matches(posts, articles)
+    source = "deterministic"
+    raw_matches = _fallback_matches(posts, articles)
 
     match_by_post = {str(item.get("postId") or ""): item for item in raw_matches}
     rows: list[dict[str, Any]] = []

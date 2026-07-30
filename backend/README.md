@@ -82,11 +82,16 @@ Use the connection string for your own Supabase region/project.
 
 ```env
 PUBLIC_ARTICLE_BASE_URL=http://127.0.0.1:5175
-OPENCODE_MODEL=deepseek-v4-flash
-GEMINI_MODEL=gemini-flash-latest
-CLAIM_MODEL=gpt-4o-mini
-SUMMARY_MODEL=gpt-4o-mini
-USE_LLM_CLAIMS=false
+SIGNAL_LLM_PROVIDER=llamacpp
+SIGNAL_LLM_BASE_URL=http://127.0.0.1:8080/v1
+SIGNAL_LLM_MODEL=signal-writer
+SIGNAL_LLM_API_KEY=no-key
+SIGNAL_LLM_TIMEOUT_SECONDS=600
+SIGNAL_LLM_MAX_CONCURRENCY=1
+SIGNAL_LLM_FAST_MAX_TOKENS=950
+SIGNAL_LLM_THOROUGH_MAX_TOKENS=1600
+SIGNAL_LLM_TEMPERATURE=0.15
+SIGNAL_LLM_TOP_P=0.9
 PROMPT_BLACKLIST=
 PROMPT_BLACKLIST_REGEX=
 SIGNAL_ARTICLE_IMAGES=true
@@ -94,20 +99,37 @@ SIGNAL_ARTICLE_IMAGE_TIMEOUT=16
 SIGNAL_ARTICLE_IMAGE_WAIT=8
 ```
 
+## Local Writer Architecture
+
+Ministral through llama.cpp is Signal's only generative provider. Claims,
+summaries, follow-ups, image queries, X prompt cleanup, consensus, and
+X-to-article matching are deterministic. Each article uses one schema-constrained
+generation call, with one retry only for a transport or schema failure.
+
+Generation endpoints return HTTP `202` and a `buildId`. Jobs persist in
+`article_generation_jobs`; the frontend polls
+`GET /articles/progress?buildId=...`. Run exactly one writer process:
+
+```bash
+cd backend
+python -m app.jobs.article_worker
+```
+
+The worker saves the article before it performs deterministic Openverse lookup,
+so image latency does not delay publication.
+
 Article images use Openverse's anonymous API to select one relevant, openly
-licensed raster image. After the article finishes writing, OpenCode Zen reads the
-finished story and proposes its top 5 photographic search ideas (ranked by
-relevance). Signal then tries those ideas against Openverse, with a longer
-timeout before publishing with no image. An optional warm-up may start from the
-prompt while writing, but the finished-article Zen pass is authoritative.
+licensed raster image. After the worker publishes the article, Signal derives
+concrete photographic queries from deterministic named-entity extraction and
+attaches a matching image when one is available.
 Auto-generated desk/section articles use the same path: when the internal topic
 is a broad keyword bag, warm-up uses concrete source headlines or waits for the
 finished article. Queries must be concrete — named people first, then named
 teams, products, events, or objects — never broad topic phrases like "economy",
 "interest rates", or a bare country name. Countries/cities are expanded into
 concrete visuals such as flags, national teams, or leaders. Mid-stream draft text
-is not used for Openverse searches. Lookups prefer Zen's finished-article
-ideas, then named entities in order: person, event, organization, place (GPE),
+is not used for Openverse searches. Lookups prefer named entities in order:
+person, event, organization, place (GPE),
 product, law, then date. Candidates are kept when their titles align with the
 article text, or when the title contains an exact article entity (person, event,
 organization, place, product, or law) even with extra filler words. Bare
@@ -127,9 +149,6 @@ Prompt filtering:
 ## Optional Provider Keys
 
 ```env
-OPENCODE_API_KEY=
-GEMINI_API_KEY=
-OPENAI_API_KEY=
 NEWS_API_KEY=
 CURRENTS_API_KEY=
 GNEWS_API_KEY=
@@ -141,11 +160,9 @@ GDELT_QUERIES=
 
 Behavior:
 
-- OpenCode Zen is always attempted first when `OPENCODE_API_KEY` is configured.
-- A Zen request failure, empty response, or local Zen rate limit falls back to Gemini when `GEMINI_API_KEY` is configured.
-- If neither Zen nor Gemini can complete the request, generated article writes fail without saving an article.
-- No OpenAI key: local claim extraction is used.
-- `USE_LLM_CLAIMS=false`: OpenAI is not used for claim extraction.
+- The local llama.cpp endpoint is the only generative provider.
+- Generated article writes fail without saving when local transport/schema validation fails twice.
+- Claim extraction is always deterministic.
 - No paid/news provider keys: RSS, Bing News RSS, and GDELT still provide candidates.
 
 ## Agent / X Integration
@@ -289,11 +306,11 @@ Signal is wired to spend money late:
 3. Deduplicate by URL, normalized title, source, and title similarity.
 4. Clean article text.
 5. Extract entities with spaCy when installed or a fallback otherwise.
-6. Extract claims with local rules by default.
-7. Optionally enable LLM claim extraction with `USE_LLM_CLAIMS=true`.
-8. Compare claims locally first.
-9. Use OpenCode Zen for final prose.
-10. Fail the write without saving an article when Zen cannot produce a usable draft.
+6. Extract claims and compare source support with deterministic local rules.
+7. Rank prompt variants and select four to six independent source domains.
+8. Enqueue the prepared job and serialize generation through the local worker.
+9. Use one schema-constrained local Ministral call for the complete article.
+10. Fail the job without saving an article when local generation is unavailable.
 
 ## Tests
 
@@ -302,7 +319,9 @@ cd backend
 python -m unittest discover tests
 ```
 
-The existing test suite covers agent access, article parsing, source ranking/filtering, prompt article metadata, Zen-only prompt writes, claim extraction, text cleaning, and consensus grouping.
+The existing test suite covers agent access, article parsing, source ranking and
+filtering, durable generation jobs, schema-constrained local generation, bounded
+retry behavior, claim extraction, text cleaning, and consensus grouping.
 
 ## Troubleshooting
 
@@ -316,11 +335,15 @@ The API started, but startup table creation failed. Check backend logs and datab
 
 Article generation finds too few sources
 
-Try a more specific prompt, add optional provider keys, or wait for RSS/GDELT availability. The writer now fails without saving an article when source coverage is not strong enough for a Zen draft.
+Try a more specific prompt, add optional discovery-provider keys, or wait for
+RSS/GDELT availability. The writer fails without saving an article when source
+coverage is not strong enough for a supported local draft.
 
-OpenCode Zen does not write articles
+The local writer does not write articles
 
-Check `OPENCODE_API_KEY`, `OPENCODE_MODEL`, `/articles/test-zen`, and rate limits. Prompt and section article generation now require a usable Zen draft.
+Check `SIGNAL_LLM_BASE_URL`, `SIGNAL_LLM_MODEL`, the article-worker logs, and the
+deprecated compatibility diagnostic `/articles/test-zen`. Confirm the local
+llama.cpp server supports OpenAI-compatible chat completions and JSON schema.
 
 ML packages are slow or fail to install
 

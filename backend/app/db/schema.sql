@@ -113,9 +113,27 @@ CREATE TABLE IF NOT EXISTS generated_articles (
   used_live_sources SMALLINT DEFAULT 0,
   fallback_reason TEXT DEFAULT '',
   image TEXT DEFAULT '{}',
+  source_fingerprint TEXT DEFAULT '',
   section TEXT DEFAULT '',
   status TEXT DEFAULT 'published',
   created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS article_generation_jobs (
+  id TEXT PRIMARY KEY,
+  prompt TEXT NOT NULL,
+  normalized_prompt TEXT NOT NULL,
+  mode TEXT NOT NULL CHECK (mode IN ('fast', 'thorough')),
+  status TEXT NOT NULL DEFAULT 'queued'
+    CHECK (status IN ('queued', 'sourcing', 'ready_for_generation', 'generating', 'saved', 'failed')),
+  priority INTEGER NOT NULL DEFAULT 0,
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  article_id TEXT REFERENCES generated_articles(id) ON DELETE SET NULL,
+  error TEXT DEFAULT '',
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS x_article_shares (
@@ -233,6 +251,14 @@ CREATE INDEX IF NOT EXISTS idx_entities_text ON entities(entity_text);
 CREATE INDEX IF NOT EXISTS idx_claims_article ON claims(article_id);
 CREATE INDEX IF NOT EXISTS idx_consensus_cluster ON consensus_claims(story_cluster_id);
 CREATE INDEX IF NOT EXISTS idx_generated_articles_created ON generated_articles(created_at);
+CREATE INDEX IF NOT EXISTS idx_generated_articles_source_fingerprint
+  ON generated_articles(source_fingerprint, created_at DESC)
+  WHERE source_fingerprint <> '';
+CREATE INDEX IF NOT EXISTS idx_article_generation_jobs_queue
+  ON article_generation_jobs(priority DESC, created_at ASC)
+  WHERE status = 'queued';
+CREATE INDEX IF NOT EXISTS idx_article_generation_jobs_prompt
+  ON article_generation_jobs(normalized_prompt, finished_at DESC);
 CREATE INDEX IF NOT EXISTS idx_generated_articles_owner ON generated_articles(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_generated_articles_source ON generated_articles(source);
 CREATE INDEX IF NOT EXISTS idx_x_article_shares_article_created

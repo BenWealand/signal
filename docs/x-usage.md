@@ -16,7 +16,7 @@ Canonical agent playbook for a single post: [`x-trend-agent.md`](./x-trend-agent
 | Find posts | Recent search + desk-topic seeding (`POST /agents/x/search`, `/run`) | Set `X_API_BEARER_TOKEN` |
 | Resolve a post URL | `POST /agents/x/lookup` | Bearer token |
 | Decide if it's worth covering | `app/x/filter.py` + prompt blacklist | Optional: tighten filter |
-| Write a sourced article | OpenCode Zen + news providers (not the tweet body) | `OPENCODE_API_KEY` |
+| Write a sourced article | Durable queue + local Ministral + news providers (not the tweet body) | `SIGNAL_LLM_BASE_URL` |
 | Keep it on a frontend link | Postgres + `/article/<id>` (Supabase-fast load) | `PUBLIC_ARTICLE_BASE_URL` |
 | Build reply / share text | Promote draft: 2 lines + half of 3rd + `…` + article URL | — |
 | Post / reply on X | Live OAuth 1.0a `post_tweet` (dry-run by default) | Write tokens + `SIGNAL_X_DRY_RUN` |
@@ -72,7 +72,8 @@ Trends API is **not** used. X/Twitter URLs are never scraped as article sources.
 # Already required for agents
 SIGNAL_API_TOKEN=long-random-secret
 PUBLIC_ARTICLE_BASE_URL=https://signal-mocha-three.vercel.app
-OPENCODE_API_KEY=...
+SIGNAL_LLM_BASE_URL=http://127.0.0.1:8080/v1
+SIGNAL_LLM_MODEL=signal-writer
 DATABASE_URL=...
 
 # X credentials — set these when you wire the API (optional until then)
@@ -163,11 +164,11 @@ Success shape:
 
 **Do not share until `status` is `ready_to_post` (or `shared`).**
 
-Zen requirement: X promote/write uses the same `write_article_from_prompt`
-path as regular article generation. Both require a usable Zen draft
-(`require_zen=True`). There is no stricter X-only gate — if Zen cannot
-return a package with a usable body, both surfaces fail with
-`OpenCode Zen did not return a usable article draft` / `zen_article_unavailable`.
+Local-writer requirement: X promote/write and regular article generation both
+enqueue the same durable generation jobs. Source selection and matching happen
+deterministically before the worker makes one schema-constrained local Ministral
+call. If the local writer cannot return a valid package, the job is marked
+failed and no article is saved.
 
 ### 5. Full automation — `POST /agents/x/run`
 
