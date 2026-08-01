@@ -268,6 +268,12 @@ def enqueue_article_for_candidate(
             "trendUrl": candidate.trend_url,
             "tag": candidate.tag or "x-trend",
             "xPostId": candidate.post_id,
+            "sourcePolicy": "x_response",
+            "xSource": {
+                "url": candidate.trend_url,
+                "text": candidate.snippet,
+                "authorHandle": candidate.author_handle,
+            },
         },
     )
     return XSharePackage(

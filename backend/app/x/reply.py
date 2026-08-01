@@ -104,7 +104,22 @@ def _draft_teaser_lines(article: dict) -> list[str]:
     return [line for line in lines if line]
 
 
-def x_reply_text(article: dict, article_url: str) -> str:
+def _normalize_hashtags(hashtags: list[str] | None) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for raw in hashtags or []:
+        match = re.fullmatch(r"#?[A-Za-z0-9_]{1,50}", str(raw or "").strip())
+        if not match:
+            continue
+        tag = "#" + match.group(0).lstrip("#")
+        if tag.lower() in seen:
+            continue
+        seen.add(tag.lower())
+        result.append(tag)
+    return result[:5]
+
+
+def x_reply_text(article: dict, article_url: str, hashtags: list[str] | None = None) -> str:
     """
     Promote draft for X:
 
@@ -115,33 +130,40 @@ def x_reply_text(article: dict, article_url: str) -> str:
       {article_url}
     """
     url = (article_url or "").strip()
+    tag_budget = max(0, X_POST_SOFT_LIMIT - len(url) - 60)
+    selected_tags: list[str] = []
+    for tag in _normalize_hashtags(hashtags):
+        candidate = " ".join([*selected_tags, tag])
+        if len(candidate) > tag_budget:
+            break
+        selected_tags.append(tag)
+    tag_line = " ".join(selected_tags)
     teaser = "\n".join(_draft_teaser_lines(article)).strip()
     if not teaser:
         teaser = "Signal Dispatch"
 
-    if url:
-        text = f"{teaser}\n\n{url}"
-    else:
-        text = teaser
+    footer = "\n\n".join(part for part in (tag_line, url) if part)
+    text = f"{teaser}\n\n{footer}" if footer else teaser
 
     if len(text) <= X_POST_SOFT_LIMIT:
         return text
 
     # Shrink from the teaser bottom up; always keep the share URL.
     lines = teaser.split("\n")
-    while lines and len("\n".join(lines) + (f"\n\n{url}" if url else "")) > X_POST_SOFT_LIMIT:
+    footer_suffix = f"\n\n{footer}" if footer else ""
+    while lines and len("\n".join(lines) + footer_suffix) > X_POST_SOFT_LIMIT:
         last = lines[-1]
         if last.endswith("…") and len(last) > 40:
             lines[-1] = last[: max(28, len(last) - 24)].rstrip(".,;: …") + "…"
         elif len(lines) > 1:
             lines.pop()
         else:
-            budget = X_POST_SOFT_LIMIT - (len(url) + 4 if url else 0)
+            budget = X_POST_SOFT_LIMIT - len(footer_suffix) - 1
             lines[0] = _clean(lines[0], max(40, budget)) + ("…" if budget < len(lines[0]) else "")
             break
 
     teaser = "\n".join(lines).strip() or "Signal Dispatch"
-    return f"{teaser}\n\n{url}" if url else teaser
+    return f"{teaser}{footer_suffix}" if footer else teaser
 
 
 def share_intent_url(

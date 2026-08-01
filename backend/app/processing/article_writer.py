@@ -52,6 +52,11 @@ def get_build_progress(build_id: str | None = None) -> dict:
             job = queries.get_article_generation_job(build_id)
             if job:
                 status = str(job.get("status") or "queued")
+                queue_position = (
+                    queries.article_generation_queue_position(str(job.get("id") or build_id))
+                    if status in {"queued", "sourcing", "ready_for_generation"}
+                    else 0
+                )
                 stage_map = {
                     "queued": ("queued", "Queued for sourcing...", True),
                     "sourcing": ("fetching", "Gathering and scoring sources...", True),
@@ -61,6 +66,8 @@ def get_build_progress(build_id: str | None = None) -> dict:
                     "failed": ("error", "Write failed", False),
                 }
                 stage, label, active = stage_map.get(status, ("queued", status, True))
+                if queue_position > 0 and status in {"queued", "ready_for_generation"}:
+                    label = f"{label.rstrip('.')} (queue position {queue_position})..."
                 article = (
                     queries.get_generated_article(str(job.get("article_id")))
                     if job.get("article_id")
@@ -145,6 +152,52 @@ def _prompt_keywords(prompt: str) -> frozenset[str]:
     )
 
 
+def _prompt_entity_terms(prompt: str) -> list[str]:
+    """Extract concrete entities/events used to reuse today's sourced coverage."""
+    allowed_types = {"PERSON", "ORG", "GPE", "EVENT", "LAW", "PRODUCT"}
+    ignored = {
+        "write", "article", "news", "current", "sourced", "post", "text",
+        "trending", "topic", "signal", "today", "latest", "breaking",
+    }
+    terms: list[str] = []
+    for entity in extract_entities(prompt):
+        value = re.sub(r"\s+", " ", str(entity.get("text") or "")).strip()
+        if (
+            entity.get("type") in allowed_types
+            and len(value) >= 3
+            and value.lower() not in ignored
+            and value.lower() not in terms
+        ):
+            terms.append(value.lower())
+    return terms[:16]
+
+
+def _cache_websearch_query(prompt: str, entity_terms: list[str] | None = None) -> str:
+    """Build a compact, broad-recall query for PostgreSQL web-search syntax."""
+    search_terms: list[str] = []
+    seen: set[str] = set()
+
+    for raw in entity_terms or []:
+        term = re.sub(r"[^a-zA-Z0-9 .'-]+", " ", raw)
+        term = re.sub(r"\s+", " ", term).strip()
+        key = term.lower()
+        if not term or key in seen:
+            continue
+        seen.add(key)
+        search_terms.append(f'"{term}"' if " " in term else term)
+
+    for word in re.findall(r"[a-zA-Z0-9][a-zA-Z0-9'-]{2,}", prompt):
+        key = word.lower()
+        if key in _STOPWORDS or key in seen:
+            continue
+        seen.add(key)
+        search_terms.append(word)
+        if len(search_terms) >= 12:
+            break
+
+    return " OR ".join(search_terms[:12])
+
+
 def _is_mostly_latin(text: str, threshold: float = 0.75) -> bool:
     """Return True if at least `threshold` fraction of letters are Latin (ASCII a-z A-Z)."""
     letters = [c for c in text if c.isalpha()]
@@ -156,9 +209,9 @@ def _is_mostly_latin(text: str, threshold: float = 0.75) -> bool:
 
 def _article_keywords(article: dict) -> frozenset[str]:
     text = (
-        article.get("title", "") + " " +
-        article.get("clean_text", "")[:2000] + " " +
-        article.get("raw_text", "")[:1000]
+        str(article.get("title") or "") + " " +
+        str(article.get("clean_text") or "")[:2000] + " " +
+        str(article.get("raw_text") or "")[:1000]
     ).lower()
     return frozenset(re.findall(r"[a-z]{3,}", text)) - _STOPWORDS
 
@@ -192,8 +245,11 @@ def _is_relevant(article: dict, prompt: str, prompt_kw: frozenset[str]) -> bool:
     if not prompt_kw:
         return True
 
-    title = article.get("title", "").lower()
-    body = (article.get("clean_text", "") + article.get("raw_text", ""))[:2000].lower()
+    title = str(article.get("title") or "").lower()
+    body = (
+        str(article.get("clean_text") or "") + " " +
+        str(article.get("raw_text") or "")
+    )[:2000].lower()
 
     # Tier 1: full phrase in title or body
     if _phrase_in_text(prompt, title) or _phrase_in_text(prompt, body):
@@ -301,15 +357,15 @@ def _cached_articles_for_prompt(prompt: str, limit: int) -> list[dict]:
     Search the DB for articles relevant to this prompt.
 
     Prefer the last 2 days of desk coverage first, then broaden. Search order:
-    1. Full phrase match in recent window
-    2. Full phrase match overall
-    3. Longest meaningful sub-phrases (pairs of adjacent keywords)
-    4. Individual keywords that are ≥6 chars (less noise than short words)
+    1. Exact indexed entity matches from today's coverage
+    2. Weighted indexed full-text matches from the last 48 hours
+    3. Weighted indexed full-text matches across the complete cache
 
     Every candidate is passed through _is_relevant before being added,
     so unrelated articles that happen to contain a common word are dropped.
     """
     prompt_kw = _prompt_keywords(prompt)
+    entity_terms = _prompt_entity_terms(prompt)
     found: dict[int, dict] = {}
 
     def _add(result_list: list) -> None:
@@ -319,13 +375,14 @@ def _cached_articles_for_prompt(prompt: str, limit: int) -> list[dict]:
             article_id = int(result["id"])
             if article_id in found:
                 continue
-            # search() already returns enough fields for Fast mode; avoid a
+            # Search queries return enough fields for Fast mode; avoid a
             # second round-trip when the row already has usable text.
             if result.get("raw_text") or result.get("clean_text") or result.get("description"):
                 candidate = result
             else:
                 candidate = queries.get_article(article_id)
-            if candidate and _is_relevant(candidate, prompt, prompt_kw):
+            entity_match = int(result.get("entity_match_count") or 0) > 0
+            if candidate and (entity_match or _is_relevant(candidate, prompt, prompt_kw)):
                 if not candidate.get("raw_text"):
                     candidate = {
                         **candidate,
@@ -333,34 +390,27 @@ def _cached_articles_for_prompt(prompt: str, limit: int) -> list[dict]:
                     }
                 found[article_id] = candidate
 
-    # 1. Recent desk cache (daily ingest window)
-    _add(queries.search(prompt, days=2, limit=max(limit * 2, 12)))
+    # 1. Reuse today's sourced coverage when it shares concrete entities or events.
+    if entity_terms:
+        _add(queries.search_recent_articles_by_entities(
+            entity_terms,
+            hours=24,
+            limit=max(limit * 3, 18),
+        ))
 
-    # 2. Full phrase across all ages
-    if len(found) < limit:
-        _add(queries.search(prompt, limit=max(limit * 2, 12)))
-
-    if len(found) < limit:
-        words = [w for w in prompt.split() if len(w) >= 4 and w.lower() not in _STOPWORDS]
-
-        # 3. Adjacent-word bigrams  ("supply chain", "chain hack")
-        for i in range(len(words) - 1):
-            bigram = f"{words[i]} {words[i+1]}"
-            _add(queries.search(bigram, days=2, limit=10))
-            if len(found) >= limit:
-                break
-            _add(queries.search(bigram, limit=10))
-            if len(found) >= limit:
-                break
-
-        # 4. Long individual keywords only (≥6 chars reduces noise)
+    # 2. Recent desk cache (daily ingest window)
+    fts_query = _cache_websearch_query(prompt, entity_terms)
+    if fts_query:
+        _add(queries.search_articles_fts(
+            fts_query,
+            hours=48,
+            limit=max(limit * 3, 18),
+        ))
         if len(found) < limit:
-            for term in [w for w in words if len(w) >= 6][:3]:
-                _add(queries.search(term, days=2, limit=8))
-                if len(found) >= limit:
-                    break
-                _add(queries.search(term, limit=8))
-
+            _add(queries.search_articles_fts(
+                fts_query,
+                limit=max(limit * 3, 18),
+            ))
     return list(found.values())[:limit]
 
 
@@ -582,6 +632,7 @@ def _article_body(
     use_gemini: bool | None = None,
     require_gemini: bool | None = None,
     generation_mode: str = "thorough",
+    source_policy: str = "standard",
     build_id: str | None = None,
     on_chunk=None,
 ) -> tuple[list[str], dict[str, str] | None]:
@@ -591,6 +642,7 @@ def _article_body(
             prompt,
             source_articles,
             mode=generation_mode,
+            source_policy=source_policy,
         )
     except Exception as exc:
         raise ZenArticleUnavailable(str(exc) or "Local article generation failed") from exc
@@ -672,6 +724,7 @@ def _article_from_consensus(
     *,
     use_gemini: bool | None = None,
     generation_mode: str = "thorough",
+    source_policy: str = "standard",
     source_quality: dict | None = None,
     used_live_sources: bool = True,
     fallback_reason: str | None = None,
@@ -705,6 +758,7 @@ def _article_from_consensus(
         use_zen=True,
         require_zen=True,
         generation_mode=generation_mode,
+        source_policy=source_policy,
         build_id=build_id,
     )
 
@@ -891,7 +945,12 @@ def _prompt_variants(prompt: str) -> list[str]:
     return deduped[:10]
 
 
-def _source_candidates_for_variant(prompt: str, limit: int, mode: str) -> list[dict]:
+def _source_candidates_for_variant(
+    prompt: str,
+    limit: int,
+    mode: str,
+    min_cached_sources: int = 4,
+) -> list[dict]:
     """Collect cache and live coverage without invoking the article model."""
     candidate_limit = max(4, min(limit, settings.thorough_max_candidates if mode == "thorough" else 12))
     try:
@@ -899,10 +958,18 @@ def _source_candidates_for_variant(prompt: str, limit: int, mode: str) -> list[d
     except Exception:
         logger.exception("Variant cache lookup failed", extra={"prompt": prompt})
         cached = []
+    cached_ranked = _merge_candidates(cached, [], candidate_limit, prompt)
+    cached_domains = {
+        domain_from_url(str(item.get("url") or "")) or str(item.get("source_name") or "")
+        for item in cached_ranked
+    }
+    if len(cached_ranked) >= min_cached_sources and len(cached_domains) >= 2:
+        return cached_ranked
     rss_candidates: list[dict] = []
     gdelt_candidates: list[dict] = []
     timeout = 6.0 if mode == "thorough" else 5.0
-    with ThreadPoolExecutor(max_workers=2) as pool:
+    pool = ThreadPoolExecutor(max_workers=2)
+    try:
         futures = {
             pool.submit(
                 fetch_articles_for_query_fast,
@@ -913,15 +980,24 @@ def _source_candidates_for_variant(prompt: str, limit: int, mode: str) -> list[d
             ): "rss",
             pool.submit(fetch_gdelt_articles, prompt, candidate_limit, 0.15): "gdelt",
         }
-        for future, source in list(futures.items()):
-            try:
-                result = future.result(timeout=timeout + 1) or []
-                if source == "rss":
-                    rss_candidates = result
-                else:
-                    gdelt_candidates = result
-            except Exception:
-                logger.info("Variant live source lookup failed", extra={"source": source, "prompt": prompt})
+        try:
+            completed = as_completed(futures, timeout=timeout + 1)
+            for future in completed:
+                source = futures[future]
+                try:
+                    result = future.result() or []
+                    if source == "rss":
+                        rss_candidates = result
+                    else:
+                        gdelt_candidates = result
+                except Exception:
+                    logger.info("Variant live source lookup failed", extra={"source": source, "prompt": prompt})
+        except TimeoutError:
+            logger.info("Variant live source lookup timed out", extra={"prompt": prompt})
+    finally:
+        # The old context-manager shutdown waited for slow network calls after
+        # their deadline, turning a five-second timeout into minutes.
+        pool.shutdown(wait=False, cancel_futures=True)
     return _merge_candidates(cached, rss_candidates + gdelt_candidates, candidate_limit, prompt)
 
 
@@ -949,7 +1025,10 @@ def _select_supported_variant(
     limit: int,
     build_id: str,
 ) -> tuple[str, list[dict]]:
-    variants = _prompt_variants(original)
+    all_variants = _prompt_variants(original)
+    # A full article headline is already a strong query. Fast website jobs
+    # compare only two angles; thorough user work may spend more time sourcing.
+    variants = all_variants[: 2 if mode == "fast" else 4]
     _set_progress(
         build_id,
         active=True,
@@ -1115,6 +1194,7 @@ def _fast_article_from_prompt(
     use_gemini: bool | None = None,
     build_id: str | None = None,
     prefetched_sources: list[dict] | None = None,
+    source_policy: str = "standard",
 ) -> dict:
     if use_gemini is not None:
         use_zen = bool(use_gemini)
@@ -1140,7 +1220,20 @@ def _fast_article_from_prompt(
             logger.exception("Cached article lookup failed during fast article generation", extra={"build_id": build_id, "prompt": prompt})
             cached = []
 
+    origin_source = next(
+        (item for item in cached if item.get("source_kind") == "x-post"),
+        None,
+    )
     candidates = _merge_candidates(cached, [], fast_limit, prompt)
+    # The generic ranker correctly blocks social domains. The explicit
+    # x_response policy is the sole exception: retain the originating post as
+    # attributed source material after normal ranking has completed.
+    if source_policy == "x_response" and origin_source:
+        origin_url = str(origin_source.get("url") or "")
+        candidates = [
+            origin_source,
+            *(item for item in candidates if str(item.get("url") or "") != origin_url),
+        ][:fast_limit]
     used_live_sources = prefetched_sources is not None
 
     # 2) Only hit live providers when the daily cache is thin.
@@ -1209,13 +1302,19 @@ def _fast_article_from_prompt(
     )
 
     consensus = _fast_consensus_from_sources(prompt, candidates)
-    source_quality = evaluate_source_quality(candidates, prompt, gate=SourceGate(min_sources=2, min_domains=2, min_text_chars=80))
+    quality_gate = (
+        SourceGate(min_sources=1, min_domains=1, min_text_chars=20)
+        if source_policy == "x_response"
+        else SourceGate(min_sources=2, min_domains=2, min_text_chars=80)
+    )
+    source_quality = evaluate_source_quality(candidates, prompt, gate=quality_gate)
     article = _article_from_consensus(
         prompt,
         candidates,
         consensus,
         use_zen=True,
         generation_mode="fast",
+        source_policy=source_policy,
         source_quality=source_quality,
         used_live_sources=used_live_sources,
         require_zen=True,
@@ -1233,15 +1332,39 @@ def prepare_article_request(
     limit: int,
     mode: str,
     build_id: str,
+    supplemental_sources: list[dict] | None = None,
+    source_policy: str = "standard",
 ) -> tuple[str, list[dict], str, dict]:
     """Finish all source work and reuse checks before generation begins."""
     original = _normalize_write_prompt(prompt) or "breaking world news today"
-    selected, sources = _select_supported_variant(
-        original,
-        mode=mode,
-        limit=limit,
-        build_id=build_id,
-    )
+    if source_policy == "x_response":
+        _set_progress(
+            build_id,
+            active=True,
+            prompt=original,
+            stage="fetching",
+            stage_label="Checking today's entity-matched coverage...",
+            error=None,
+            article=None,
+        )
+        # X-response jobs already carry an attributable origin. Run one
+        # entity-aware cache/live lookup instead of expanding many prompt
+        # variants; this keeps CPU generation fed without serial I/O churn.
+        selected = original
+        sources = _source_candidates_for_variant(original, limit, mode, min_cached_sources=2)
+    else:
+        selected, sources = _select_supported_variant(
+            original,
+            mode=mode,
+            limit=limit,
+            build_id=build_id,
+        )
+    if source_policy == "x_response" and supplemental_sources:
+        seen_urls = {str(item.get("url") or "") for item in sources}
+        sources.extend(
+            item for item in supplemental_sources
+            if str(item.get("url") or "") not in seen_urls
+        )
     if not sources:
         sources = _desk_rescue_sources(limit=max(6, min(limit, 12)))
         selected = (
@@ -1271,6 +1394,7 @@ def write_article_from_prompt(
     prepared_variant: str | None = None,
     prepared_sources: list[dict] | None = None,
     prepared_fingerprint: str | None = None,
+    source_policy: str = "standard",
 ) -> dict:
     """Select the strongest sourced angle, then invoke Ministral exactly once."""
     build_id = build_id or f"build-{uuid.uuid4().hex}"
@@ -1286,6 +1410,7 @@ def write_article_from_prompt(
             mode=mode,
             limit=limit,
             build_id=build_id,
+            source_policy=source_policy,
         )
     if existing:
         existing["buildId"] = build_id
@@ -1303,6 +1428,7 @@ def write_article_from_prompt(
         use_zen=True,
         build_id=build_id,
         prefetched_sources=sources,
+        source_policy=source_policy,
     )
     article["prompt"] = original
     article["sourceFingerprint"] = fingerprint
@@ -1319,6 +1445,7 @@ def _thorough_article_from_prompt(
     use_zen: bool = True,
     build_id: str | None = None,
     prefetched_sources: list[dict] | None = None,
+    source_policy: str = "standard",
 ) -> dict:
     """
     Thorough mode is cache-first and latency-bounded:
@@ -1504,6 +1631,7 @@ def _thorough_article_from_prompt(
         consensus,
         use_zen=use_zen,
         generation_mode="thorough",
+        source_policy=source_policy,
         source_quality=source_quality,
         used_live_sources=used_live_sources,
         require_zen=True,

@@ -11,7 +11,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from app.x.client import XApiNotConfigured, XClient
 from app.x.filter import filter_candidates, is_actionable_candidate
 from app.x.models import XCandidate
-from app.x.pipeline import maybe_share_package, run_x_pipeline, write_article_for_candidate
+from app.x.pipeline import enqueue_article_for_candidate, maybe_share_package, run_x_pipeline, write_article_for_candidate
 from app.processing.article_writer import ZenArticleUnavailable
 from app.x.reply import article_public_url, build_prompt, share_intent_url, x_reply_text
 from app.x import reply as reply_mod
@@ -107,6 +107,19 @@ class XReplyTests(unittest.TestCase):
         self.assertIn("Investors priced in a cautious hold", text)
         self.assertIn("…", text)
         self.assertIn("/article/write-9", text)
+
+    def test_reply_text_preserves_original_hashtags_within_limit(self):
+        text = x_reply_text(
+            {
+                "headline": "Markets Watch the Fed",
+                "dek": "Investors await the next rate decision.",
+            },
+            "https://signal.example.com/article/write-10",
+            hashtags=["#Fed", "Fed", "#Markets", "#fed", "not a tag"],
+        )
+        self.assertIn("#Fed #Markets", text)
+        self.assertEqual(text.count("#Fed"), 1)
+        self.assertLessEqual(len(text), 275)
 
     def test_share_intent_targets_reply_post(self):
         intent = share_intent_url(
@@ -217,6 +230,28 @@ class XPipelineTests(unittest.TestCase):
         client_mod.settings = self._client_settings
         import app.x.client as xc
         xc._client = None
+
+    def test_enqueue_carries_attributed_x_origin_policy(self):
+        candidate = XCandidate(
+            topic="Acme expansion announcement",
+            snippet="Acme says it will open a new plant in Ohio next year.",
+            prompt="Acme expansion announcement in Ohio",
+            trend_url="https://x.com/acme/status/123",
+            post_id="123",
+            author_handle="acme",
+            provider="manual-prompt",
+        )
+        with patch.object(
+            pipeline_mod.queries,
+            "enqueue_article_generation_job",
+            return_value={"id": "build-1", "status": "queued"},
+        ) as enqueue:
+            package = enqueue_article_for_candidate(candidate)
+        self.assertEqual(package.status, "queued")
+        payload = enqueue.call_args.kwargs["payload"]
+        self.assertEqual(payload["sourcePolicy"], "x_response")
+        self.assertEqual(payload["xSource"]["url"], candidate.trend_url)
+        self.assertEqual(payload["xSource"]["text"], candidate.snippet)
 
     def test_write_article_for_candidate_ready(self):
         candidate = XCandidate(

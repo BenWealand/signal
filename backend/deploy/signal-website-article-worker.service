@@ -1,0 +1,32 @@
+[Unit]
+Description=Signal website article worker (Gemini lane)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=signal-api
+Group=signal-api
+WorkingDirectory=/opt/signal/backend
+EnvironmentFile=/etc/signal-api/signal.env
+EnvironmentFile=-/etc/signal-api/gemini.env
+ExecStartPre=/opt/signal/venv/bin/python /opt/signal/backend/scripts/recover_article_jobs.py --lane website
+ExecStart=/opt/signal/venv/bin/python -m app.jobs.article_worker --lane website --poll-seconds 1
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
