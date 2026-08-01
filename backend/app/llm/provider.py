@@ -94,13 +94,19 @@ class GeminiLLMClient:
         *,
         api_keys: list[str] | None = None,
         model: str | None = None,
+        credential_label: str = "Gemini",
     ) -> None:
-        configured = api_keys or [
-            *str(settings.gemini_api_keys or "").split(","),
-            str(settings.gemini_api_key or ""),
-        ]
+        configured = (
+            api_keys
+            if api_keys is not None
+            else [
+                str(settings.demand_gemini_api_key or ""),
+                str(settings.fallback_gemini_api_key or ""),
+            ]
+        )
         self.api_keys = list(dict.fromkeys(key.strip() for key in configured if key.strip()))
         self.model = (model or settings.gemini_model).strip()
+        self.credential_label = credential_label.strip() or "Gemini"
 
     def generate_json(
         self,
@@ -113,7 +119,7 @@ class GeminiLLMClient:
         top_p: float | None = None,
     ) -> dict[str, Any]:
         if not self.api_keys:
-            raise LLMProviderError("GEMINI_API_KEY or GEMINI_API_KEYS must be configured")
+            raise LLMProviderError(f"{self.credential_label} API key is not configured")
         safe_model = re.sub(r"[^A-Za-z0-9._-]", "", self.model)
         if not safe_model:
             raise LLMProviderError("GEMINI_MODEL must be configured")
@@ -168,6 +174,10 @@ class GeminiLLMClient:
                     raise LLMTransportError(f"Gemini HTTP {exc.code}: {exc.reason}") from exc
                 if attempt + 1 >= attempts:
                     break
+                # Rotate to the next demand credential immediately. Backoff is
+                # only useful after every distinct key has been attempted.
+                if len(self.api_keys) > 1 and (attempt + 1) % len(self.api_keys):
+                    continue
                 retry_after = exc.headers.get("Retry-After") if exc.headers else None
                 try:
                     delay = float(retry_after) if retry_after else 0.0

@@ -56,6 +56,12 @@ class LocalLLMArchitectureTests(unittest.TestCase):
 
         generate_article_package("website event", sources(), mode="fast")
         generate_article_package(
+            "daily section event",
+            sources(2),
+            mode="fast",
+            source_policy="section_fast",
+        )
+        generate_article_package(
             "x event",
             [{
                 "source_name": "@desk on X",
@@ -67,8 +73,20 @@ class LocalLLMArchitectureTests(unittest.TestCase):
             source_policy="x_response",
         )
 
-        gemini_cls.return_value.generate_json.assert_called_once()
+        self.assertEqual(gemini_cls.return_value.generate_json.call_count, 2)
         local_cls.return_value.generate_json.assert_called_once()
+        demand_call, daily_call = gemini_cls.call_args_list
+        self.assertEqual(
+            demand_call.kwargs["api_keys"],
+            [
+                article_writer.settings.demand_gemini_api_key,
+                article_writer.settings.fallback_gemini_api_key,
+            ],
+        )
+        self.assertEqual(
+            daily_call.kwargs["api_keys"],
+            [article_writer.settings.daily_gemini_api_key],
+        )
 
     @patch("app.llm.provider.time.sleep")
     @patch("app.llm.provider.random.uniform", return_value=0.0)
@@ -110,6 +128,34 @@ class LocalLLMArchitectureTests(unittest.TestCase):
             "maxLength",
             generation["responseJsonSchema"]["properties"]["headline"],
         )
+        sleep.assert_not_called()
+
+    @patch("app.llm.provider.time.sleep")
+    @patch("app.llm.provider.random.uniform", return_value=0.0)
+    @patch("app.llm.provider.urllib.request.urlopen")
+    def test_gemini_single_key_backs_off_after_429(self, urlopen, _jitter, sleep):
+        rate_limit = urllib.error.HTTPError(
+            "https://example.test", 429, "Too Many Requests", {"Retry-After": "1"}, None
+        )
+        package = {"ok": "yes"}
+        urlopen.side_effect = [
+            rate_limit,
+            _Response({"candidates": [{"content": {"parts": [{"text": json.dumps(package)}]}}]}),
+        ]
+        provider_settings = SimpleNamespace(
+            gemini_model="gemini-flash-latest", gemini_retry_attempts=2,
+            gemini_retry_base_seconds=2, gemini_retry_max_seconds=45,
+            gemini_timeout_seconds=90, llm_top_p=0.9,
+        )
+        with patch("app.llm.provider.settings", provider_settings):
+            result = GeminiLLMClient(api_keys=["daily-key"]).generate_json(
+                messages=[{"role": "user", "content": "test"}],
+                schema={"type": "object", "properties": {"ok": {"type": "string"}}},
+                max_tokens=32,
+                temperature=0,
+                timeout=5,
+            )
+        self.assertEqual(result, package)
         sleep.assert_called_once_with(1.0)
 
     def test_article_package_strips_model_markdown_artifacts(self):

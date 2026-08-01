@@ -44,6 +44,12 @@ class Settings:
     )
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
     gemini_api_keys: str = os.getenv("GEMINI_API_KEYS", "")
+    # Article-writing credentials are intentionally isolated by workload.
+    # section_fast jobs use the daily key; interactive website writes rotate
+    # across the demand key and its fallback. X-response jobs do not use Gemini.
+    daily_gemini_api_key: str = os.getenv("DAILY_GEMINI_API_KEY", "")
+    demand_gemini_api_key: str = os.getenv("DEMAND_GEMINI_API_KEY", "")
+    fallback_gemini_api_key: str = os.getenv("FALLBACK_GEMINI_API_KEY", "")
     gemini_timeout_seconds: float = float(os.getenv("GEMINI_TIMEOUT_SECONDS", "90"))
     gemini_retry_attempts: int = int(os.getenv("GEMINI_RETRY_ATTEMPTS", "5"))
     gemini_retry_base_seconds: float = float(os.getenv("GEMINI_RETRY_BASE_SECONDS", "2"))
