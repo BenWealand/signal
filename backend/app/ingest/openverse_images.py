@@ -66,7 +66,7 @@ def _keywords(value: str) -> frozenset[str]:
     )
 
 
-def _search_query(value: str) -> str:
+def _search_query(value: str, *, max_meaningful: int = 3) -> str:
     raw_words = re.findall(r"[A-Za-z0-9][A-Za-z0-9'-]*", _clean_text(value, 300))
     start = next(
         (
@@ -88,7 +88,7 @@ def _search_query(value: str) -> str:
         phrase.append(word)
         if len(normalized) >= 3 and normalized not in _STOPWORDS:
             meaningful += 1
-        if meaningful >= 3:
+        if meaningful >= max(1, int(max_meaningful)):
             break
     subject = " ".join(phrase)
     return f'"{subject}"' if meaningful >= 2 else subject
@@ -304,6 +304,18 @@ def priority_image_queries(text: str) -> list[str]:
                 covered |= _keywords(subject)
             uncovered = fallback_keywords - covered
             if not subjects or len(uncovered) >= 2:
+                # Openverse often has the exact named subject but not the
+                # longer editorial phrase (for example, "NASA Artemis" rather
+                # than "NASA Artemis II mission"). Try the shorter concrete
+                # phrase first; title scoring still rejects off-topic results.
+                shorter = _search_query(text or "", max_meaningful=2)
+                if (
+                    shorter
+                    and shorter != fallback
+                    and shorter not in subjects
+                    and not _is_broad_image_query(shorter)
+                ):
+                    subjects.append(shorter)
                 subjects.append(fallback)
     return subjects
 

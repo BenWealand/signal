@@ -262,31 +262,31 @@ def article_build_progress(
 
 @router.get("/articles/test-zen")
 def test_zen():
-    """Deprecated route name for a minimal local-writer diagnostic."""
+    """Deprecated route name for the website Gemini-writer diagnostic."""
     from app.llm.article_generator import generate_article_package
     source_text = (
-        "Signal is checking whether the local writer can generate a short neutral "
+        "Signal is checking whether Gemini can generate a neutral sourced "
         "article from supplied source material without adding outside facts. "
     ) * 5
     try:
         result = generate_article_package(
-            "Signal local writer diagnostic",
+            "Signal Gemini writer diagnostic",
             [
                 {
                     "source_name": "Diagnostic A",
-                    "title": "Signal tests local article generation",
+                    "title": "Signal tests Gemini article generation",
                     "url": "https://example.com/diagnostic-a",
                     "raw_text": source_text,
                 },
                 {
                     "source_name": "Diagnostic B",
-                    "title": "Independent diagnostic confirms local writer test",
+                    "title": "Independent diagnostic confirms Gemini writer test",
                     "url": "https://example.org/diagnostic-b",
                     "raw_text": source_text,
                 },
                 {
                     "source_name": "Diagnostic C",
-                    "title": "Local writer diagnostic uses bounded source material",
+                    "title": "Gemini writer diagnostic uses bounded source material",
                     "url": "https://example.net/diagnostic-c",
                     "raw_text": source_text,
                 },
@@ -304,9 +304,9 @@ def test_zen():
         result = None
         error = str(exc)
     return {
-        "provider": settings.llm_provider,
-        "base_url": settings.llm_base_url,
-        "model": settings.llm_model,
+        "provider": "gemini",
+        "base_url": "https://generativelanguage.googleapis.com",
+        "model": settings.gemini_model,
         "result": result,
         "success": result is not None,
         "error": error,
@@ -315,7 +315,7 @@ def test_zen():
 
 @router.get("/articles/test-gemini")
 def test_gemini_alias():
-    """Deprecated alias for /articles/test-zen."""
+    """Website Gemini-writer diagnostic (legacy implementation name)."""
     return test_zen()
 
 
