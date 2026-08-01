@@ -124,7 +124,7 @@ class LocalLLMArchitectureTests(unittest.TestCase):
         self.assertEqual(result["dek"], "A sourced account of the event.")
         self.assertNotIn("**", " ".join(result["body"]))
 
-    def test_fast_mode_uses_compact_schema_and_source_prompt(self):
+    def test_website_fast_mode_restores_rich_schema_and_source_prompt(self):
         client = Mock()
         client.generate_json.return_value = {
             "headline": "Concrete event",
@@ -132,6 +132,27 @@ class LocalLLMArchitectureTests(unittest.TestCase):
             "body": [f"Paragraph {index}. " + "A" * 90 for index in range(4)],
         }
         generate_article_package("concrete event", sources(6), mode="fast", client=client)
+        call = client.generate_json.call_args.kwargs
+        self.assertEqual(call["schema"]["properties"]["body"]["minItems"], 4)
+        self.assertEqual(call["schema"]["properties"]["body"]["maxItems"], 6)
+        self.assertEqual(call["schema"]["properties"]["body"]["items"]["maxLength"], 1800)
+        self.assertEqual(call["messages"][1]["content"].count("SOURCE "), 6)
+        self.assertEqual(call["max_tokens"], 2400)
+
+    def test_x_fast_mode_keeps_compact_local_schema(self):
+        client = Mock()
+        client.generate_json.return_value = {
+            "headline": "Concrete event",
+            "dek": "A sourced account of the event.",
+            "body": [f"Paragraph {index}. " + "A" * 90 for index in range(4)],
+        }
+        generate_article_package(
+            "concrete event",
+            sources(6),
+            mode="fast",
+            source_policy="x_response",
+            client=client,
+        )
         call = client.generate_json.call_args.kwargs
         self.assertEqual(call["schema"]["properties"]["body"]["maxItems"], 4)
         self.assertEqual(call["schema"]["properties"]["body"]["items"]["maxLength"], 800)
@@ -359,6 +380,7 @@ class LocalLLMArchitectureTests(unittest.TestCase):
         self.assertTrue(result["promptAdjusted"])
         self.assertEqual(len(result["sourceFingerprint"]), 64)
 
+    @patch.object(article_worker, "_attach_image", return_value={})
     @patch.object(article_worker._image_executor, "submit")
     @patch.object(article_worker, "set_build_progress")
     @patch.object(article_worker, "write_article_from_prompt")
@@ -379,6 +401,7 @@ class LocalLLMArchitectureTests(unittest.TestCase):
         write,
         _progress,
         image_submit,
+        attach_image,
     ):
         claimed = {
             "id": "build-1",
@@ -416,7 +439,9 @@ class LocalLLMArchitectureTests(unittest.TestCase):
         mark_ready.assert_called_once()
         statuses = [call.kwargs["status"] for call in update.call_args_list]
         self.assertEqual(statuses, ["saved"])
-        image_submit.assert_called_once()
+        attach_image.assert_called_once()
+        self.assertFalse(attach_image.call_args.kwargs["persist"])
+        image_submit.assert_not_called()
 
 
 if __name__ == "__main__":

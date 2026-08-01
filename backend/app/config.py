@@ -48,6 +48,8 @@ class Settings:
     gemini_retry_attempts: int = int(os.getenv("GEMINI_RETRY_ATTEMPTS", "5"))
     gemini_retry_base_seconds: float = float(os.getenv("GEMINI_RETRY_BASE_SECONDS", "2"))
     gemini_retry_max_seconds: float = float(os.getenv("GEMINI_RETRY_MAX_SECONDS", "45"))
+    gemini_fast_max_tokens: int = int(os.getenv("GEMINI_FAST_MAX_TOKENS", "2400"))
+    gemini_thorough_max_tokens: int = int(os.getenv("GEMINI_THOROUGH_MAX_TOKENS", "3600"))
     news_api_key: str = os.getenv("NEWS_API_KEY", "")
     currents_api_key: str = os.getenv("CURRENTS_API_KEY", "")
     gnews_api_key: str = os.getenv("GNEWS_API_KEY", "")

@@ -457,6 +457,12 @@ def generate_x_article_reply(
             "trendUrl": candidate.trend_url,
             "tag": payload.tag,
             "xPostId": candidate.post_id,
+            "sourcePolicy": "x_response",
+            "xSource": {
+                "url": candidate.trend_url,
+                "text": candidate.snippet or candidate.topic,
+                "authorHandle": candidate.author_handle,
+            },
         },
     )
     return {
