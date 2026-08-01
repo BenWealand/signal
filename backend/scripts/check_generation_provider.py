@@ -7,6 +7,7 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
+from app.config import settings
 from app.llm.provider import GeminiLLMClient, LocalLLMClient
 from app.llm.article_generator import generate_article_package
 
@@ -22,6 +23,7 @@ SCHEMA = {
 def main() -> None:
     parser = argparse.ArgumentParser(description="Make one minimal generation-provider health request")
     parser.add_argument("provider", choices=("gemini", "local"))
+    parser.add_argument("--gemini-pool", choices=("demand", "daily"), default="demand")
     parser.add_argument("--article-shape", action="store_true")
     args = parser.parse_args()
     if args.article_shape:
@@ -39,19 +41,38 @@ def main() -> None:
             for index in range(1, 5)
         ]
         started = time.monotonic()
+        gemini_client = GeminiLLMClient(
+            api_keys=(
+                [settings.daily_gemini_api_key]
+                if args.gemini_pool == "daily"
+                else [settings.demand_gemini_api_key, settings.fallback_gemini_api_key]
+            ),
+            credential_label=f"{args.gemini_pool.upper()} Gemini pool",
+        )
         result = generate_article_package(
             "regional transit weekend schedule",
             sample_sources,
             mode="fast",
             source_policy="standard",
-            client=GeminiLLMClient() if args.provider == "gemini" else LocalLLMClient(),
+            client=gemini_client if args.provider == "gemini" else LocalLLMClient(),
         )
         print(
             f"{args.provider}_article_live=yes "
             f"seconds={time.monotonic() - started:.2f} paragraphs={len(result['body'])}"
         )
         return
-    client = GeminiLLMClient() if args.provider == "gemini" else LocalLLMClient()
+    client = (
+        GeminiLLMClient(
+            api_keys=(
+                [settings.daily_gemini_api_key]
+                if args.gemini_pool == "daily"
+                else [settings.demand_gemini_api_key, settings.fallback_gemini_api_key]
+            ),
+            credential_label=f"{args.gemini_pool.upper()} Gemini pool",
+        )
+        if args.provider == "gemini"
+        else LocalLLMClient()
+    )
     result = client.generate_json(
         messages=[{"role": "user", "content": "Return JSON with ok set to yes."}],
         schema=SCHEMA,

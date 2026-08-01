@@ -14,7 +14,9 @@ Render backend:
 
 - `DATABASE_URL=postgresql://...`
 - `OPENCODE_API_KEY=...`
-- `GEMINI_API_KEY=...` (secondary fallback)
+- `DAILY_GEMINI_API_KEY=...` (scheduled/shared section writes)
+- `DEMAND_GEMINI_API_KEY=...` (primary interactive writes)
+- `FALLBACK_GEMINI_API_KEY=...` (interactive 429 fallback)
 - `CORS_ORIGINS=https://your-vercel-site.vercel.app`
 - `PUBLIC_ARTICLE_BASE_URL=https://your-vercel-site.vercel.app`
 - `SIGNAL_API_TOKEN=...`

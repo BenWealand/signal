@@ -239,9 +239,23 @@ def generate_article_package(
         response_schema["properties"]["body"]["items"]["maxLength"] = 1800
     # Website and section work use Gemini. X-response work remains on the
     # loopback Ministral writer so external quota never blocks auto-posting.
-    active_client = client or (
-        LocalLLMClient() if x_response else GeminiLLMClient()
-    )
+    if client is not None:
+        active_client = client
+    elif x_response:
+        active_client = LocalLLMClient()
+    elif section_fast:
+        active_client = GeminiLLMClient(
+            api_keys=[settings.daily_gemini_api_key],
+            credential_label="DAILY_GEMINI_API_KEY",
+        )
+    else:
+        active_client = GeminiLLMClient(
+            api_keys=[
+                settings.demand_gemini_api_key,
+                settings.fallback_gemini_api_key,
+            ],
+            credential_label="DEMAND_GEMINI_API_KEY/FALLBACK_GEMINI_API_KEY",
+        )
     last_error: BaseException | None = None
     # Exactly one retry, limited to transport or schema failures.
     for attempt in range(2):
