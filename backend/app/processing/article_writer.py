@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import time
 import threading
@@ -52,6 +53,13 @@ def get_build_progress(build_id: str | None = None) -> dict:
             job = queries.get_article_generation_job(build_id)
             if job:
                 status = str(job.get("status") or "queued")
+                payload = job.get("payload") or {}
+                if isinstance(payload, str):
+                    try:
+                        payload = json.loads(payload)
+                    except json.JSONDecodeError:
+                        payload = {}
+                is_x_article = isinstance(payload, dict) and payload.get("sourcePolicy") == "x_response"
                 queue_position = (
                     queries.article_generation_queue_position(str(job.get("id") or build_id))
                     if status in {"queued", "sourcing", "ready_for_generation"}
@@ -60,8 +68,16 @@ def get_build_progress(build_id: str | None = None) -> dict:
                 stage_map = {
                     "queued": ("queued", "Queued for sourcing...", True),
                     "sourcing": ("fetching", "Gathering and scoring sources...", True),
-                    "ready_for_generation": ("writing", "Waiting for the local writer...", True),
-                    "generating": ("writing", "Ministral is writing the article...", True),
+                    "ready_for_generation": (
+                        "writing",
+                        "Waiting for the local X writer..." if is_x_article else "Waiting for Gemini...",
+                        True,
+                    ),
+                    "generating": (
+                        "writing",
+                        "Ministral is writing the X article..." if is_x_article else "Gemini is writing the article...",
+                        True,
+                    ),
                     "saved": ("done", "Done", False),
                     "failed": ("error", "Write failed", False),
                 }
@@ -636,7 +652,7 @@ def _article_body(
     build_id: str | None = None,
     on_chunk=None,
 ) -> tuple[list[str], dict[str, str] | None]:
-    """Generate the complete article package with the local writer."""
+    """Generate a complete article package with the provider for this lane."""
     try:
         package = generate_article_package(
             prompt,
@@ -1296,7 +1312,11 @@ def _fast_article_from_prompt(
     _set_progress(
         build_id,
         stage="writing",
-        stage_label=f"Fast draft: local writer using {len(candidates)} sources...",
+        stage_label=(
+            f"Fast draft: Ministral using {len(candidates)} sources..."
+            if source_policy == "x_response"
+            else f"Fast draft: Gemini using {len(candidates)} sources..."
+        ),
         sources_found=len(candidates),
         sources_enriched=sum(1 for c in candidates if len(c.get("raw_text", "")) > 120),
     )
@@ -1396,7 +1416,7 @@ def write_article_from_prompt(
     prepared_fingerprint: str | None = None,
     source_policy: str = "standard",
 ) -> dict:
-    """Select the strongest sourced angle, then invoke Ministral exactly once."""
+    """Select the strongest sourced angle, then invoke the lane's writer."""
     build_id = build_id or f"build-{uuid.uuid4().hex}"
     original = _normalize_write_prompt(prompt) or "breaking world news today"
     if prepared_variant is not None and prepared_sources is not None:
@@ -1621,7 +1641,11 @@ def _thorough_article_from_prompt(
     _set_progress(
         build_id,
         stage="writing",
-        stage_label=f"Found {len(supported)} corroborated claims — local writer generating article…",
+        stage_label=(
+            f"Found {len(supported)} corroborated claims — Ministral generating X article…"
+            if source_policy == "x_response"
+            else f"Found {len(supported)} corroborated claims — Gemini generating article…"
+        ),
     )
 
     queries.replace_consensus_claims(cluster_id, consensus)

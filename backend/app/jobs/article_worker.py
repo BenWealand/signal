@@ -52,9 +52,9 @@ def _x_origin_source(payload: dict[str, Any]) -> list[dict[str, Any]]:
     }]
 
 
-def _attach_image(article: dict[str, Any]) -> None:
+def _attach_image(article: dict[str, Any], *, persist: bool = True) -> dict[str, Any]:
     if not settings.article_images_enabled:
-        return
+        return {}
     picker = ArticleImagePicker(
         enabled=True,
         search_timeout=settings.article_image_search_timeout_seconds,
@@ -76,9 +76,14 @@ def _attach_image(article: dict[str, Any]) -> None:
         )
         if image:
             article["image"] = image
-            queries.save_generated_article(article)
+            if persist:
+                queries.save_generated_article(article)
+        else:
+            logger.warning("No suitable article image found", extra={"article_id": article.get("id")})
+        return image
     except Exception:
-        logger.exception("Deferred article image attachment failed", extra={"article_id": article.get("id")})
+        logger.exception("Article image attachment failed", extra={"article_id": article.get("id")})
+        return {}
     finally:
         picker.shutdown()
 
@@ -131,11 +136,16 @@ def _prepare_claimed_job(job: dict[str, Any]) -> bool:
             "fingerprint": fingerprint,
         }
         queries.mark_article_generation_job_ready(job_id, payload)
+        is_x_article = payload.get("sourcePolicy") == "x_response"
         set_build_progress(
             job_id,
             active=True,
             stage="writing",
-            stage_label="Waiting for the local writer...",
+            stage_label=(
+                "Waiting for the local X writer..."
+                if is_x_article
+                else "Waiting for Gemini..."
+            ),
             sources_found=len(sources),
             sources_enriched=sum(
                 1
@@ -173,6 +183,12 @@ def _generate_claimed_job(job: dict[str, Any]) -> bool:
             article["section"] = str(payload["section"])
         article["ownerUserId"] = payload.get("ownerUserId")
         article["status"] = article.get("status") or "published"
+        is_x_article = payload.get("sourcePolicy") == "x_response"
+        # Website articles must be complete when the job reports done. The old
+        # pipeline selected the image before returning the article; deferring it
+        # caused clients to permanently cache an image-less result.
+        if not is_x_article and not article.get("image"):
+            _attach_image(article, persist=False)
         queries.save_generated_article(article)
         queries.update_article_generation_job(
             job_id,
@@ -189,7 +205,7 @@ def _generate_claimed_job(job: dict[str, Any]) -> bool:
             draft_headline=article.get("headline") or "",
             error=None,
         )
-        if not article.get("image"):
+        if is_x_article and not article.get("image"):
             _image_executor.submit(_attach_image, dict(article))
         return True
     except Exception as exc:

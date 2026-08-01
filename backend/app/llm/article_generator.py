@@ -115,7 +115,7 @@ def prepare_sources(
     return chosen[:max_sources]
 
 
-def _validate_package(package: dict[str, Any]) -> dict[str, Any]:
+def _validate_package(package: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
     if set(package) != {"headline", "dek", "body"}:
         raise LLMSchemaError("Article package contained missing or extra keys")
     headline = _plain_article_text(package.get("headline")).strip()
@@ -125,10 +125,16 @@ def _validate_package(package: dict[str, Any]) -> dict[str, Any]:
         raise LLMSchemaError("Article headline failed schema validation")
     if not dek or len(dek) > 280:
         raise LLMSchemaError("Article dek failed schema validation")
-    if not isinstance(body, list) or not 3 <= len(body) <= 7:
+    body_schema = (schema.get("properties") or {}).get("body") or {}
+    minimum = int(body_schema.get("minItems") or 3)
+    maximum = int(body_schema.get("maxItems") or 8)
+    paragraph_schema = body_schema.get("items") or {}
+    min_length = int(paragraph_schema.get("minLength") or 80)
+    max_length = int(paragraph_schema.get("maxLength") or 1800)
+    if not isinstance(body, list) or not minimum <= len(body) <= maximum:
         raise LLMSchemaError("Article body failed paragraph-count validation")
     paragraphs = [_plain_article_text(item).strip() for item in body]
-    if any(not 80 <= len(item) <= 1200 for item in paragraphs):
+    if any(not min_length <= len(item) <= max_length for item in paragraphs):
         raise LLMSchemaError("Article paragraph failed length validation")
     return {"headline": headline, "dek": dek, "body": paragraphs}
 
@@ -158,12 +164,15 @@ def generate_article_package(
     section_fast = source_policy == "section_fast"
     fast_mode = mode == "fast"
     required_sources = 1 if x_response else (2 if fast_mode else 4)
+    # Preserve the richer pre-local-model website contract. Only X responses
+    # use the compact prompt designed for four-core local inference.
+    website_fast = fast_mode and not x_response
     sources = prepare_sources(
         source_articles,
         min_sources=required_sources,
-        max_sources=4 if fast_mode else 6,
-        per_source_chars=750 if fast_mode else 1300,
-        total_chars=3200 if fast_mode else 8500,
+        max_sources=4 if x_response else 6,
+        per_source_chars=750 if x_response else (900 if website_fast else 1300),
+        total_chars=3200 if x_response else (5500 if website_fast else 9000),
         min_text_chars=20 if x_response else (60 if section_fast else 80),
     )
     if len(sources) < required_sources:
@@ -172,7 +181,11 @@ def generate_article_package(
         if fast_mode:
             raise LLMSchemaError("At least two independent usable sources are required for fast generation")
         raise LLMSchemaError("At least four independent usable sources are required for generation")
-    paragraph_target = "3-4 concise" if fast_mode else "6-7"
+    paragraph_target = (
+        "3-4 concise"
+        if x_response
+        else ("4-6 substantive" if fast_mode else "6-8 substantive")
+    )
     source_block = "\n\n".join(
         f"SOURCE {index}\nOutlet: {source['source_name']}\nTitle: {source['title']}\n"
         f"URL: {source['url']}\nExcerpt: {source['text']}"
@@ -200,16 +213,30 @@ def generate_article_package(
             ),
         },
     ]
-    max_tokens = min(
-        settings.llm_fast_max_tokens
-        if fast_mode
-        else settings.llm_thorough_max_tokens,
-        settings.llm_emergency_max_tokens,
+    max_tokens = (
+        min(
+            settings.llm_fast_max_tokens if fast_mode else settings.llm_thorough_max_tokens,
+            settings.llm_emergency_max_tokens,
+        )
+        if x_response
+        else (
+            settings.gemini_fast_max_tokens
+            if fast_mode
+            else settings.gemini_thorough_max_tokens
+        )
     )
     response_schema = copy.deepcopy(ARTICLE_SCHEMA)
-    if fast_mode:
+    if x_response:
         response_schema["properties"]["body"]["maxItems"] = 4
         response_schema["properties"]["body"]["items"]["maxLength"] = 800
+    elif fast_mode:
+        response_schema["properties"]["body"]["minItems"] = 4
+        response_schema["properties"]["body"]["maxItems"] = 6
+        response_schema["properties"]["body"]["items"]["maxLength"] = 1800
+    else:
+        response_schema["properties"]["body"]["minItems"] = 6
+        response_schema["properties"]["body"]["maxItems"] = 8
+        response_schema["properties"]["body"]["items"]["maxLength"] = 1800
     # Website and section work use Gemini. X-response work remains on the
     # loopback Ministral writer so external quota never blocks auto-posting.
     active_client = client or (
@@ -227,7 +254,8 @@ def generate_article_package(
                     temperature=settings.llm_temperature,
                     top_p=settings.llm_top_p,
                     timeout=settings.llm_timeout_seconds,
-                )
+                ),
+                response_schema,
             )
         except (LLMTransportError, LLMSchemaError) as exc:
             last_error = exc
