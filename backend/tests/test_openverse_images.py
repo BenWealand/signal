@@ -74,6 +74,16 @@ class OpenverseImagesTest(unittest.TestCase):
         self.assertNotIn("Washington", queries)
         self.assertIn('"March 15"', queries)
 
+    def test_priority_queries_add_shorter_concrete_openverse_fallback(self):
+        with patch("app.ingest.openverse_images.extract_entities", return_value=[]):
+            queries = priority_image_queries(
+                "NASA Artemis II mission preparations advance ahead of launch"
+            )
+
+        self.assertIn('"NASA Artemis"', queries)
+        self.assertIn('"NASA Artemis II mission"', queries)
+        self.assertLess(queries.index('"NASA Artemis"'), queries.index('"NASA Artemis II mission"'))
+
     def test_expands_bare_country_into_concrete_sports_queries(self):
         entities = [{"text": "Spain", "type": "GPE"}]
         article = "Spain faces Argentina in the FIFA World Cup final after the semi-final."
