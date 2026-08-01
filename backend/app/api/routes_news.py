@@ -253,6 +253,7 @@ def _generate_fast_section_articles(section: str, count: int | None = None) -> N
                     "source": "Signal desk",
                     "tag": "fast-draft",
                     "section": slug,
+                    "sourcePolicy": "section_fast",
                 },
             )
             generated += 1

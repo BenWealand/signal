@@ -245,9 +245,20 @@ CREATE TABLE IF NOT EXISTS user_history (
 CREATE INDEX IF NOT EXISTS idx_articles_status ON articles(status);
 CREATE INDEX IF NOT EXISTS idx_articles_source ON articles(source_name);
 CREATE INDEX IF NOT EXISTS idx_articles_normalized_title ON articles(normalized_title);
+CREATE INDEX IF NOT EXISTS idx_articles_created_at_desc ON articles(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_articles_search_fts
+  ON articles USING GIN (
+    (
+      setweight(to_tsvector('english'::regconfig, COALESCE(title, '')), 'A') ||
+      setweight(to_tsvector('english'::regconfig, COALESCE(description, '')), 'B') ||
+      setweight(to_tsvector('english'::regconfig, COALESCE(topic, '')), 'B') ||
+      setweight(to_tsvector('english'::regconfig, COALESCE(clean_text, '')), 'C')
+    )
+  );
 CREATE INDEX IF NOT EXISTS idx_sources_name ON sources(source_name);
 CREATE INDEX IF NOT EXISTS idx_sources_active ON sources(is_active);
 CREATE INDEX IF NOT EXISTS idx_entities_text ON entities(entity_text);
+CREATE INDEX IF NOT EXISTS idx_entities_text_lower ON entities(LOWER(entity_text));
 CREATE INDEX IF NOT EXISTS idx_claims_article ON claims(article_id);
 CREATE INDEX IF NOT EXISTS idx_consensus_cluster ON consensus_claims(story_cluster_id);
 CREATE INDEX IF NOT EXISTS idx_generated_articles_created ON generated_articles(created_at);

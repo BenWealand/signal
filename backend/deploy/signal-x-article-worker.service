@@ -1,0 +1,33 @@
+[Unit]
+Description=Signal X article worker (local Ministral lane)
+Wants=network-online.target
+After=network-online.target signal-writer.service
+Requires=signal-writer.service
+
+[Service]
+Type=simple
+User=signal-api
+Group=signal-api
+WorkingDirectory=/opt/signal/backend
+EnvironmentFile=/etc/signal-api/signal.env
+EnvironmentFile=-/etc/signal-api/gemini.env
+ExecStartPre=/opt/signal/venv/bin/python /opt/signal/backend/scripts/recover_article_jobs.py --lane x
+ExecStart=/opt/signal/venv/bin/python -m app.jobs.article_worker --lane x --poll-seconds 1
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

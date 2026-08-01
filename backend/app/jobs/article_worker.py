@@ -30,6 +30,28 @@ def _payload(job: dict[str, Any]) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _x_origin_source(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    if payload.get("sourcePolicy") != "x_response":
+        return []
+    item = payload.get("xSource") or {}
+    if not isinstance(item, dict):
+        return []
+    url = str(item.get("url") or payload.get("trendUrl") or "").strip()
+    text = str(item.get("text") or "").strip()
+    if not url or not text:
+        return []
+    handle = str(item.get("authorHandle") or "").strip().lstrip("@")
+    return [{
+        "source_kind": "x-post",
+        "source_name": f"@{handle} on X" if handle else "Originating post on X",
+        "title": text[:180],
+        "url": url,
+        "raw_text": text,
+        "clean_text": text,
+        "description": text,
+    }]
+
+
 def _attach_image(article: dict[str, Any]) -> None:
     if not settings.article_images_enabled:
         return
@@ -84,6 +106,8 @@ def _prepare_claimed_job(job: dict[str, Any]) -> bool:
             limit=int(payload.get("limit") or 12),
             mode=str(job.get("mode") or "fast"),
             build_id=job_id,
+            supplemental_sources=_x_origin_source(payload),
+            source_policy=str(payload.get("sourcePolicy") or "standard"),
         )
         if existing:
             existing["buildId"] = job_id
@@ -139,6 +163,7 @@ def _generate_claimed_job(job: dict[str, Any]) -> bool:
             prepared_variant=str(prepared["variant"]),
             prepared_sources=list(prepared["sources"]),
             prepared_fingerprint=str(prepared["fingerprint"]),
+            source_policy=str(payload.get("sourcePolicy") or "standard"),
         )
         article["buildId"] = job_id
         article["source"] = str(payload.get("source") or article.get("source") or "Signal desk")
@@ -172,30 +197,37 @@ def _generate_claimed_job(job: dict[str, Any]) -> bool:
         return True
 
 
-def process_next_job() -> bool:
+def process_next_job(*, lane: str = "all") -> bool:
     """Synchronous one-shot path used by tests and `--once`."""
-    claimed = queries.claim_next_article_generation_job()
+    claimed = queries.claim_next_article_generation_job(lane=lane)
     if claimed:
         _prepare_claimed_job(claimed)
-    ready = queries.claim_ready_article_generation_job()
+    ready = queries.claim_ready_article_generation_job(lane=lane)
     if ready:
         return _generate_claimed_job(ready)
     return bool(claimed)
 
 
-def run_forever(*, poll_seconds: float = 1.0) -> None:
-    # Two I/O-bound sourcing jobs may run while this process serializes local
-    # generation on its main thread.
+def run_forever(*, poll_seconds: float = 1.0, lane: str = "all") -> None:
+    # Website and X workers claim disjoint durable lanes. Sourcing remains
+    # parallel inside each worker while generation is serialized per lane.
     with ThreadPoolExecutor(max_workers=2, thread_name_prefix="article-source") as source_pool:
         sourcing = set()
+        last_stale_cleanup = 0.0
         while True:
+            now = time.monotonic()
+            if now - last_stale_cleanup >= 60:
+                expired = queries.expire_stale_background_article_jobs()
+                if expired:
+                    logger.warning("Expired %s stale background article job(s)", expired)
+                last_stale_cleanup = now
             sourcing = {future for future in sourcing if not future.done()}
             while len(sourcing) < 2:
-                claimed = queries.claim_next_article_generation_job()
+                claimed = queries.claim_next_article_generation_job(lane=lane)
                 if not claimed:
                     break
                 sourcing.add(source_pool.submit(_prepare_claimed_job, claimed))
-            ready = queries.claim_ready_article_generation_job()
+            ready = queries.claim_ready_article_generation_job(lane=lane)
             if ready:
                 _generate_claimed_job(ready)
                 continue
@@ -206,14 +238,15 @@ def run_forever(*, poll_seconds: float = 1.0) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run Signal's single local article writer")
+    parser = argparse.ArgumentParser(description="Run a Signal article-generation queue lane")
     parser.add_argument("--once", action="store_true", help="Process at most one queued job")
     parser.add_argument("--poll-seconds", type=float, default=1.0)
+    parser.add_argument("--lane", choices=("all", "website", "x"), default="all")
     args = parser.parse_args()
     if args.once:
-        process_next_job()
+        process_next_job(lane=args.lane)
         return
-    run_forever(poll_seconds=args.poll_seconds)
+    run_forever(poll_seconds=args.poll_seconds, lane=args.lane)
 
 
 if __name__ == "__main__":

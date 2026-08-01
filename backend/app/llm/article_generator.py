@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import re
 import time
 import urllib.parse
@@ -8,6 +9,7 @@ from typing import Any
 from app.config import settings
 from app.ingest.source_registry import domain_from_url
 from app.llm.provider import (
+    GeminiLLMClient,
     LLMSchemaError,
     LLMTransportError,
     LocalLLMClient,
@@ -66,6 +68,7 @@ def prepare_sources(
     max_sources: int = 6,
     per_source_chars: int = 1300,
     total_chars: int = 8500,
+    min_text_chars: int = 80,
 ) -> list[dict[str, str]]:
     """Choose rich, independent source excerpts with bounded prompt size."""
     ranked = sorted(
@@ -89,10 +92,10 @@ def prepare_sources(
             " ",
             str(item.get("clean_text") or item.get("raw_text") or item.get("description") or ""),
         ).strip()
-        if len(text) < 80:
+        if len(text) < min_text_chars:
             continue
         excerpt = text[: min(per_source_chars, remaining)].rstrip()
-        if len(excerpt) < 80:
+        if len(excerpt) < min_text_chars:
             break
         chosen.append(
             {
@@ -115,8 +118,8 @@ def prepare_sources(
 def _validate_package(package: dict[str, Any]) -> dict[str, Any]:
     if set(package) != {"headline", "dek", "body"}:
         raise LLMSchemaError("Article package contained missing or extra keys")
-    headline = str(package.get("headline") or "").strip()
-    dek = str(package.get("dek") or "").strip()
+    headline = _plain_article_text(package.get("headline")).strip()
+    dek = _plain_article_text(package.get("dek")).strip()
     body = package.get("body")
     if not headline or len(headline) > 160:
         raise LLMSchemaError("Article headline failed schema validation")
@@ -124,10 +127,23 @@ def _validate_package(package: dict[str, Any]) -> dict[str, Any]:
         raise LLMSchemaError("Article dek failed schema validation")
     if not isinstance(body, list) or not 3 <= len(body) <= 7:
         raise LLMSchemaError("Article body failed paragraph-count validation")
-    paragraphs = [str(item).strip() for item in body]
+    paragraphs = [_plain_article_text(item).strip() for item in body]
     if any(not 80 <= len(item) <= 1200 for item in paragraphs):
         raise LLMSchemaError("Article paragraph failed length validation")
     return {"headline": headline, "dek": dek, "body": paragraphs}
+
+
+def _plain_article_text(value: Any) -> str:
+    """Remove lightweight Markdown the model may emit despite instructions."""
+    text = str(value or "")
+    text = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", text)
+    text = re.sub(r"`([^`]+)`", r"\1", text)
+    text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
+    text = re.sub(r"__([^_]+)__", r"\1", text)
+    text = re.sub(r"\*([^*]+)\*", r"\1", text)
+    text = re.sub(r"_([^_]+)_", r"\1", text)
+    text = re.sub(r"(?m)^\s{0,3}(?:#{1,6}\s+|[-*+]\s+)", "", text)
+    return text
 
 
 def generate_article_package(
@@ -135,16 +151,43 @@ def generate_article_package(
     source_articles: list[dict[str, Any]],
     *,
     mode: str = "thorough",
-    client: LocalLLMClient | None = None,
+    source_policy: str = "standard",
+    client: LocalLLMClient | GeminiLLMClient | None = None,
 ) -> dict[str, Any]:
-    sources = prepare_sources(source_articles)
-    if len(sources) < 4:
+    x_response = source_policy == "x_response"
+    section_fast = source_policy == "section_fast"
+    fast_mode = mode == "fast"
+    required_sources = 1 if x_response else (2 if fast_mode else 4)
+    sources = prepare_sources(
+        source_articles,
+        min_sources=required_sources,
+        max_sources=4 if fast_mode else 6,
+        per_source_chars=750 if fast_mode else 1300,
+        total_chars=3200 if fast_mode else 8500,
+        min_text_chars=20 if x_response else (60 if section_fast else 80),
+    )
+    if len(sources) < required_sources:
+        if x_response:
+            raise LLMSchemaError("At least one usable originating X post is required for generation")
+        if fast_mode:
+            raise LLMSchemaError("At least two independent usable sources are required for fast generation")
         raise LLMSchemaError("At least four independent usable sources are required for generation")
-    paragraph_target = "4-5" if mode == "fast" else "6-7"
+    paragraph_target = "3-4 concise" if fast_mode else "6-7"
     source_block = "\n\n".join(
         f"SOURCE {index}\nOutlet: {source['source_name']}\nTitle: {source['title']}\n"
         f"URL: {source['url']}\nExcerpt: {source['text']}"
         for index, source in enumerate(sources, start=1)
+    )
+    evidence_instruction = (
+        "This is an X-response article based on limited source material. Attribute the originating "
+        "post explicitly, do not imply independent corroboration, and label unknown details as unverified."
+        if x_response
+        else (
+            "This fast section article has limited source coverage. Attribute material claims, avoid claiming "
+            "broad consensus, and make any uncertainty or disagreement explicit."
+            if section_fast
+            else "Lead with the strongest corroborated development and make uncertainty visible."
+        )
     )
     messages = [
         {"role": "system", "content": SYSTEM_MESSAGE},
@@ -152,18 +195,26 @@ def generate_article_package(
             "role": "user",
             "content": (
                 f"Reader topic: {prompt}\n\nWrite a sourced article of {paragraph_target} paragraphs. "
-                "Lead with the strongest corroborated development and make uncertainty visible.\n\n"
+                f"{evidence_instruction}\n\n"
                 f"{source_block}"
             ),
         },
     ]
     max_tokens = min(
         settings.llm_fast_max_tokens
-        if mode == "fast"
+        if fast_mode
         else settings.llm_thorough_max_tokens,
         settings.llm_emergency_max_tokens,
     )
-    active_client = client or LocalLLMClient()
+    response_schema = copy.deepcopy(ARTICLE_SCHEMA)
+    if fast_mode:
+        response_schema["properties"]["body"]["maxItems"] = 4
+        response_schema["properties"]["body"]["items"]["maxLength"] = 800
+    # Website and section work use Gemini. X-response work remains on the
+    # loopback Ministral writer so external quota never blocks auto-posting.
+    active_client = client or (
+        LocalLLMClient() if x_response else GeminiLLMClient()
+    )
     last_error: BaseException | None = None
     # Exactly one retry, limited to transport or schema failures.
     for attempt in range(2):
@@ -171,7 +222,7 @@ def generate_article_package(
             return _validate_package(
                 active_client.generate_json(
                     messages=messages,
-                    schema=ARTICLE_SCHEMA,
+                    schema=response_schema,
                     max_tokens=max_tokens,
                     temperature=settings.llm_temperature,
                     top_p=settings.llm_top_p,

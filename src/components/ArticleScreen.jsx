@@ -167,8 +167,8 @@ export function ArticleScreen({
 
       <article className="article-reader">
         <span>{articleByline(draft)}</span>
-        <h1>{draft.headline}</h1>
-        <p className="dek">{draft.dek}</p>
+        <h1>{plainArticleText(draft.headline)}</h1>
+        <p className="dek">{plainArticleText(draft.dek)}</p>
         <ArticleImage image={draft.image} headline={draft.headline} />
         {draft.body?.length ? (
           draft.body.map((paragraph, index) => (
@@ -353,16 +353,29 @@ function BookmarkIcon() {
 }
 
 function FactText({ text, facts }) {
-  const fact = facts.find((item) => item.text && text.includes(item.text));
-  if (!fact) return text;
-  const [before, after] = text.split(fact.text);
+  const cleanText = plainArticleText(text);
+  const fact = facts.find((item) => item.text && cleanText.includes(plainArticleText(item.text)));
+  if (!fact) return cleanText;
+  const factText = plainArticleText(fact.text);
+  const [before, after] = cleanText.split(factText);
   return (
     <>
       {before}
-      <SourcedFact source={fact.source}>{fact.text}</SourcedFact>
+      <SourcedFact source={fact.source}>{factText}</SourcedFact>
       {after}
     </>
   );
+}
+
+function plainArticleText(value) {
+  return String(value || "")
+    .replace(/\[([^\]]+)\]\([^\)]+\)/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/_([^_]+)_/g, "$1")
+    .replace(/^\s{0,3}(?:#{1,6}\s+|[-*+]\s+)/gm, "");
 }
 
 function SourcedFact({ children, source }) {

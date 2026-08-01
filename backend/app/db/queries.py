@@ -419,8 +419,8 @@ def search(q: str, *, days: int | None = None, limit: int = 25) -> list[dict[str
                     SELECT id, source_name, title, url, published_at, clean_text, raw_text, description, topic
                     FROM articles
                     WHERE (title ILIKE %s OR clean_text ILIKE %s OR description ILIKE %s OR raw_text ILIKE %s)
-                      AND COALESCE(published_at, created_at) > NOW() - (%s || ' days')::interval
-                    ORDER BY COALESCE(published_at, created_at) DESC
+                      AND created_at > NOW() - (%s || ' days')::interval
+                    ORDER BY created_at DESC
                     LIMIT %s
                     """,
                     (term, term, term, term, str(int(days)), safe_limit),
@@ -431,11 +431,100 @@ def search(q: str, *, days: int | None = None, limit: int = 25) -> list[dict[str
                     SELECT id, source_name, title, url, published_at, clean_text, raw_text, description, topic
                     FROM articles
                     WHERE title ILIKE %s OR clean_text ILIKE %s OR description ILIKE %s OR raw_text ILIKE %s
-                    ORDER BY COALESCE(published_at, created_at) DESC
+                    ORDER BY created_at DESC
                     LIMIT %s
                     """,
                     (term, term, term, term, safe_limit),
                 )
+            return [row_to_dict(row) for row in cur.fetchall()]
+
+
+def search_articles_fts(
+    web_query: str,
+    *,
+    hours: int | None = None,
+    limit: int = 25,
+) -> list[dict[str, Any]]:
+    """Rank cached articles with PostgreSQL's indexed full-text search."""
+    query = re.sub(r"\s+", " ", str(web_query or "")).strip()[:500]
+    if not query:
+        return []
+    safe_hours = min(max(int(hours), 1), 24 * 365) if hours else None
+    safe_limit = min(max(int(limit), 1), 50)
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                WITH search_query AS (
+                  SELECT websearch_to_tsquery('english'::regconfig, %s) AS value
+                ), ranked AS (
+                  SELECT a.id, a.source_name, a.title, a.url, a.published_at,
+                         a.clean_text, a.raw_text, a.description, a.topic,
+                         ts_rank_cd(
+                           setweight(to_tsvector('english'::regconfig, COALESCE(a.title, '')), 'A') ||
+                           setweight(to_tsvector('english'::regconfig, COALESCE(a.description, '')), 'B') ||
+                           setweight(to_tsvector('english'::regconfig, COALESCE(a.topic, '')), 'B') ||
+                           setweight(to_tsvector('english'::regconfig, COALESCE(a.clean_text, '')), 'C'),
+                           search_query.value
+                         ) AS search_rank,
+                         a.created_at
+                  FROM articles a
+                  CROSS JOIN search_query
+                  WHERE (
+                    setweight(to_tsvector('english'::regconfig, COALESCE(a.title, '')), 'A') ||
+                    setweight(to_tsvector('english'::regconfig, COALESCE(a.description, '')), 'B') ||
+                    setweight(to_tsvector('english'::regconfig, COALESCE(a.topic, '')), 'B') ||
+                    setweight(to_tsvector('english'::regconfig, COALESCE(a.clean_text, '')), 'C')
+                  ) @@ search_query.value
+                    AND (%s::integer IS NULL OR a.created_at >= NOW() - (%s * INTERVAL '1 hour'))
+                    AND a.duplicate_of IS NULL
+                )
+                SELECT id, source_name, title, url, published_at, clean_text,
+                       raw_text, description, topic, search_rank
+                FROM ranked
+                ORDER BY search_rank DESC, created_at DESC
+                LIMIT %s
+                """,
+                (query, safe_hours, safe_hours, safe_limit),
+            )
+            return [row_to_dict(row) for row in cur.fetchall()]
+
+
+def search_recent_articles_by_entities(
+    entity_terms: list[str],
+    *,
+    hours: int = 24,
+    limit: int = 25,
+) -> list[dict[str, Any]]:
+    """Reuse today's sourced coverage by shared people, orgs, places, or events."""
+    terms = list(dict.fromkeys(
+        re.sub(r"\s+", " ", str(term or "")).strip().lower()
+        for term in entity_terms
+        if len(re.sub(r"\s+", " ", str(term or "")).strip()) >= 3
+    ))[:16]
+    if not terms:
+        return []
+    safe_hours = min(max(int(hours), 1), 168)
+    safe_limit = min(max(int(limit), 1), 50)
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT a.id, a.source_name, a.title, a.url, a.published_at,
+                       a.clean_text, a.raw_text, a.description, a.topic,
+                       COUNT(DISTINCT requested.term) AS entity_match_count,
+                       ARRAY_AGG(DISTINCT requested.term) AS matched_entities
+                FROM UNNEST(%s::text[]) AS requested(term)
+                JOIN entities e ON LOWER(e.entity_text) = requested.term
+                JOIN articles a ON a.id = e.article_id
+                WHERE a.created_at >= NOW() - (%s * INTERVAL '1 hour')
+                  AND a.duplicate_of IS NULL
+                GROUP BY a.id
+                ORDER BY COUNT(DISTINCT requested.term) DESC, a.created_at DESC
+                LIMIT %s
+                """,
+                (terms, safe_hours, safe_limit),
+            )
             return [row_to_dict(row) for row in cur.fetchall()]
 
 
@@ -725,6 +814,8 @@ def enqueue_article_generation_job(
     if not normalized:
         raise ValueError("prompt is required")
     active_mode = mode if mode in {"fast", "thorough"} else "fast"
+    job_payload = payload or {}
+    lane = "x" if job_payload.get("sourcePolicy") == "x_response" else "website"
     with get_connection() as conn:
         with conn.cursor() as cur:
             # Coalesce identical queued/in-flight work.
@@ -734,11 +825,15 @@ def enqueue_article_generation_job(
                 FROM article_generation_jobs
                 WHERE normalized_prompt = %s
                   AND mode = %s
+                  AND CASE
+                        WHEN payload->>'sourcePolicy' = 'x_response' THEN 'x'
+                        ELSE 'website'
+                      END = %s
                   AND status IN ('queued', 'sourcing', 'ready_for_generation', 'generating')
                 ORDER BY created_at ASC
                 LIMIT 1
                 """,
-                (normalized, active_mode),
+                (normalized, active_mode, lane),
             )
             active = row_to_dict(cur.fetchone())
             if active:
@@ -752,13 +847,17 @@ def enqueue_article_generation_job(
                 FROM article_generation_jobs
                 WHERE normalized_prompt = %s
                   AND mode = %s
+                  AND CASE
+                        WHEN payload->>'sourcePolicy' = 'x_response' THEN 'x'
+                        ELSE 'website'
+                      END = %s
                   AND status = 'saved'
                   AND article_id IS NOT NULL
                   AND finished_at >= NOW() - INTERVAL '24 hours'
                 ORDER BY finished_at DESC
                 LIMIT 1
                 """,
-                (normalized, active_mode),
+                (normalized, active_mode, lane),
             )
             recent = cur.fetchone()
             job_id = f"build-{uuid.uuid4().hex}"
@@ -778,7 +877,7 @@ def enqueue_article_generation_job(
                         active_mode,
                         int(priority),
                         recent["article_id"],
-                        json.dumps(payload or {}),
+                        json.dumps(job_payload),
                     ),
                 )
                 return row_to_dict(cur.fetchone())
@@ -796,7 +895,7 @@ def enqueue_article_generation_job(
                     normalized,
                     active_mode,
                     int(priority),
-                    json.dumps(payload or {}),
+                    json.dumps(job_payload),
                 ),
             )
             return row_to_dict(cur.fetchone())
@@ -809,7 +908,56 @@ def get_article_generation_job(job_id: str) -> dict[str, Any]:
             return row_to_dict(cur.fetchone())
 
 
-def claim_next_article_generation_job() -> dict[str, Any]:
+def article_generation_queue_position(job_id: str) -> int:
+    """Return the 1-based generation position among active durable jobs."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT CASE
+                  WHEN target.id IS NULL THEN 0
+                  ELSE 1 + COUNT(other.id)
+                END AS position
+                FROM article_generation_jobs target
+                LEFT JOIN article_generation_jobs other
+                  ON other.id <> target.id
+                 AND other.status IN ('generating', 'ready_for_generation', 'sourcing', 'queued')
+                 AND (
+                   other.status = 'generating'
+                   OR other.priority > target.priority
+                   OR (other.priority = target.priority AND other.created_at < target.created_at)
+                 )
+                WHERE target.id = %s
+                  AND target.status IN ('queued', 'sourcing', 'ready_for_generation', 'generating')
+                GROUP BY target.id
+                """,
+                (job_id,),
+            )
+            row = cur.fetchone()
+            return int(row["position"] or 0) if row else 0
+
+
+def expire_stale_background_article_jobs(max_age_minutes: int = 45) -> int:
+    """Drop superseded low-priority desk work before it blocks user requests."""
+    safe_age = min(max(int(max_age_minutes), 15), 24 * 60)
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE article_generation_jobs
+                SET status = 'failed',
+                    error = 'Superseded stale background generation job',
+                    finished_at = NOW()
+                WHERE priority <= 0
+                  AND status IN ('queued', 'ready_for_generation')
+                  AND created_at < NOW() - (%s * INTERVAL '1 minute')
+                """,
+                (safe_age,),
+            )
+            return cur.rowcount
+
+
+def claim_next_article_generation_job(lane: str = "all") -> dict[str, Any]:
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -818,6 +966,13 @@ def claim_next_article_generation_job() -> dict[str, Any]:
                   SELECT id
                   FROM article_generation_jobs
                   WHERE status = 'queued'
+                    AND (
+                      %s = 'all'
+                      OR CASE
+                           WHEN payload->>'sourcePolicy' = 'x_response' THEN 'x'
+                           ELSE 'website'
+                         END = %s
+                    )
                   ORDER BY priority DESC, created_at ASC
                   FOR UPDATE SKIP LOCKED
                   LIMIT 1
@@ -830,7 +985,8 @@ def claim_next_article_generation_job() -> dict[str, Any]:
                 FROM next_job
                 WHERE jobs.id = next_job.id
                 RETURNING jobs.*
-                """
+                """,
+                (lane, lane),
             )
             return row_to_dict(cur.fetchone())
 
@@ -855,7 +1011,7 @@ def mark_article_generation_job_ready(
             return row_to_dict(cur.fetchone())
 
 
-def claim_ready_article_generation_job() -> dict[str, Any]:
+def claim_ready_article_generation_job(lane: str = "all") -> dict[str, Any]:
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -864,6 +1020,13 @@ def claim_ready_article_generation_job() -> dict[str, Any]:
                   SELECT id
                   FROM article_generation_jobs
                   WHERE status = 'ready_for_generation'
+                    AND (
+                      %s = 'all'
+                      OR CASE
+                           WHEN payload->>'sourcePolicy' = 'x_response' THEN 'x'
+                           ELSE 'website'
+                         END = %s
+                    )
                   ORDER BY priority DESC, created_at ASC
                   FOR UPDATE SKIP LOCKED
                   LIMIT 1
@@ -873,7 +1036,8 @@ def claim_ready_article_generation_job() -> dict[str, Any]:
                 FROM next_job
                 WHERE jobs.id = next_job.id
                 RETURNING jobs.*
-                """
+                """,
+                (lane, lane),
             )
             return row_to_dict(cur.fetchone())
 
