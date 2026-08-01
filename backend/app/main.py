@@ -71,6 +71,25 @@ _database_status: dict[str, str | bool] = {
     "type": "postgres",
     "error": "Startup has not checked the database yet.",
 }
+_website_worker_thread: threading.Thread | None = None
+
+
+def _start_embedded_website_worker() -> threading.Thread:
+    """Start one website-lane queue consumer inside the web process."""
+    global _website_worker_thread
+    if _website_worker_thread and _website_worker_thread.is_alive():
+        return _website_worker_thread
+    from app.jobs.article_worker import run_forever
+
+    _website_worker_thread = threading.Thread(
+        target=run_forever,
+        kwargs={"lane": "website", "poll_seconds": 1.0},
+        daemon=True,
+        name="render-website-article-worker",
+    )
+    _website_worker_thread.start()
+    logger.info("Embedded website article worker started", extra={"lane": "website"})
+    return _website_worker_thread
 
 
 def _ingest_and_enrich(articles: list[dict]) -> None:
@@ -217,6 +236,8 @@ def startup() -> None:
             daemon=True,
             name="daily-source-refresh",
         ).start()
+    if settings.website_worker_embedded:
+        _start_embedded_website_worker()
 
 
 @app.on_event("shutdown")
@@ -269,6 +290,13 @@ def health():
             "currents": bool(settings.currents_api_key),
             "gnews": bool(settings.gnews_api_key),
             "guardian": bool(settings.guardian_content_api_key),
+            "daily_gemini": bool(settings.daily_gemini_api_key),
+            "demand_gemini": bool(settings.demand_gemini_api_key),
+            "fallback_gemini": bool(settings.fallback_gemini_api_key),
+        },
+        "website_worker": {
+            "enabled": settings.website_worker_embedded,
+            "alive": bool(_website_worker_thread and _website_worker_thread.is_alive()),
         },
         "rss_feed_count": len(ALL_FEEDS),
     }

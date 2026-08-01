@@ -87,6 +87,9 @@ class Settings:
     # answer from Postgres before hitting live providers.
     daily_ingest_enabled: bool = os.getenv("SIGNAL_DAILY_INGEST", "false").lower() == "true"
     daily_ingest_interval_seconds: int = int(os.getenv("SIGNAL_DAILY_INGEST_INTERVAL_SECONDS", "86400"))
+    # Free Render web services can consume website article jobs in-process.
+    # Keep false on the VM API; the dedicated VM X worker remains separate.
+    website_worker_embedded: bool = os.getenv("SIGNAL_WEBSITE_WORKER", "false").lower() == "true"
     # Fast writes use the configured fast model; thorough keeps the primary model
     # but with tighter enrich caps so it still returns quickly.
     opencode_fast_model: str = (
