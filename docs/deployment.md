@@ -135,6 +135,7 @@ OPENCODE_API_KEY=...
 DAILY_GEMINI_API_KEY=...       # scheduled/shared section article writes only
 DEMAND_GEMINI_API_KEY=...      # primary interactive website article writes
 FALLBACK_GEMINI_API_KEY=...    # secondary interactive key, tried immediately on 429
+SIGNAL_WEBSITE_WORKER=true     # consume website article jobs inside a free Render web service
 PUBLIC_ARTICLE_BASE_URL=https://your-frontend.vercel.app
 CORS_ORIGINS=https://your-frontend.vercel.app
 SIGNAL_API_TOKEN=long-random-secret
