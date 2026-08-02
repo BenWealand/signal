@@ -38,6 +38,9 @@ _default_progress: dict = {
 _progress: dict = dict(_default_progress)
 _progress_by_build: dict[str, dict] = {}
 _latest_build_id = ""
+# Long-lived workers track many builds; keep only recent entries in memory.
+# Finished builds fall back to the durable job row on lookup.
+_MAX_TRACKED_BUILDS = 200
 
 
 def get_build_progress(build_id: str | None = None) -> dict:
@@ -120,6 +123,12 @@ def _set_progress(build_id: str | None = None, **kwargs: object) -> None:
         if kwargs.get("active") and "started_at" not in kwargs:
             target["started_at"] = time.time()
         _progress.update(target)
+        if len(_progress_by_build) > _MAX_TRACKED_BUILDS:
+            for stale_id in [
+                key for key, value in _progress_by_build.items()
+                if not value.get("active") and key != _latest_build_id
+            ][: len(_progress_by_build) - _MAX_TRACKED_BUILDS]:
+                _progress_by_build.pop(stale_id, None)
 
 
 set_build_progress = _set_progress
@@ -335,7 +344,10 @@ def _parallel_process(articles: list[dict]) -> list[dict]:
         return None
 
     results: list[dict] = []
-    with ThreadPoolExecutor(max_workers=min(len(id_map), 16)) as pool:
+    # Each thread holds a DB connection; stay well under DB_POOL_MAX so
+    # concurrent jobs and API requests are never starved of connections.
+    max_workers = min(len(id_map), max(2, settings.db_pool_max // 2))
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {pool.submit(_proc, aid): aid for aid in id_map}
         for future in as_completed(futures):
             result = future.result()

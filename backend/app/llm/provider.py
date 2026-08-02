@@ -148,6 +148,10 @@ class GeminiLLMClient:
             payload["systemInstruction"] = {"parts": [{"text": system}]}
 
         attempts = max(1, int(settings.gemini_retry_attempts))
+        # Bound the total time one request may spend retrying 429s so a
+        # rate-limited call cannot hold a generation slot for many minutes.
+        retry_budget = float(getattr(settings, "gemini_retry_total_budget_seconds", 120.0))
+        retry_deadline = time.monotonic() + max(0.0, retry_budget)
         last_error: BaseException | None = None
         for attempt in range(attempts):
             key = self.api_keys[attempt % len(self.api_keys)]
@@ -186,6 +190,8 @@ class GeminiLLMClient:
                 if delay <= 0:
                     delay = settings.gemini_retry_base_seconds * (2 ** attempt)
                 delay = min(delay, settings.gemini_retry_max_seconds)
+                if time.monotonic() + delay > retry_deadline:
+                    break
                 time.sleep(max(0.0, delay) + random.uniform(0.0, 0.35))
             except (urllib.error.URLError, TimeoutError, OSError) as exc:
                 raise LLMTransportError(str(exc) or type(exc).__name__) from exc
