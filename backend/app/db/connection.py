@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -12,6 +13,11 @@ from app.config import settings
 from app.db.migrations import apply_migrations
 
 _pool: psycopg2.pool.ThreadedConnectionPool | None = None
+
+# psycopg2's pool raises immediately when every connection is checked out.
+# Under a request burst plus background workers that turned transient
+# contention into hard failures; wait briefly for a slot instead.
+_POOL_WAIT_SECONDS = 10.0
 
 
 def _get_pool() -> psycopg2.pool.ThreadedConnectionPool:
@@ -26,10 +32,21 @@ def _get_pool() -> psycopg2.pool.ThreadedConnectionPool:
     return _pool
 
 
+def _acquire_connection(pool: psycopg2.pool.ThreadedConnectionPool):
+    deadline = time.monotonic() + _POOL_WAIT_SECONDS
+    while True:
+        try:
+            return pool.getconn()
+        except psycopg2.pool.PoolError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.05)
+
+
 @contextmanager
 def get_connection() -> Iterator[psycopg2.extensions.connection]:
     pool = _get_pool()
-    conn = pool.getconn()
+    conn = _acquire_connection(pool)
     try:
         yield conn
         conn.commit()

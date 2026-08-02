@@ -957,6 +957,64 @@ def expire_stale_background_article_jobs(max_age_minutes: int = 45) -> int:
             return cur.rowcount
 
 
+def recover_interrupted_article_generation_jobs(
+    lane: str = "all",
+    *,
+    sourcing_timeout_minutes: int = 10,
+    generating_timeout_minutes: int = 20,
+    max_attempts: int = 4,
+) -> dict[str, int]:
+    """Return jobs whose worker died mid-flight to a safe durable state.
+
+    Workers stamp claimed_at when they take a job. A job still marked
+    'sourcing' or 'generating' long after its claim means the process that
+    owned it was killed (deploy, restart, free-tier spin-down). Requeue it so
+    another worker picks it up, and fail jobs that keep getting interrupted so
+    a poison prompt cannot loop forever.
+    """
+    sourcing_timeout = min(max(int(sourcing_timeout_minutes), 2), 120)
+    generating_timeout = min(max(int(generating_timeout_minutes), 2), 240)
+    lane_case = """
+        CASE
+          WHEN payload->>'sourcePolicy' = 'x_response' THEN 'x'
+          ELSE 'website'
+        END
+    """
+    stale_clause = f"""
+        status IN ('sourcing', 'generating')
+        AND COALESCE(claimed_at, started_at, created_at) <
+            NOW() - (CASE WHEN status = 'sourcing' THEN %s ELSE %s END * INTERVAL '1 minute')
+        AND (%s = 'all' OR {lane_case} = %s)
+    """
+    params = (sourcing_timeout, generating_timeout, lane, lane)
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                UPDATE article_generation_jobs
+                SET status = 'failed',
+                    error = 'Article generation was interrupted repeatedly and exceeded its retry budget',
+                    finished_at = NOW()
+                WHERE {stale_clause}
+                  AND attempt_count >= %s
+                """,
+                (*params, max(1, int(max_attempts))),
+            )
+            failed = cur.rowcount
+            cur.execute(
+                f"""
+                UPDATE article_generation_jobs
+                SET status = CASE WHEN status = 'generating' THEN 'ready_for_generation' ELSE 'queued' END,
+                    attempt_count = attempt_count + 1,
+                    claimed_at = NULL,
+                    error = ''
+                WHERE {stale_clause}
+                """,
+                params,
+            )
+            return {"requeued": cur.rowcount, "failed": failed}
+
+
 def claim_next_article_generation_job(lane: str = "all") -> dict[str, Any]:
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -981,6 +1039,7 @@ def claim_next_article_generation_job(lane: str = "all") -> dict[str, Any]:
                 SET status = 'sourcing',
                     attempt_count = attempt_count + 1,
                     started_at = COALESCE(started_at, NOW()),
+                    claimed_at = NOW(),
                     error = ''
                 FROM next_job
                 WHERE jobs.id = next_job.id
@@ -1032,7 +1091,8 @@ def claim_ready_article_generation_job(lane: str = "all") -> dict[str, Any]:
                   LIMIT 1
                 )
                 UPDATE article_generation_jobs jobs
-                SET status = 'generating'
+                SET status = 'generating',
+                    claimed_at = NOW()
                 FROM next_job
                 WHERE jobs.id = next_job.id
                 RETURNING jobs.*

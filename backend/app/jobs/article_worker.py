@@ -224,33 +224,79 @@ def process_next_job(*, lane: str = "all") -> bool:
     return bool(claimed)
 
 
-def run_forever(*, poll_seconds: float = 1.0, lane: str = "all") -> None:
-    # Website and X workers claim disjoint durable lanes. Sourcing remains
-    # parallel inside each worker while generation is serialized per lane.
-    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="article-source") as source_pool:
-        sourcing = set()
-        last_stale_cleanup = 0.0
+def _run_queue_maintenance(lane: str) -> None:
+    """Expire superseded desk work and rescue jobs whose worker died mid-flight."""
+    try:
+        expired = queries.expire_stale_background_article_jobs()
+        if expired:
+            logger.warning("Expired %s stale background article job(s)", expired)
+    except Exception:
+        logger.exception("Stale background job cleanup failed")
+    try:
+        recovered = queries.recover_interrupted_article_generation_jobs(lane)
+        if recovered.get("requeued") or recovered.get("failed"):
+            logger.warning(
+                "Recovered interrupted article job(s): requeued=%s failed=%s",
+                recovered.get("requeued", 0),
+                recovered.get("failed", 0),
+            )
+    except Exception:
+        logger.exception("Interrupted job recovery failed")
+
+
+def _generation_concurrency(lane: str) -> int:
+    # The X lane feeds one local model; extra threads would only queue on the
+    # provider semaphore. Website work calls a remote API and parallelizes well.
+    if lane == "x":
+        return 1
+    return max(1, int(settings.website_generation_concurrency))
+
+
+def run_forever(
+    *,
+    poll_seconds: float = 1.0,
+    lane: str = "all",
+    generation_concurrency: int | None = None,
+) -> None:
+    # Website and X workers claim disjoint durable lanes. Sourcing and
+    # generation each run in bounded pools; a claim or maintenance failure
+    # must never kill the loop, only delay the next pass.
+    gen_workers = max(1, int(generation_concurrency or _generation_concurrency(lane)))
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="article-source") as source_pool, \
+            ThreadPoolExecutor(max_workers=gen_workers, thread_name_prefix="article-generate") as generate_pool:
+        sourcing: set = set()
+        generating: set = set()
+        last_stale_cleanup = float("-inf")
         while True:
-            now = time.monotonic()
-            if now - last_stale_cleanup >= 60:
-                expired = queries.expire_stale_background_article_jobs()
-                if expired:
-                    logger.warning("Expired %s stale background article job(s)", expired)
-                last_stale_cleanup = now
-            sourcing = {future for future in sourcing if not future.done()}
-            while len(sourcing) < 2:
-                claimed = queries.claim_next_article_generation_job(lane=lane)
-                if not claimed:
-                    break
-                sourcing.add(source_pool.submit(_prepare_claimed_job, claimed))
-            ready = queries.claim_ready_article_generation_job(lane=lane)
-            if ready:
-                _generate_claimed_job(ready)
-                continue
-            if not sourcing:
-                time.sleep(max(0.1, poll_seconds))
-            else:
-                time.sleep(min(max(0.1, poll_seconds), 0.25))
+            try:
+                now = time.monotonic()
+                if now - last_stale_cleanup >= 60:
+                    _run_queue_maintenance(lane)
+                    last_stale_cleanup = now
+                sourcing = {future for future in sourcing if not future.done()}
+                generating = {future for future in generating if not future.done()}
+                claimed_any = False
+                while len(sourcing) < 2:
+                    claimed = queries.claim_next_article_generation_job(lane=lane)
+                    if not claimed:
+                        break
+                    claimed_any = True
+                    sourcing.add(source_pool.submit(_prepare_claimed_job, claimed))
+                while len(generating) < gen_workers:
+                    ready = queries.claim_ready_article_generation_job(lane=lane)
+                    if not ready:
+                        break
+                    claimed_any = True
+                    generating.add(generate_pool.submit(_generate_claimed_job, ready))
+                if claimed_any:
+                    continue
+                if sourcing or generating:
+                    time.sleep(min(max(0.1, poll_seconds), 0.25))
+                else:
+                    time.sleep(max(0.1, poll_seconds))
+            except Exception:
+                logger.exception("Article worker loop iteration failed; retrying")
+                time.sleep(min(5.0, max(1.0, poll_seconds)))
 
 
 def main() -> None:
@@ -258,11 +304,22 @@ def main() -> None:
     parser.add_argument("--once", action="store_true", help="Process at most one queued job")
     parser.add_argument("--poll-seconds", type=float, default=1.0)
     parser.add_argument("--lane", choices=("all", "website", "x"), default="all")
+    parser.add_argument(
+        "--generation-concurrency",
+        type=int,
+        default=None,
+        help="Simultaneous generation jobs (defaults: 1 for the x lane, "
+        "SIGNAL_WEBSITE_GENERATION_CONCURRENCY otherwise)",
+    )
     args = parser.parse_args()
     if args.once:
         process_next_job(lane=args.lane)
         return
-    run_forever(poll_seconds=args.poll_seconds, lane=args.lane)
+    run_forever(
+        poll_seconds=args.poll_seconds,
+        lane=args.lane,
+        generation_concurrency=args.generation_concurrency,
+    )
 
 
 if __name__ == "__main__":

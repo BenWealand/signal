@@ -54,6 +54,9 @@ class Settings:
     gemini_retry_attempts: int = int(os.getenv("GEMINI_RETRY_ATTEMPTS", "5"))
     gemini_retry_base_seconds: float = float(os.getenv("GEMINI_RETRY_BASE_SECONDS", "2"))
     gemini_retry_max_seconds: float = float(os.getenv("GEMINI_RETRY_MAX_SECONDS", "45"))
+    # Hard wall-clock cap across all 429 retries of one request. Without it a
+    # rate-limited job can hold a generation slot for many minutes.
+    gemini_retry_total_budget_seconds: float = float(os.getenv("GEMINI_RETRY_TOTAL_BUDGET_SECONDS", "120"))
     gemini_fast_max_tokens: int = int(os.getenv("GEMINI_FAST_MAX_TOKENS", "2400"))
     gemini_thorough_max_tokens: int = int(os.getenv("GEMINI_THOROUGH_MAX_TOKENS", "3600"))
     news_api_key: str = os.getenv("NEWS_API_KEY", "")
@@ -90,6 +93,9 @@ class Settings:
     # Free Render web services can consume website article jobs in-process.
     # Keep false on the VM API; the dedicated VM X worker remains separate.
     website_worker_embedded: bool = os.getenv("SIGNAL_WEBSITE_WORKER", "false").lower() == "true"
+    # Website generation calls a remote API (Gemini), so one worker can run a
+    # few jobs concurrently. The X lane stays at 1: it feeds a single local model.
+    website_generation_concurrency: int = int(os.getenv("SIGNAL_WEBSITE_GENERATION_CONCURRENCY", "3"))
     # Fast writes use the configured fast model; thorough keeps the primary model
     # but with tighter enrich caps so it still returns quickly.
     opencode_fast_model: str = (

@@ -10,7 +10,9 @@ Group=signal-api
 WorkingDirectory=/opt/signal/backend
 EnvironmentFile=/etc/signal-api/signal.env
 EnvironmentFile=-/etc/signal-api/gemini.env
-ExecStartPre=/opt/signal/venv/bin/python /opt/signal/backend/scripts/recover_article_jobs.py --lane website
+# Interrupted-job recovery is lease-based inside the worker loop now. The old
+# unconditional ExecStartPre recovery would steal jobs legitimately in flight
+# on another website-lane consumer (e.g. the embedded Render worker).
 ExecStart=/opt/signal/venv/bin/python -m app.jobs.article_worker --lane website --poll-seconds 1
 Restart=always
 RestartSec=5

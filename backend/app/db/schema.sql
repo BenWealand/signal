@@ -133,6 +133,7 @@ CREATE TABLE IF NOT EXISTS article_generation_jobs (
   payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   started_at TIMESTAMPTZ,
+  claimed_at TIMESTAMPTZ,
   finished_at TIMESTAMPTZ
 );
 
@@ -270,6 +271,12 @@ CREATE INDEX IF NOT EXISTS idx_article_generation_jobs_queue
   WHERE status = 'queued';
 CREATE INDEX IF NOT EXISTS idx_article_generation_jobs_prompt
   ON article_generation_jobs(normalized_prompt, finished_at DESC);
+CREATE INDEX IF NOT EXISTS idx_article_generation_jobs_ready
+  ON article_generation_jobs(priority DESC, created_at ASC)
+  WHERE status = 'ready_for_generation';
+CREATE INDEX IF NOT EXISTS idx_article_generation_jobs_inflight
+  ON article_generation_jobs(claimed_at)
+  WHERE status IN ('sourcing', 'generating');
 CREATE INDEX IF NOT EXISTS idx_generated_articles_owner ON generated_articles(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_generated_articles_source ON generated_articles(source);
 CREATE INDEX IF NOT EXISTS idx_x_article_shares_article_created

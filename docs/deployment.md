@@ -103,6 +103,27 @@ Fast article writes prefer recently ingested Postgres coverage before live provi
 2. The workflow `.github/workflows/daily-source-ingest.yml` wakes the API and posts `POST /ingest/daily` once per day.
 3. That endpoint refreshes RSS into Postgres and regenerates shared section drafts.
 
+## Article queue reliability
+
+Article-generation jobs are durable rows in `article_generation_jobs`. Workers
+stamp a claim lease (`claimed_at`) when they take a job. Every worker runs a
+queue-maintenance pass about once a minute that:
+
+- requeues jobs stuck in `sourcing`/`generating` after their lease expires
+  (10 and 20 minutes respectively) — this recovers work interrupted by
+  deploys, restarts, or free-tier spin-downs without manual intervention;
+- fails jobs interrupted more than 4 times so a poison prompt cannot loop;
+- expires superseded low-priority background section drafts.
+
+`backend/scripts/recover_article_jobs.py` still exists for immediate manual
+recovery, but do not run it automatically on hosts where another consumer may
+legitimately hold jobs in the same lane (e.g. the embedded Render website
+worker plus a VM website worker).
+
+Website-lane generation calls a remote API (Gemini), so one worker runs up to
+`SIGNAL_WEBSITE_GENERATION_CONCURRENCY` jobs at once (default 3). The X lane
+always generates one article at a time because it feeds a single local model.
+
 ## X trend → article → share pipeline
 
 Signal can automate “find a topic → write a sourced article → keep a frontend link →
@@ -136,6 +157,8 @@ DAILY_GEMINI_API_KEY=...       # scheduled/shared section article writes only
 DEMAND_GEMINI_API_KEY=...      # primary interactive website article writes
 FALLBACK_GEMINI_API_KEY=...    # secondary interactive key, tried immediately on 429
 SIGNAL_WEBSITE_WORKER=true     # consume website article jobs inside a free Render web service
+SIGNAL_WEBSITE_GENERATION_CONCURRENCY=3  # simultaneous Gemini website writes per worker
+GEMINI_RETRY_TOTAL_BUDGET_SECONDS=120    # hard cap on total 429 retry time per request
 PUBLIC_ARTICLE_BASE_URL=https://your-frontend.vercel.app
 CORS_ORIGINS=https://your-frontend.vercel.app
 SIGNAL_API_TOKEN=long-random-secret
